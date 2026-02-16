@@ -30,7 +30,10 @@ func (p *AgentCoreProvider) Apply(ctx context.Context, req *deploy.PlanRequest, 
 	}
 
 	reporter := adaptersdk.NewProgressReporter(callback)
-	client := p.awsClientFunc(cfg)
+	client, err := p.awsClientFunc(ctx, cfg)
+	if err != nil {
+		return "", fmt.Errorf("agentcore: failed to create AWS client: %w", err)
+	}
 
 	var resources []ResourceState
 	var applyErr error
@@ -67,27 +70,27 @@ func (p *AgentCoreProvider) Apply(ctx context.Context, req *deploy.PlanRequest, 
 	runtimeNames := agentRuntimeNames(pack)
 	for i, name := range runtimeNames {
 		pct := 0.25 + float64(i)/float64(len(runtimeNames)+1)*0.25
-		if err := reporter.Progress(fmt.Sprintf("Creating agentcore_runtime: %s", name), pct); err != nil {
+		if err := reporter.Progress(fmt.Sprintf("Creating agent_runtime: %s", name), pct); err != nil {
 			return "", err
 		}
 
 		arn, createErr := client.CreateRuntime(ctx, name, cfg)
 		if createErr != nil {
-			_ = reporter.Error(fmt.Errorf("failed to create agentcore_runtime %s: %w", name, createErr))
+			_ = reporter.Error(fmt.Errorf("failed to create agent_runtime %s: %w", name, createErr))
 			resources = append(resources, ResourceState{
-				Type: "agentcore_runtime", Name: name, Status: "failed",
+				Type: "agent_runtime", Name: name, Status: "failed",
 			})
 			applyErr = combineErrors(applyErr, createErr)
 			continue
 		}
 
 		if err := reporter.Resource(&deploy.ResourceResult{
-			Type: "agentcore_runtime", Name: name, Action: deploy.ActionCreate, Status: "created", Detail: arn,
+			Type: "agent_runtime", Name: name, Action: deploy.ActionCreate, Status: "created", Detail: arn,
 		}); err != nil {
 			return "", err
 		}
 		resources = append(resources, ResourceState{
-			Type: "agentcore_runtime", Name: name, ARN: arn, Status: "created",
+			Type: "agent_runtime", Name: name, ARN: arn, Status: "created",
 		})
 	}
 
@@ -97,27 +100,27 @@ func (p *AgentCoreProvider) Apply(ctx context.Context, req *deploy.PlanRequest, 
 		for i, ag := range agents {
 			wireName := ag.Name + "_a2a"
 			pct := 0.50 + float64(i)/float64(len(agents)+1)*0.25
-			if err := reporter.Progress(fmt.Sprintf("Creating a2a_wiring: %s", wireName), pct); err != nil {
+			if err := reporter.Progress(fmt.Sprintf("Creating a2a_endpoint: %s", wireName), pct); err != nil {
 				return "", err
 			}
 
 			arn, createErr := client.CreateA2AWiring(ctx, wireName, cfg)
 			if createErr != nil {
-				_ = reporter.Error(fmt.Errorf("failed to create a2a_wiring %s: %w", wireName, createErr))
+				_ = reporter.Error(fmt.Errorf("failed to create a2a_endpoint %s: %w", wireName, createErr))
 				resources = append(resources, ResourceState{
-					Type: "a2a_wiring", Name: wireName, Status: "failed",
+					Type: "a2a_endpoint", Name: wireName, Status: "failed",
 				})
 				applyErr = combineErrors(applyErr, createErr)
 				continue
 			}
 
 			if err := reporter.Resource(&deploy.ResourceResult{
-				Type: "a2a_wiring", Name: wireName, Action: deploy.ActionCreate, Status: "created", Detail: arn,
+				Type: "a2a_endpoint", Name: wireName, Action: deploy.ActionCreate, Status: "created", Detail: arn,
 			}); err != nil {
 				return "", err
 			}
 			resources = append(resources, ResourceState{
-				Type: "a2a_wiring", Name: wireName, ARN: arn, Status: "created",
+				Type: "a2a_endpoint", Name: wireName, ARN: arn, Status: "created",
 			})
 		}
 	}

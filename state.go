@@ -11,8 +11,9 @@ type AdapterState struct {
 
 // ResourceState describes a single deployed resource.
 type ResourceState struct {
-	Type   string `json:"type"`
-	Name   string `json:"name"`
-	ARN    string `json:"arn,omitempty"`
-	Status string `json:"status,omitempty"`
+	Type     string            `json:"type"`
+	Name     string            `json:"name"`
+	ARN      string            `json:"arn,omitempty"`
+	Status   string            `json:"status,omitempty"`
+	Metadata map[string]string `json:"metadata,omitempty"`
 }

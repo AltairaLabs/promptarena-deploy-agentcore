@@ -70,7 +70,15 @@ func (p *AgentCoreProvider) Destroy(ctx context.Context, req *deploy.DestroyRequ
 		return nil
 	}
 
-	destroyer := p.getDestroyer()
+	cfg, err := parseConfig(req.DeployConfig)
+	if err != nil {
+		return fmt.Errorf("agentcore: failed to parse deploy config: %w", err)
+	}
+
+	destroyer, err := p.destroyerFunc(ctx, cfg)
+	if err != nil {
+		return fmt.Errorf("agentcore: failed to create destroyer: %w", err)
+	}
 
 	// Build a lookup of resources by type for ordered deletion.
 	byType := make(map[string][]ResourceState)
@@ -168,7 +176,15 @@ func (p *AgentCoreProvider) Status(ctx context.Context, req *deploy.StatusReques
 		}, nil
 	}
 
-	checker := p.getChecker()
+	cfg, err := parseConfig(req.DeployConfig)
+	if err != nil {
+		return nil, fmt.Errorf("agentcore: failed to parse deploy config: %w", err)
+	}
+
+	checker, err := p.checkerFunc(ctx, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("agentcore: failed to create checker: %w", err)
+	}
 
 	var resources []deploy.ResourceStatus
 	hasUnhealthy := false
@@ -203,16 +219,6 @@ func (p *AgentCoreProvider) Status(ctx context.Context, req *deploy.StatusReques
 	}, nil
 }
 
-// getDestroyer returns the resource destroyer. This indirection allows
-// tests and future real implementations to supply their own.
-func (p *AgentCoreProvider) getDestroyer() resourceDestroyer {
-	return &simulatedDestroyer{}
-}
-
-// getChecker returns the resource health checker.
-func (p *AgentCoreProvider) getChecker() resourceChecker {
-	return &simulatedChecker{}
-}
 
 // parseAdapterState deserializes the opaque prior_state JSON.
 // An empty string is treated as no state (returns zero-value AdapterState).

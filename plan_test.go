@@ -91,7 +91,7 @@ func multiAgentPackWithToolsAndEvalsJSON() string {
 }
 
 func TestPlan_FirstDeploy_SingleAgent(t *testing.T) {
-	provider := NewAgentCoreProvider()
+	provider := newSimulatedProvider()
 	resp, err := provider.Plan(context.Background(), &deploy.PlanRequest{
 		PackJSON:     singleAgentPackJSON(),
 		DeployConfig: validDeployConfig,
@@ -105,8 +105,8 @@ func TestPlan_FirstDeploy_SingleAgent(t *testing.T) {
 	}
 
 	c := resp.Changes[0]
-	if c.Type != "agentcore_runtime" {
-		t.Errorf("type = %q, want agentcore_runtime", c.Type)
+	if c.Type != "agent_runtime" {
+		t.Errorf("type = %q, want agent_runtime", c.Type)
 	}
 	if c.Name != "mypack" {
 		t.Errorf("name = %q, want mypack", c.Name)
@@ -121,7 +121,7 @@ func TestPlan_FirstDeploy_SingleAgent(t *testing.T) {
 }
 
 func TestPlan_FirstDeploy_MultiAgent(t *testing.T) {
-	provider := NewAgentCoreProvider()
+	provider := newSimulatedProvider()
 	resp, err := provider.Plan(context.Background(), &deploy.PlanRequest{
 		PackJSON:     multiAgentPackJSON(),
 		DeployConfig: validDeployConfig,
@@ -163,7 +163,7 @@ func TestPlan_FirstDeploy_MultiAgent(t *testing.T) {
 }
 
 func TestPlan_MultiAgent_WithToolsAndEvals(t *testing.T) {
-	provider := NewAgentCoreProvider()
+	provider := newSimulatedProvider()
 	resp, err := provider.Plan(context.Background(), &deploy.PlanRequest{
 		PackJSON:     multiAgentPackWithToolsAndEvalsJSON(),
 		DeployConfig: validDeployConfig,
@@ -172,7 +172,7 @@ func TestPlan_MultiAgent_WithToolsAndEvals(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// 2 agent_runtime + 2 a2a_endpoint + 1 gateway + 1 agentcore_gateway (tool) + 1 agentcore_evaluator = 7.
+	// 2 agent_runtime + 2 a2a_endpoint + 1 gateway + 1 tool_gateway (tool) + 1 evaluator = 7.
 	if len(resp.Changes) != 7 {
 		t.Fatalf("expected 7 changes, got %d: %+v", len(resp.Changes), resp.Changes)
 	}
@@ -181,22 +181,22 @@ func TestPlan_MultiAgent_WithToolsAndEvals(t *testing.T) {
 	for _, c := range resp.Changes {
 		typeCounts[c.Type]++
 	}
-	if typeCounts["agentcore_gateway"] != 1 {
-		t.Errorf("expected 1 agentcore_gateway, got %d", typeCounts["agentcore_gateway"])
+	if typeCounts["tool_gateway"] != 1 {
+		t.Errorf("expected 1 tool_gateway, got %d", typeCounts["tool_gateway"])
 	}
-	if typeCounts["agentcore_evaluator"] != 1 {
-		t.Errorf("expected 1 agentcore_evaluator, got %d", typeCounts["agentcore_evaluator"])
+	if typeCounts["evaluator"] != 1 {
+		t.Errorf("expected 1 evaluator, got %d", typeCounts["evaluator"])
 	}
 }
 
 func TestPlan_UpdateScenario(t *testing.T) {
-	provider := NewAgentCoreProvider()
+	provider := newSimulatedProvider()
 
 	// Prior state has router runtime and an old_worker that no longer exists.
 	priorState := AdapterState{
 		Resources: []ResourceState{
-			{Type: "agentcore_runtime", Name: "mypack"},
-			{Type: "agentcore_runtime", Name: "old_resource"},
+			{Type: "agent_runtime", Name: "mypack"},
+			{Type: "agent_runtime", Name: "old_resource"},
 		},
 	}
 	priorJSON, _ := json.Marshal(priorState)
@@ -233,7 +233,7 @@ func TestPlan_UpdateScenario(t *testing.T) {
 }
 
 func TestPlan_UpdateMixed(t *testing.T) {
-	provider := NewAgentCoreProvider()
+	provider := newSimulatedProvider()
 
 	// Prior state has router runtime. New pack adds worker too (multi-agent).
 	priorState := AdapterState{
@@ -288,7 +288,7 @@ func TestPlan_Summary(t *testing.T) {
 }
 
 func TestPlan_InvalidPackJSON(t *testing.T) {
-	provider := NewAgentCoreProvider()
+	provider := newSimulatedProvider()
 	_, err := provider.Plan(context.Background(), &deploy.PlanRequest{
 		PackJSON:     `{bad json}`,
 		DeployConfig: validDeployConfig,
@@ -299,7 +299,7 @@ func TestPlan_InvalidPackJSON(t *testing.T) {
 }
 
 func TestPlan_InvalidConfig(t *testing.T) {
-	provider := NewAgentCoreProvider()
+	provider := newSimulatedProvider()
 	_, err := provider.Plan(context.Background(), &deploy.PlanRequest{
 		PackJSON:     singleAgentPackJSON(),
 		DeployConfig: `{"region":"","runtime_role_arn":""}`,
@@ -310,7 +310,7 @@ func TestPlan_InvalidConfig(t *testing.T) {
 }
 
 func TestPlan_InvalidPriorState(t *testing.T) {
-	provider := NewAgentCoreProvider()
+	provider := newSimulatedProvider()
 	_, err := provider.Plan(context.Background(), &deploy.PlanRequest{
 		PackJSON:     singleAgentPackJSON(),
 		DeployConfig: validDeployConfig,

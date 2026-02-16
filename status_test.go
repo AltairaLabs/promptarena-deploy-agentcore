@@ -32,10 +32,15 @@ func mustJSON(t *testing.T, v any) string {
 	return string(b)
 }
 
+// validDestroyConfig returns a valid config for destroy/status tests.
+func validDestroyConfig() string {
+	return `{"region":"us-west-2","runtime_role_arn":"arn:aws:iam::123456789012:role/test"}`
+}
+
 // ---------- Destroy tests ----------
 
 func TestDestroy_ValidState_ReverseOrder(t *testing.T) {
-	p := NewAgentCoreProvider()
+	p := newSimulatedProvider()
 	state := sampleState()
 
 	var events []*deploy.DestroyEvent
@@ -45,7 +50,8 @@ func TestDestroy_ValidState_ReverseOrder(t *testing.T) {
 	}
 
 	err := p.Destroy(context.Background(), &deploy.DestroyRequest{
-		PriorState: mustJSON(t, state),
+		DeployConfig: validDestroyConfig(),
+		PriorState:   mustJSON(t, state),
 	}, cb)
 	if err != nil {
 		t.Fatalf("Destroy returned error: %v", err)
@@ -78,7 +84,7 @@ func TestDestroy_ValidState_ReverseOrder(t *testing.T) {
 }
 
 func TestDestroy_EmptyState(t *testing.T) {
-	p := NewAgentCoreProvider()
+	p := newSimulatedProvider()
 
 	var events []*deploy.DestroyEvent
 	cb := func(e *deploy.DestroyEvent) error {
@@ -87,7 +93,8 @@ func TestDestroy_EmptyState(t *testing.T) {
 	}
 
 	err := p.Destroy(context.Background(), &deploy.DestroyRequest{
-		PriorState: "",
+		DeployConfig: validDestroyConfig(),
+		PriorState:   "",
 	}, cb)
 	if err != nil {
 		t.Fatalf("Destroy returned error: %v", err)
@@ -118,7 +125,7 @@ func TestDestroy_EmptyState(t *testing.T) {
 func TestDestroy_AlreadyDeletedResources(t *testing.T) {
 	// The simulated destroyer always succeeds, which models the
 	// "already deleted" case — no error, just a deletion event.
-	p := NewAgentCoreProvider()
+	p := newSimulatedProvider()
 	state := &AdapterState{
 		Resources: []ResourceState{
 			{Type: "agent_runtime", Name: "gone-rt", ARN: ""},
@@ -132,7 +139,8 @@ func TestDestroy_AlreadyDeletedResources(t *testing.T) {
 	}
 
 	err := p.Destroy(context.Background(), &deploy.DestroyRequest{
-		PriorState: mustJSON(t, state),
+		DeployConfig: validDestroyConfig(),
+		PriorState:   mustJSON(t, state),
 	}, cb)
 	if err != nil {
 		t.Fatalf("Destroy returned error: %v", err)
@@ -157,10 +165,11 @@ func TestDestroy_AlreadyDeletedResources(t *testing.T) {
 }
 
 func TestDestroy_InvalidState(t *testing.T) {
-	p := NewAgentCoreProvider()
+	p := newSimulatedProvider()
 
 	err := p.Destroy(context.Background(), &deploy.DestroyRequest{
-		PriorState: `{bad json`,
+		DeployConfig: validDestroyConfig(),
+		PriorState:   `{bad json`,
 	}, func(e *deploy.DestroyEvent) error { return nil })
 
 	if err == nil {
@@ -171,11 +180,12 @@ func TestDestroy_InvalidState(t *testing.T) {
 // ---------- Status tests ----------
 
 func TestStatus_ValidState_Deployed(t *testing.T) {
-	p := NewAgentCoreProvider()
+	p := newSimulatedProvider()
 	state := sampleState()
 
 	resp, err := p.Status(context.Background(), &deploy.StatusRequest{
-		PriorState: mustJSON(t, state),
+		DeployConfig: validDestroyConfig(),
+		PriorState:   mustJSON(t, state),
 	})
 	if err != nil {
 		t.Fatalf("Status returned error: %v", err)
@@ -202,10 +212,11 @@ func TestStatus_ValidState_Deployed(t *testing.T) {
 }
 
 func TestStatus_EmptyState_NotDeployed(t *testing.T) {
-	p := NewAgentCoreProvider()
+	p := newSimulatedProvider()
 
 	resp, err := p.Status(context.Background(), &deploy.StatusRequest{
-		PriorState: "",
+		DeployConfig: validDestroyConfig(),
+		PriorState:   "",
 	})
 	if err != nil {
 		t.Fatalf("Status returned error: %v", err)
@@ -220,11 +231,12 @@ func TestStatus_EmptyState_NotDeployed(t *testing.T) {
 }
 
 func TestStatus_ResourceListMatchesState(t *testing.T) {
-	p := NewAgentCoreProvider()
+	p := newSimulatedProvider()
 	state := sampleState()
 
 	resp, err := p.Status(context.Background(), &deploy.StatusRequest{
-		PriorState: mustJSON(t, state),
+		DeployConfig: validDestroyConfig(),
+		PriorState:   mustJSON(t, state),
 	})
 	if err != nil {
 		t.Fatalf("Status returned error: %v", err)
@@ -246,10 +258,11 @@ func TestStatus_ResourceListMatchesState(t *testing.T) {
 }
 
 func TestStatus_InvalidState(t *testing.T) {
-	p := NewAgentCoreProvider()
+	p := newSimulatedProvider()
 
 	_, err := p.Status(context.Background(), &deploy.StatusRequest{
-		PriorState: `{bad json`,
+		DeployConfig: validDestroyConfig(),
+		PriorState:   `{bad json`,
 	})
 	if err == nil {
 		t.Fatal("expected error for invalid state JSON")

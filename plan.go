@@ -59,9 +59,9 @@ func resourceKey(typ, name string) string {
 
 // generateDesiredResources builds the list of desired resources from the pack.
 // For multi-agent packs it uses adaptersdk.GenerateAgentResourcePlan as a
-// starting point and adds agentcore_gateway (for pack-level tools) and
-// agentcore_evaluator (for evals). For single-agent packs it generates a
-// single agentcore_runtime resource.
+// starting point and adds tool_gateway (for pack-level tools) and
+// evaluator (for evals). For single-agent packs it generates a
+// single agent_runtime resource.
 func generateDesiredResources(pack *prompt.Pack) []deploy.ResourceChange {
 	var desired []deploy.ResourceChange
 
@@ -70,7 +70,7 @@ func generateDesiredResources(pack *prompt.Pack) []deploy.ResourceChange {
 		// per member, gateway for entry).
 		desired = adaptersdk.GenerateAgentResourcePlan(pack)
 
-		// Add agentcore_gateway for pack-level tools.
+		// Add tool_gateway for pack-level tools.
 		if len(pack.Tools) > 0 {
 			toolNames := make([]string, 0, len(pack.Tools))
 			for name := range pack.Tools {
@@ -79,7 +79,7 @@ func generateDesiredResources(pack *prompt.Pack) []deploy.ResourceChange {
 			sort.Strings(toolNames)
 			for _, name := range toolNames {
 				desired = append(desired, deploy.ResourceChange{
-					Type:   "agentcore_gateway",
+					Type:   "tool_gateway",
 					Name:   name + "_tool_gw",
 					Action: deploy.ActionCreate,
 					Detail: fmt.Sprintf("Create tool gateway for %s", name),
@@ -87,24 +87,24 @@ func generateDesiredResources(pack *prompt.Pack) []deploy.ResourceChange {
 			}
 		}
 	} else {
-		// Single-agent pack: one agentcore_runtime.
+		// Single-agent pack: one agent_runtime.
 		name := pack.ID
 		if name == "" {
 			name = "default"
 		}
 		desired = append(desired, deploy.ResourceChange{
-			Type:   "agentcore_runtime",
+			Type:   "agent_runtime",
 			Name:   name,
 			Action: deploy.ActionCreate,
 			Detail: fmt.Sprintf("Create AgentCore runtime for %s", name),
 		})
 	}
 
-	// Evals: add an agentcore_evaluator for each eval definition.
+	// Evals: add an evaluator for each eval definition.
 	if len(pack.Evals) > 0 {
 		for _, ev := range pack.Evals {
 			desired = append(desired, deploy.ResourceChange{
-				Type:   "agentcore_evaluator",
+				Type:   "evaluator",
 				Name:   ev.ID + "_eval",
 				Action: deploy.ActionCreate,
 				Detail: fmt.Sprintf("Create evaluator for %s", ev.ID),

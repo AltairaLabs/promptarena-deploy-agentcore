@@ -45,20 +45,29 @@ const configSchema = `{
 }`
 
 // awsClientFactory creates an awsClient for the given config.
-type awsClientFactory func(cfg *AgentCoreConfig) awsClient
+type awsClientFactory func(ctx context.Context, cfg *AgentCoreConfig) (awsClient, error)
+
+// destroyerFactory creates a resourceDestroyer for the given config.
+type destroyerFactory func(ctx context.Context, cfg *AgentCoreConfig) (resourceDestroyer, error)
+
+// checkerFactory creates a resourceChecker for the given config.
+type checkerFactory func(ctx context.Context, cfg *AgentCoreConfig) (resourceChecker, error)
 
 // AgentCoreProvider implements deploy.Provider for AWS Bedrock AgentCore.
 type AgentCoreProvider struct {
 	awsClientFunc awsClientFactory
+	destroyerFunc destroyerFactory
+	checkerFunc   checkerFactory
 }
 
-// NewAgentCoreProvider creates a new AgentCoreProvider with a simulated AWS
-// client. Pass a real factory once AWS SDK integration is available.
+// NewAgentCoreProvider creates a new AgentCoreProvider with the real AWS
+// client factories. Credentials are resolved via the standard
+// aws-sdk-go-v2/config chain.
 func NewAgentCoreProvider() *AgentCoreProvider {
 	return &AgentCoreProvider{
-		awsClientFunc: func(cfg *AgentCoreConfig) awsClient {
-			return newSimulatedAWSClient(cfg.Region)
-		},
+		awsClientFunc: newRealAWSClientFactory,
+		destroyerFunc: newRealDestroyerFactory,
+		checkerFunc:   newRealCheckerFactory,
 	}
 }
 

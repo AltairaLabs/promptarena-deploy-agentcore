@@ -13,9 +13,7 @@ type awsClient interface {
 	CreateEvaluator(ctx context.Context, name string, cfg *AgentCoreConfig) (arn string, err error)
 }
 
-// simulatedAWSClient returns mock ARNs for all operations. It will be
-// replaced by a real AWS SDK implementation once the AgentCore APIs are
-// available.
+// simulatedAWSClient returns mock ARNs for all operations.
 type simulatedAWSClient struct {
 	region    string
 	accountID string
@@ -42,4 +40,20 @@ func (c *simulatedAWSClient) CreateA2AWiring(_ context.Context, name string, _ *
 
 func (c *simulatedAWSClient) CreateEvaluator(_ context.Context, name string, _ *AgentCoreConfig) (string, error) {
 	return fmt.Sprintf("arn:aws:bedrock:%s:%s:evaluator/%s", c.region, c.accountID, name), nil
+}
+
+// newSimulatedProvider creates an AgentCoreProvider wired with simulated
+// (in-memory) clients for unit testing. No AWS credentials are required.
+func newSimulatedProvider() *AgentCoreProvider {
+	return &AgentCoreProvider{
+		awsClientFunc: func(_ context.Context, cfg *AgentCoreConfig) (awsClient, error) {
+			return newSimulatedAWSClient(cfg.Region), nil
+		},
+		destroyerFunc: func(_ context.Context, _ *AgentCoreConfig) (resourceDestroyer, error) {
+			return &simulatedDestroyer{}, nil
+		},
+		checkerFunc: func(_ context.Context, _ *AgentCoreConfig) (resourceChecker, error) {
+			return &simulatedChecker{}, nil
+		},
+	}
 }

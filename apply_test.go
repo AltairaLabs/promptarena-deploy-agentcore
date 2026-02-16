@@ -162,7 +162,7 @@ type failingAWSClient struct {
 }
 
 func (c *failingAWSClient) CreateRuntime(ctx context.Context, name string, cfg *AgentCoreConfig) (string, error) {
-	if c.failOn["agentcore_runtime"] {
+	if c.failOn["agent_runtime"] {
 		return "", fmt.Errorf("simulated runtime creation failure for %s", name)
 	}
 	return c.simulatedAWSClient.CreateRuntime(ctx, name, cfg)
@@ -176,7 +176,7 @@ func (c *failingAWSClient) CreateGatewayTool(ctx context.Context, name string, c
 }
 
 func (c *failingAWSClient) CreateA2AWiring(ctx context.Context, name string, cfg *AgentCoreConfig) (string, error) {
-	if c.failOn["a2a_wiring"] {
+	if c.failOn["a2a_endpoint"] {
 		return "", fmt.Errorf("simulated a2a wiring failure for %s", name)
 	}
 	return c.simulatedAWSClient.CreateA2AWiring(ctx, name, cfg)
@@ -192,7 +192,7 @@ func (c *failingAWSClient) CreateEvaluator(ctx context.Context, name string, cfg
 // --- tests ---
 
 func TestApply_SingleAgent_StreamsCorrectEvents(t *testing.T) {
-	provider := NewAgentCoreProvider()
+	provider := newSimulatedProvider()
 	req := &deploy.PlanRequest{
 		PackJSON:     singleAgentPack(),
 		DeployConfig: validConfig(),
@@ -227,13 +227,13 @@ func TestApply_SingleAgent_StreamsCorrectEvents(t *testing.T) {
 	found := false
 	for _, ev := range events {
 		if ev.Type == "resource" && ev.Resource != nil &&
-			ev.Resource.Type == "agentcore_runtime" && ev.Resource.Status == "created" {
+			ev.Resource.Type == "agent_runtime" && ev.Resource.Status == "created" {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Error("expected a 'resource' event for agentcore_runtime with status=created")
+		t.Error("expected a 'resource' event for agent_runtime with status=created")
 	}
 
 	// Verify state.
@@ -250,7 +250,7 @@ func TestApply_SingleAgent_StreamsCorrectEvents(t *testing.T) {
 }
 
 func TestApply_SingleAgentWithTools(t *testing.T) {
-	provider := NewAgentCoreProvider()
+	provider := newSimulatedProvider()
 	req := &deploy.PlanRequest{
 		PackJSON:     singleAgentPackWithTools(),
 		DeployConfig: validConfig(),
@@ -261,7 +261,7 @@ func TestApply_SingleAgentWithTools(t *testing.T) {
 		t.Fatalf("Apply returned error: %v", err)
 	}
 
-	// Should have tool_gateway events before agentcore_runtime events.
+	// Should have tool_gateway events before agent_runtime events.
 	var types []string
 	for _, ev := range events {
 		if ev.Type == "resource" && ev.Resource != nil {
@@ -276,8 +276,8 @@ func TestApply_SingleAgentWithTools(t *testing.T) {
 	if types[0] != "tool_gateway" || types[1] != "tool_gateway" {
 		t.Errorf("first two resources should be tool_gateway, got %v", types[:2])
 	}
-	if types[2] != "agentcore_runtime" {
-		t.Errorf("third resource should be agentcore_runtime, got %s", types[2])
+	if types[2] != "agent_runtime" {
+		t.Errorf("third resource should be agent_runtime, got %s", types[2])
 	}
 
 	// Check state has all 3 resources.
@@ -291,7 +291,7 @@ func TestApply_SingleAgentWithTools(t *testing.T) {
 }
 
 func TestApply_MultiAgent_DependencyOrder(t *testing.T) {
-	provider := NewAgentCoreProvider()
+	provider := newSimulatedProvider()
 	req := &deploy.PlanRequest{
 		PackJSON:     multiAgentPack(),
 		DeployConfig: validConfig(),
@@ -310,8 +310,8 @@ func TestApply_MultiAgent_DependencyOrder(t *testing.T) {
 		}
 	}
 
-	// Expected order: tool_gateway(s) -> agentcore_runtime(s) -> a2a_wiring(s).
-	// Multi-agent pack has 1 tool, 2 runtimes, 2 a2a wirings = 5 total.
+	// Expected order: tool_gateway(s) -> agent_runtime(s) -> a2a_endpoint(s).
+	// Multi-agent pack has 1 tool, 2 runtimes, 2 a2a endpoints = 5 total.
 	if len(resourceTypes) != 5 {
 		t.Fatalf("expected 5 resource events, got %d: %v", len(resourceTypes), resourceTypes)
 	}
@@ -328,14 +328,14 @@ func TestApply_MultiAgent_DependencyOrder(t *testing.T) {
 			if i > lastGateway {
 				lastGateway = i
 			}
-		case "agentcore_runtime":
+		case "agent_runtime":
 			if i < firstRuntime {
 				firstRuntime = i
 			}
 			if i > lastRuntime {
 				lastRuntime = i
 			}
-		case "a2a_wiring":
+		case "a2a_endpoint":
 			if i < firstA2A {
 				firstA2A = i
 			}
@@ -343,10 +343,10 @@ func TestApply_MultiAgent_DependencyOrder(t *testing.T) {
 	}
 
 	if lastGateway >= firstRuntime {
-		t.Errorf("tool_gateway resources should come before agentcore_runtime: %v", resourceTypes)
+		t.Errorf("tool_gateway resources should come before agent_runtime: %v", resourceTypes)
 	}
 	if lastRuntime >= firstA2A {
-		t.Errorf("agentcore_runtime resources should come before a2a_wiring: %v", resourceTypes)
+		t.Errorf("agent_runtime resources should come before a2a_endpoint: %v", resourceTypes)
 	}
 
 	// Verify state blob.
@@ -368,7 +368,7 @@ func TestApply_MultiAgent_DependencyOrder(t *testing.T) {
 }
 
 func TestApply_MultiAgentWithEvals(t *testing.T) {
-	provider := NewAgentCoreProvider()
+	provider := newSimulatedProvider()
 	req := &deploy.PlanRequest{
 		PackJSON:     multiAgentPackWithEvals(),
 		DeployConfig: validConfig(),
@@ -396,7 +396,7 @@ func TestApply_MultiAgentWithEvals(t *testing.T) {
 	lastA2A := -1
 	firstEval := len(resourceTypes)
 	for i, rt := range resourceTypes {
-		if rt == "a2a_wiring" && i > lastA2A {
+		if rt == "a2a_endpoint" && i > lastA2A {
 			lastA2A = i
 		}
 		if rt == "evaluator" && i < firstEval {
@@ -404,7 +404,7 @@ func TestApply_MultiAgentWithEvals(t *testing.T) {
 		}
 	}
 	if lastA2A >= firstEval {
-		t.Errorf("a2a_wiring should come before evaluator: %v", resourceTypes)
+		t.Errorf("a2a_endpoint should come before evaluator: %v", resourceTypes)
 	}
 
 	// State should have all 6.
@@ -418,7 +418,7 @@ func TestApply_MultiAgentWithEvals(t *testing.T) {
 }
 
 func TestApply_StateContainsAllResourceInfo(t *testing.T) {
-	provider := NewAgentCoreProvider()
+	provider := newSimulatedProvider()
 	req := &deploy.PlanRequest{
 		PackJSON:     multiAgentPack(),
 		DeployConfig: validConfig(),
@@ -466,13 +466,16 @@ func TestApply_StateContainsAllResourceInfo(t *testing.T) {
 }
 
 func TestApply_PartialFailure_ReturnsStateForSuccessfulResources(t *testing.T) {
+	sim := newSimulatedProvider()
 	provider := &AgentCoreProvider{
-		awsClientFunc: func(cfg *AgentCoreConfig) awsClient {
+		awsClientFunc: func(_ context.Context, cfg *AgentCoreConfig) (awsClient, error) {
 			return &failingAWSClient{
 				simulatedAWSClient: *newSimulatedAWSClient(cfg.Region),
-				failOn:             map[string]bool{"a2a_wiring": true},
-			}
+				failOn:             map[string]bool{"a2a_endpoint": true},
+			}, nil
 		},
+		destroyerFunc: sim.destroyerFunc,
+		checkerFunc:   sim.checkerFunc,
 	}
 
 	req := &deploy.PlanRequest{
@@ -485,7 +488,7 @@ func TestApply_PartialFailure_ReturnsStateForSuccessfulResources(t *testing.T) {
 		t.Fatal("expected error for partial failure, got nil")
 	}
 
-	// Should have error events for a2a_wiring failures.
+	// Should have error events for a2a_endpoint failures.
 	var errorCount int
 	for _, ev := range events {
 		if ev.Type == "error" {
@@ -518,22 +521,22 @@ func TestApply_PartialFailure_ReturnsStateForSuccessfulResources(t *testing.T) {
 		t.Error("expected at least some failed resources")
 	}
 
-	// The tool_gateway and agentcore_runtime should have succeeded.
+	// The tool_gateway and agent_runtime should have succeeded.
 	for _, r := range state.Resources {
 		if r.Type == "tool_gateway" && r.Status != "created" {
 			t.Errorf("tool_gateway %q should have status=created, got %s", r.Name, r.Status)
 		}
-		if r.Type == "agentcore_runtime" && r.Status != "created" {
-			t.Errorf("agentcore_runtime %q should have status=created, got %s", r.Name, r.Status)
+		if r.Type == "agent_runtime" && r.Status != "created" {
+			t.Errorf("agent_runtime %q should have status=created, got %s", r.Name, r.Status)
 		}
-		if r.Type == "a2a_wiring" && r.Status != "failed" {
-			t.Errorf("a2a_wiring %q should have status=failed, got %s", r.Name, r.Status)
+		if r.Type == "a2a_endpoint" && r.Status != "failed" {
+			t.Errorf("a2a_endpoint %q should have status=failed, got %s", r.Name, r.Status)
 		}
 	}
 }
 
 func TestApply_ProgressMessages(t *testing.T) {
-	provider := NewAgentCoreProvider()
+	provider := newSimulatedProvider()
 	req := &deploy.PlanRequest{
 		PackJSON:     multiAgentPack(),
 		DeployConfig: validConfig(),
@@ -560,8 +563,8 @@ func TestApply_ProgressMessages(t *testing.T) {
 	// Verify progress messages contain the expected resource type prefixes.
 	expectedPrefixes := []string{
 		"Creating tool_gateway:",
-		"Creating agentcore_runtime:",
-		"Creating a2a_wiring:",
+		"Creating agent_runtime:",
+		"Creating a2a_endpoint:",
 	}
 	for _, prefix := range expectedPrefixes {
 		found := false
@@ -585,7 +588,7 @@ func TestApply_ProgressMessages(t *testing.T) {
 }
 
 func TestApply_BadPackJSON(t *testing.T) {
-	provider := NewAgentCoreProvider()
+	provider := newSimulatedProvider()
 	req := &deploy.PlanRequest{
 		PackJSON:     `{not valid}`,
 		DeployConfig: validConfig(),
@@ -601,7 +604,7 @@ func TestApply_BadPackJSON(t *testing.T) {
 }
 
 func TestApply_BadDeployConfig(t *testing.T) {
-	provider := NewAgentCoreProvider()
+	provider := newSimulatedProvider()
 	req := &deploy.PlanRequest{
 		PackJSON:     singleAgentPack(),
 		DeployConfig: `{not valid}`,
@@ -617,7 +620,7 @@ func TestApply_BadDeployConfig(t *testing.T) {
 }
 
 func TestApply_EmptyPack_CreatesRuntimeOnly(t *testing.T) {
-	provider := NewAgentCoreProvider()
+	provider := newSimulatedProvider()
 	// Minimal pack with just an ID and no tools/agents/evals.
 	pack := map[string]any{
 		"id":      "empty",
@@ -659,7 +662,7 @@ func TestApply_EmptyPack_CreatesRuntimeOnly(t *testing.T) {
 	if len(state.Resources) != 1 {
 		t.Errorf("expected 1 resource in state, got %d", len(state.Resources))
 	}
-	if state.Resources[0].Type != "agentcore_runtime" {
-		t.Errorf("expected agentcore_runtime, got %s", state.Resources[0].Type)
+	if state.Resources[0].Type != "agent_runtime" {
+		t.Errorf("expected agent_runtime, got %s", state.Resources[0].Type)
 	}
 }

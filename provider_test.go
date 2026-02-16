@@ -36,7 +36,7 @@ type jsonRPCResponse struct {
 
 func callAdapter(t *testing.T, input string) jsonRPCResponse {
 	t.Helper()
-	provider := NewAgentCoreProvider()
+	provider := newSimulatedProvider()
 
 	var out bytes.Buffer
 	err := adaptersdk.ServeIO(provider, strings.NewReader(input), &out)
@@ -202,7 +202,7 @@ func TestApplyReturnsErrorOnBadPack(t *testing.T) {
 
 func TestDestroyEmptyState(t *testing.T) {
 	params := map[string]string{
-		"deploy_config": `{}`,
+		"deploy_config": `{"region":"us-west-2","runtime_role_arn":"arn:aws:iam::123456789012:role/test"}`,
 	}
 	resp := callAdapter(t, jsonRPCRequest("destroy", 7, params))
 
@@ -213,7 +213,7 @@ func TestDestroyEmptyState(t *testing.T) {
 
 func TestStatusEmptyState(t *testing.T) {
 	params := map[string]string{
-		"deploy_config": `{}`,
+		"deploy_config": `{"region":"us-west-2","runtime_role_arn":"arn:aws:iam::123456789012:role/test"}`,
 	}
 	resp := callAdapter(t, jsonRPCRequest("status", 8, params))
 
