@@ -1,0 +1,292 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"testing"
+
+	"github.com/AltairaLabs/PromptKit/runtime/deploy"
+)
+
+// sampleState builds an AdapterState with the four standard resource types.
+func sampleState() *AdapterState {
+	return &AdapterState{
+		PackID:     "test-pack",
+		Version:    "1",
+		DeployedAt: "2026-02-16T00:00:00Z",
+		Resources: []ResourceState{
+			{Type: "tool_gateway", Name: "tg-1", ARN: "arn:aws:bedrock:us-west-2:123456789012:tool-gateway/tg-1"},
+			{Type: "agent_runtime", Name: "rt-1", ARN: "arn:aws:bedrock:us-west-2:123456789012:agent-runtime/rt-1"},
+			{Type: "a2a_endpoint", Name: "a2a-1", ARN: "arn:aws:bedrock:us-west-2:123456789012:a2a/a2a-1"},
+			{Type: "evaluator", Name: "ev-1", ARN: "arn:aws:bedrock:us-west-2:123456789012:evaluator/ev-1"},
+		},
+	}
+}
+
+func mustJSON(t *testing.T, v any) string {
+	t.Helper()
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	return string(b)
+}
+
+// ---------- Destroy tests ----------
+
+func TestDestroy_ValidState_ReverseOrder(t *testing.T) {
+	p := NewAgentCoreProvider()
+	state := sampleState()
+
+	var events []*deploy.DestroyEvent
+	cb := func(e *deploy.DestroyEvent) error {
+		events = append(events, e)
+		return nil
+	}
+
+	err := p.Destroy(context.Background(), &deploy.DestroyRequest{
+		PriorState: mustJSON(t, state),
+	}, cb)
+	if err != nil {
+		t.Fatalf("Destroy returned error: %v", err)
+	}
+
+	// Collect resource deletion events in order.
+	var deletedTypes []string
+	for _, e := range events {
+		if e.Type == "resource" && e.Resource != nil && e.Resource.Status == "deleted" {
+			deletedTypes = append(deletedTypes, e.Resource.Type)
+		}
+	}
+
+	// Expected reverse dependency order: evaluator, a2a_endpoint, agent_runtime, tool_gateway.
+	expected := []string{"evaluator", "a2a_endpoint", "agent_runtime", "tool_gateway"}
+	if len(deletedTypes) != len(expected) {
+		t.Fatalf("deleted %d resources, want %d: %v", len(deletedTypes), len(expected), deletedTypes)
+	}
+	for i, want := range expected {
+		if deletedTypes[i] != want {
+			t.Errorf("deletion[%d] = %q, want %q", i, deletedTypes[i], want)
+		}
+	}
+
+	// Last event should be "complete".
+	last := events[len(events)-1]
+	if last.Type != "complete" {
+		t.Errorf("last event type = %q, want complete", last.Type)
+	}
+}
+
+func TestDestroy_EmptyState(t *testing.T) {
+	p := NewAgentCoreProvider()
+
+	var events []*deploy.DestroyEvent
+	cb := func(e *deploy.DestroyEvent) error {
+		events = append(events, e)
+		return nil
+	}
+
+	err := p.Destroy(context.Background(), &deploy.DestroyRequest{
+		PriorState: "",
+	}, cb)
+	if err != nil {
+		t.Fatalf("Destroy returned error: %v", err)
+	}
+
+	if len(events) < 1 {
+		t.Fatal("expected at least one event")
+	}
+	// Should have a complete event.
+	foundComplete := false
+	for _, e := range events {
+		if e.Type == "complete" {
+			foundComplete = true
+		}
+	}
+	if !foundComplete {
+		t.Error("expected a complete event")
+	}
+
+	// No resource events should be emitted.
+	for _, e := range events {
+		if e.Type == "resource" {
+			t.Errorf("unexpected resource event for empty state: %+v", e)
+		}
+	}
+}
+
+func TestDestroy_AlreadyDeletedResources(t *testing.T) {
+	// The simulated destroyer always succeeds, which models the
+	// "already deleted" case — no error, just a deletion event.
+	p := NewAgentCoreProvider()
+	state := &AdapterState{
+		Resources: []ResourceState{
+			{Type: "agent_runtime", Name: "gone-rt", ARN: ""},
+		},
+	}
+
+	var events []*deploy.DestroyEvent
+	cb := func(e *deploy.DestroyEvent) error {
+		events = append(events, e)
+		return nil
+	}
+
+	err := p.Destroy(context.Background(), &deploy.DestroyRequest{
+		PriorState: mustJSON(t, state),
+	}, cb)
+	if err != nil {
+		t.Fatalf("Destroy returned error: %v", err)
+	}
+
+	// Should emit a resource event with status "deleted" even for already-gone resources.
+	foundResource := false
+	for _, e := range events {
+		if e.Type == "resource" && e.Resource != nil {
+			foundResource = true
+			if e.Resource.Status != "deleted" {
+				t.Errorf("resource status = %q, want deleted", e.Resource.Status)
+			}
+			if e.Resource.Name != "gone-rt" {
+				t.Errorf("resource name = %q, want gone-rt", e.Resource.Name)
+			}
+		}
+	}
+	if !foundResource {
+		t.Error("expected at least one resource event")
+	}
+}
+
+func TestDestroy_InvalidState(t *testing.T) {
+	p := NewAgentCoreProvider()
+
+	err := p.Destroy(context.Background(), &deploy.DestroyRequest{
+		PriorState: `{bad json`,
+	}, func(e *deploy.DestroyEvent) error { return nil })
+
+	if err == nil {
+		t.Fatal("expected error for invalid state JSON")
+	}
+}
+
+// ---------- Status tests ----------
+
+func TestStatus_ValidState_Deployed(t *testing.T) {
+	p := NewAgentCoreProvider()
+	state := sampleState()
+
+	resp, err := p.Status(context.Background(), &deploy.StatusRequest{
+		PriorState: mustJSON(t, state),
+	})
+	if err != nil {
+		t.Fatalf("Status returned error: %v", err)
+	}
+
+	if resp.Status != "deployed" {
+		t.Errorf("status = %q, want deployed", resp.Status)
+	}
+	if len(resp.Resources) != len(state.Resources) {
+		t.Fatalf("got %d resources, want %d", len(resp.Resources), len(state.Resources))
+	}
+
+	// All should be healthy.
+	for i, r := range resp.Resources {
+		if r.Status != "healthy" {
+			t.Errorf("resource[%d] status = %q, want healthy", i, r.Status)
+		}
+	}
+
+	// State should round-trip.
+	if resp.State == "" {
+		t.Error("expected non-empty state in response")
+	}
+}
+
+func TestStatus_EmptyState_NotDeployed(t *testing.T) {
+	p := NewAgentCoreProvider()
+
+	resp, err := p.Status(context.Background(), &deploy.StatusRequest{
+		PriorState: "",
+	})
+	if err != nil {
+		t.Fatalf("Status returned error: %v", err)
+	}
+
+	if resp.Status != "not_deployed" {
+		t.Errorf("status = %q, want not_deployed", resp.Status)
+	}
+	if len(resp.Resources) != 0 {
+		t.Errorf("expected 0 resources, got %d", len(resp.Resources))
+	}
+}
+
+func TestStatus_ResourceListMatchesState(t *testing.T) {
+	p := NewAgentCoreProvider()
+	state := sampleState()
+
+	resp, err := p.Status(context.Background(), &deploy.StatusRequest{
+		PriorState: mustJSON(t, state),
+	})
+	if err != nil {
+		t.Fatalf("Status returned error: %v", err)
+	}
+
+	if len(resp.Resources) != len(state.Resources) {
+		t.Fatalf("resource count mismatch: got %d, want %d", len(resp.Resources), len(state.Resources))
+	}
+
+	for i, want := range state.Resources {
+		got := resp.Resources[i]
+		if got.Type != want.Type {
+			t.Errorf("resource[%d].Type = %q, want %q", i, got.Type, want.Type)
+		}
+		if got.Name != want.Name {
+			t.Errorf("resource[%d].Name = %q, want %q", i, got.Name, want.Name)
+		}
+	}
+}
+
+func TestStatus_InvalidState(t *testing.T) {
+	p := NewAgentCoreProvider()
+
+	_, err := p.Status(context.Background(), &deploy.StatusRequest{
+		PriorState: `{bad json`,
+	})
+	if err == nil {
+		t.Fatal("expected error for invalid state JSON")
+	}
+}
+
+// ---------- parseAdapterState tests ----------
+
+func TestParseAdapterState_EmptyString(t *testing.T) {
+	s, err := parseAdapterState("")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(s.Resources) != 0 {
+		t.Errorf("expected 0 resources, got %d", len(s.Resources))
+	}
+}
+
+func TestParseAdapterState_ValidJSON(t *testing.T) {
+	state := sampleState()
+	raw := mustJSON(t, state)
+
+	s, err := parseAdapterState(raw)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(s.Resources) != len(state.Resources) {
+		t.Errorf("got %d resources, want %d", len(s.Resources), len(state.Resources))
+	}
+	if s.PackID != "test-pack" {
+		t.Errorf("pack_id = %q, want test-pack", s.PackID)
+	}
+}
+
+func TestParseAdapterState_InvalidJSON(t *testing.T) {
+	_, err := parseAdapterState(`not json`)
+	if err == nil {
+		t.Fatal("expected error for invalid JSON")
+	}
+}
