@@ -30,6 +30,6 @@ require (
 	sigs.k8s.io/structured-merge-diff/v6 v6.3.0 // indirect
 )
 
-replace github.com/AltairaLabs/PromptKit/runtime => ../runtime
+replace github.com/AltairaLabs/PromptKit/runtime => ../promptkit/runtime
 
-replace github.com/AltairaLabs/PromptKit/pkg => ../pkg
+replace github.com/AltairaLabs/PromptKit/pkg => ../promptkit/pkg
