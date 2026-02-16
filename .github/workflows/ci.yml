@@ -29,11 +29,8 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
 
-    - name: Checkout PromptKit
-      uses: actions/checkout@v4
-      with:
-        repository: AltairaLabs/PromptKit
-        path: ../promptkit
+    - name: Checkout PromptKit (sibling)
+      run: git clone --depth 1 https://x-access-token:${{ github.token }}@github.com/AltairaLabs/PromptKit.git ../promptkit
 
     - name: Set up Go
       uses: actions/setup-go@v5
@@ -55,11 +52,8 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
 
-    - name: Checkout PromptKit
-      uses: actions/checkout@v4
-      with:
-        repository: AltairaLabs/PromptKit
-        path: ../promptkit
+    - name: Checkout PromptKit (sibling)
+      run: git clone --depth 1 https://x-access-token:${{ github.token }}@github.com/AltairaLabs/PromptKit.git ../promptkit
 
     - name: Set up Go
       uses: actions/setup-go@v5
