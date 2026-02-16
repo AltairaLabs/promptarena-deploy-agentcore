@@ -44,12 +44,22 @@ const configSchema = `{
   "additionalProperties": false
 }`
 
-// AgentCoreProvider implements deploy.Provider for AWS Bedrock AgentCore.
-type AgentCoreProvider struct{}
+// awsClientFactory creates an awsClient for the given config.
+type awsClientFactory func(cfg *AgentCoreConfig) awsClient
 
-// NewAgentCoreProvider creates a new AgentCoreProvider.
+// AgentCoreProvider implements deploy.Provider for AWS Bedrock AgentCore.
+type AgentCoreProvider struct {
+	awsClientFunc awsClientFactory
+}
+
+// NewAgentCoreProvider creates a new AgentCoreProvider with a simulated AWS
+// client. Pass a real factory once AWS SDK integration is available.
 func NewAgentCoreProvider() *AgentCoreProvider {
-	return &AgentCoreProvider{}
+	return &AgentCoreProvider{
+		awsClientFunc: func(cfg *AgentCoreConfig) awsClient {
+			return newSimulatedAWSClient(cfg.Region)
+		},
+	}
 }
 
 // GetProviderInfo returns metadata about the agentcore adapter.

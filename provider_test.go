@@ -154,61 +154,81 @@ func TestValidateConfig_BadJSON(t *testing.T) {
 	}
 }
 
-func TestPlanStubReturnsError(t *testing.T) {
+func TestPlanViaJSONRPC(t *testing.T) {
 	params := map[string]string{
-		"pack_json":     `{}`,
-		"deploy_config": `{}`,
+		"pack_json":     `{"id":"mypack","version":"v1.0.0"}`,
+		"deploy_config": `{"region":"us-west-2","runtime_role_arn":"arn:aws:iam::123456789012:role/test"}`,
 	}
 	resp := callAdapter(t, jsonRPCRequest("plan", 5, params))
 
-	if resp.Error == nil {
-		t.Fatal("expected error for stub method")
+	if resp.Error != nil {
+		t.Fatalf("unexpected error: %s", resp.Error.Message)
 	}
-	if !strings.Contains(resp.Error.Message, "not yet implemented") {
-		t.Errorf("error message = %q, want 'not yet implemented'", resp.Error.Message)
+
+	var result struct {
+		Changes []struct {
+			Type   string `json:"type"`
+			Name   string `json:"name"`
+			Action string `json:"action"`
+		} `json:"changes"`
+		Summary string `json:"summary"`
+	}
+	if err := json.Unmarshal(resp.Result, &result); err != nil {
+		t.Fatalf("failed to unmarshal result: %v", err)
+	}
+
+	if len(result.Changes) == 0 {
+		t.Error("expected at least one resource change")
+	}
+	if result.Summary == "" {
+		t.Error("expected non-empty summary")
 	}
 }
 
-func TestApplyStubReturnsError(t *testing.T) {
+func TestApplyReturnsErrorOnBadPack(t *testing.T) {
 	params := map[string]string{
-		"pack_json":     `{}`,
-		"deploy_config": `{}`,
+		"pack_json":     `{not valid json}`,
+		"deploy_config": `{"region":"us-west-2","runtime_role_arn":"arn:aws:iam::123456789012:role/test"}`,
 	}
 	resp := callAdapter(t, jsonRPCRequest("apply", 6, params))
 
 	if resp.Error == nil {
-		t.Fatal("expected error for stub method")
+		t.Fatal("expected error for bad pack JSON")
 	}
-	if !strings.Contains(resp.Error.Message, "not yet implemented") {
-		t.Errorf("error message = %q, want 'not yet implemented'", resp.Error.Message)
+	if !strings.Contains(resp.Error.Message, "failed to parse pack") {
+		t.Errorf("error message = %q, want 'failed to parse pack'", resp.Error.Message)
 	}
 }
 
-func TestDestroyStubReturnsError(t *testing.T) {
+func TestDestroyEmptyState(t *testing.T) {
 	params := map[string]string{
 		"deploy_config": `{}`,
 	}
 	resp := callAdapter(t, jsonRPCRequest("destroy", 7, params))
 
-	if resp.Error == nil {
-		t.Fatal("expected error for stub method")
-	}
-	if !strings.Contains(resp.Error.Message, "not yet implemented") {
-		t.Errorf("error message = %q, want 'not yet implemented'", resp.Error.Message)
+	if resp.Error != nil {
+		t.Fatalf("unexpected error: %s", resp.Error.Message)
 	}
 }
 
-func TestStatusStubReturnsError(t *testing.T) {
+func TestStatusEmptyState(t *testing.T) {
 	params := map[string]string{
 		"deploy_config": `{}`,
 	}
 	resp := callAdapter(t, jsonRPCRequest("status", 8, params))
 
-	if resp.Error == nil {
-		t.Fatal("expected error for stub method")
+	if resp.Error != nil {
+		t.Fatalf("unexpected error: %s", resp.Error.Message)
 	}
-	if !strings.Contains(resp.Error.Message, "not yet implemented") {
-		t.Errorf("error message = %q, want 'not yet implemented'", resp.Error.Message)
+
+	var result struct {
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal(resp.Result, &result); err != nil {
+		t.Fatalf("failed to unmarshal result: %v", err)
+	}
+	if result.Status != "not_deployed" {
+		t.Errorf("status = %q, want not_deployed", result.Status)
 	}
 }
 
