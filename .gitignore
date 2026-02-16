@@ -1,3 +1,5 @@
 promptarena-deploy-agentcore
 go.work
 go.work.sum
+docs/local-backlog/
+coverage.out

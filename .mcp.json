@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "sonarqube": {
+      "type": "stdio",
+      "command": "node",
+      "args": [
+        "/Users/chaholl/repos/altairalabs/tools/sonarqube-mcp/dist/index.js"
+      ]
+    },
+    "excalidraw": {
+      "command": "npx",
+      "args": ["-y", "@excalidraw/mcp-server"]
+    }
+  }
+}
