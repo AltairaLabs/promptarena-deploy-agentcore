@@ -36,16 +36,68 @@ creation are working.
 
 | Feature | Current State | Gap |
 |---|---|---|
+| Container runtime | Hardcoded `public.ecr.aws/bedrock-agentcore/runtime:latest` | Should use PromptKit as the container runtime |
 | A2A wiring | Synthetic ARN, no AWS call | No separate API exists yet; needs real endpoint config when available |
 | Evaluator creation | Synthetic ARN, log message | SDK doesn't expose `CreateEvaluator` yet |
-| Container image config | Hardcoded `public.ecr.aws/bedrock-agentcore/runtime:latest` | Needs pack-specific or per-agent image URIs |
 | Memory store wiring | Config field parsed but unused in Apply | Should pass to `CreateAgentRuntime` or generate memory resource |
 | Observability wiring | Config fields parsed but unused | CloudWatch log group + X-Ray tracing not passed to runtime |
 | Cedar policy generation | Not started | Validators + tool_policy → Cedar policies |
 | CloudWatch metrics/dashboards | Not started | Eval metrics → CloudWatch custom metrics |
 | Update (in-place) support | Plan detects UPDATE but Apply only handles CREATE | `UpdateAgentRuntime` not called |
 | Dry-run mode | Not started | Plan preview without deploying |
-| Per-agent container images | Not started | Different images per agent member |
+
+---
+
+## Runtime Architecture: PromptKit as the AgentCore Container
+
+The original proposal assumed a Python runtime (`promptpack-agentcore`) running
+inside AgentCore containers. This is unnecessary. AgentCore runs arbitrary
+containers — we should run **PromptKit itself** as the container runtime.
+
+### Why
+
+PromptKit's Go SDK already provides everything needed to serve a pack as an
+A2A-compliant HTTP agent:
+
+| Component | Location | Status |
+|---|---|---|
+| A2A HTTP server | `sdk/a2a_server.go` | Done — `ListenAndServe()`, JSON-RPC 2.0, SSE streaming |
+| Agent Card serving | `sdk/a2a_server.go` | Done — `GET /.well-known/agent.json` |
+| Pack loader | `sdk/sdk.go` | Done — `sdk.Open(packPath, promptName)` |
+| Agent tool resolver | `sdk/agent_resolver.go` | Done — resolves member refs to A2A tool calls |
+| A2A client | `runtime/a2a/client.go` | Done — `Discover()`, `SendMessage()`, streaming |
+| Tool bridge | `runtime/a2a/bridge.go` | Done — remote agent → ToolDescriptor |
+| Container support | `Dockerfile.arena` | Done — Alpine-based, non-root |
+
+What's missing is a thin `cmd/` entry point (~100 lines) that:
+
+1. Reads env vars: `PROMPTPACK_FILE`, `PROMPTPACK_AGENT`, `PROMPTPACK_AGENTS` (peer endpoints)
+2. Calls `sdk.Open()` to load the pack for the assigned agent
+3. Configures `AgentToolResolver` with peer agent endpoints from `PROMPTPACK_AGENTS`
+4. Wraps in `sdk.NewA2AServer()` and calls `ListenAndServe()` on port 9000
+
+### Benefits over Python runtime
+
+1. **Single language** — Go adapter deploys Go runtime. No Python SDK to build/maintain.
+2. **Native A2A** — PromptKit's A2A implementation is battle-tested (arena, demos).
+3. **Smaller image** — Static Go binary vs Python + pip dependencies.
+4. **Feature parity** — Template rendering, fragment resolution, validators, tool
+   policy, multimodal support all come for free.
+5. **No duplication** — Agent Card generation, tool bridging, and A2A protocol
+   handling are already implemented. The Python proposal would reimplement all of this.
+
+### Container image strategy
+
+```
+promptkit-agentcore:v1.3.0     ← base image: Go binary + A2A server
+  └── pack embedded at build    ← or mounted at runtime via volume/env
+```
+
+The adapter supports three modes (configurable via `container_image`):
+
+1. **Default**: Prebuilt PromptKit image with pack file injected as env/config
+2. **Custom**: User-provided image URI (for non-PromptKit runtimes, Python, etc.)
+3. **Build**: Adapter generates Dockerfile, builds image, pushes to ECR (future)
 
 ---
 
@@ -80,12 +132,96 @@ Additionally, all code must pass:
 
 ## Milestones and Issues
 
-### Milestone 1: Update Support and Container Configuration
+### Milestone 1: PromptKit Container Runtime
 
-Complete the deploy lifecycle by implementing in-place updates and making container
-images configurable. This unblocks real iterative deployments.
+Replace the hardcoded third-party container image with PromptKit running natively
+as the AgentCore runtime. This is the highest-impact change — it gives the adapter
+a real, working agent inside every container it deploys.
 
-#### Issue #1: Implement UpdateAgentRuntime in Apply
+#### Issue #1: Create PromptKit A2A server entry point (in PromptKit repo)
+
+**Labels**: `enhancement`, `priority/high`
+**Repo**: `AltairaLabs/PromptKit`
+
+Add a `cmd/agentcore-runtime/` entry point that serves a pack as an A2A agent
+on port 9000.
+
+**Scope**:
+- New `cmd/agentcore-runtime/main.go` (~100 lines)
+- Read configuration from environment variables:
+  - `PROMPTPACK_FILE` — path to `.pack.json` inside container
+  - `PROMPTPACK_AGENT` — which prompt/agent to serve (for multi-agent packs)
+  - `PROMPTPACK_AGENTS` — JSON map of peer agent names → endpoints for A2A discovery
+  - `PROMPTPACK_PORT` — listen port (default 9000)
+- Use `sdk.Open()` to load the pack and create a conversation factory
+- Configure `AgentToolResolver` with `MapEndpointResolver` from `PROMPTPACK_AGENTS`
+- Wrap with `sdk.NewA2AServer()`, serve on configured port
+- Handle SIGTERM/SIGINT for graceful shutdown (AgentCore sends SIGTERM)
+- Health check endpoint at `GET /health` for AgentCore probes
+- Tests: start server, verify agent card at `/.well-known/agent.json`,
+  send a message, verify response
+
+**Acceptance criteria**: `go run ./cmd/agentcore-runtime` loads a pack and serves
+it as an A2A-compliant HTTP agent. Agent card reflects the pack prompt's metadata.
+
+---
+
+#### Issue #2: Build and publish PromptKit AgentCore container image (in PromptKit repo)
+
+**Labels**: `enhancement`, `priority/high`, `ci`
+**Repo**: `AltairaLabs/PromptKit`
+
+Add a Dockerfile and CI pipeline to build and publish the container image to a
+public registry.
+
+**Scope**:
+- `Dockerfile.agentcore` — multi-stage build:
+  - Builder stage: compile `cmd/agentcore-runtime` as static binary
+  - Runtime stage: `scratch` or Alpine, copy binary, expose port 9000
+- Publish to `public.ecr.aws/altairalabs/promptkit-agentcore:VERSION`
+  (or GitHub Container Registry `ghcr.io/altairalabs/promptkit-agentcore:VERSION`)
+- Add to PromptKit release pipeline: build + push image after tagging
+- Image should accept pack file via:
+  - Volume mount: `-v ./pack.json:/app/pack.json`
+  - Environment variable: `PROMPTPACK_FILE=/app/pack.json`
+- Tests: build image, run container, verify A2A endpoint responds
+
+**Acceptance criteria**: `docker run -e PROMPTPACK_FILE=/app/pack.json -v ./pack.json:/app/pack.json ghcr.io/altairalabs/promptkit-agentcore:v1.3.0`
+starts a working A2A agent.
+
+---
+
+#### Issue #3: Use PromptKit image as default container in adapter
+
+**Labels**: `enhancement`, `priority/high`
+**Repo**: `AltairaLabs/promptarena-deploy-agentcore`
+
+Update the adapter to use the PromptKit container image by default and inject
+pack configuration via environment variables.
+
+**Scope**:
+- Change default `ContainerUri` from `public.ecr.aws/bedrock-agentcore/runtime:latest`
+  to `ghcr.io/altairalabs/promptkit-agentcore:VERSION` (version from pack or config)
+- Add `container_image` field to `AgentCoreConfig` for user override
+- Add `agent_overrides` map to config: `{ "agent_name": { "container_image": "..." } }`
+- When creating runtimes, set environment variables on the container:
+  - `PROMPTPACK_FILE` — path to pack file (bundled or fetched at startup)
+  - `PROMPTPACK_AGENT` — agent name (from pack `agents.members` key)
+  - `PROMPTPACK_AGENTS` — peer endpoint map (populated after all runtimes are created)
+- Update JSON Schema in `provider.go`
+- Validate image URI format
+- Tests: config validation, default image used, per-agent override, env vars set
+
+**Acceptance criteria**: `apply` creates runtimes using the PromptKit image. Each
+agent container receives the correct environment variables to load its prompt.
+
+---
+
+### Milestone 2: Update Support and Lifecycle Completion
+
+Complete the deploy lifecycle by implementing in-place updates.
+
+#### Issue #4: Implement UpdateAgentRuntime in Apply
 
 **Labels**: `enhancement`, `priority/high`
 
@@ -106,31 +242,60 @@ Plan → Apply → Plan shows no pending changes.
 
 ---
 
-#### Issue #2: Configurable container image URI
+### Milestone 3: A2A Endpoint Hardening
 
-**Labels**: `enhancement`, `priority/high`
+Move A2A wiring from a logical placeholder to real endpoint configuration.
 
-Replace the hardcoded `public.ecr.aws/bedrock-agentcore/runtime:latest` with a
-configurable image URI. Support per-agent overrides for multi-agent packs.
+#### Issue #5: Configure A2A endpoint discovery on runtimes
+
+**Labels**: `enhancement`, `priority/medium`
+
+Currently A2A wiring returns a synthetic ARN. The entry agent needs to know the
+endpoints of member agents for A2A `message/send` calls.
 
 **Scope**:
-- Add `container_image` field to `AgentCoreConfig` (top-level default)
-- Add `agent_overrides` map to config: `{ "agent_name": { "container_image": "..." } }`
-- Update JSON Schema in `provider.go`
-- Pass image URI to `CreateAgentRuntime` / `UpdateAgentRuntime`
-- Validate image URI format (must be a valid ECR or registry URI)
-- Tests: config validation, Apply uses correct image per agent
+- After all runtimes are created, collect their endpoints/ARNs
+- Inject member agent endpoints into the entry agent's runtime via
+  `PROMPTPACK_AGENTS` environment variable (JSON map: `{"researcher":"https://..."}`)
+- This requires a two-pass Apply: create all runtimes first, then update the entry
+  agent's env vars with the discovered endpoints (uses UpdateAgentRuntime from Issue #4)
+- If AgentCore provides a native A2A registration/discovery API, use it instead
+- Update Apply phase ordering to accommodate the two-pass approach
+- Tests: multi-agent apply → entry agent has member endpoints in env vars
 
-**Acceptance criteria**: Users can specify custom container images. Different agents in
-a multi-agent pack can use different images.
+**Acceptance criteria**: The entry agent runtime can discover and invoke member agent
+runtimes via A2A protocol using the `PROMPTPACK_AGENTS` endpoint map.
+
+**Depends on**: Issue #4 (UpdateAgentRuntime)
 
 ---
 
-### Milestone 2: Memory and Observability Wiring
+#### Issue #6: Configure A2A authentication between runtimes
+
+**Labels**: `enhancement`, `priority/medium`
+
+Inter-agent A2A calls need authentication. Configure OAuth 2.0 or SigV4 between
+runtimes.
+
+**Scope**:
+- Determine AgentCore's supported A2A auth mechanisms (OAuth 2.0, SigV4, IAM)
+- Add `a2a_auth_mode` config field (or derive from runtime role)
+- Configure auth on each runtime's A2A endpoint
+- If IAM-based, ensure the runtime role has permission to invoke sibling runtimes
+- Pass auth configuration to PromptKit runtime via env vars
+  (`PROMPTPACK_A2A_AUTH_MODE`, `PROMPTPACK_A2A_AUTH_ROLE`)
+- Tests: config with auth → correct auth configuration on runtimes
+
+**Acceptance criteria**: A2A calls between runtimes are authenticated. Unauthenticated
+calls are rejected.
+
+---
+
+### Milestone 4: Memory and Observability Wiring
 
 Wire the already-parsed config fields into actual AWS resource creation.
 
-#### Issue #3: Wire memory store configuration to runtime creation
+#### Issue #7: Wire memory store configuration to runtime creation
 
 **Labels**: `enhancement`, `priority/medium`
 
@@ -138,9 +303,10 @@ The `memory_store` config field is validated but never used. Pass it to the runt
 so AgentCore provisions the appropriate memory backend.
 
 **Scope**:
-- Determine the correct AgentCore SDK field for memory configuration (may be `EnvironmentVariables` on the runtime, or a separate `CreateMemory` API if available)
+- Determine the correct AgentCore SDK field for memory configuration (may be
+  environment variables on the runtime, or a separate `CreateMemory` API if available)
 - Pass `memory_store` value when creating/updating runtimes
-- If AgentCore exposes a `CreateMemoryStore` API, add it to `awsClient` interface and implement
+- If AgentCore exposes a `CreateMemoryStore` API, add it to `awsClient` interface
 - Add `memory` resource type to Plan if a separate resource is needed
 - Update Destroy to tear down memory resources
 - Tests: plan includes memory resource, apply creates it, destroy removes it
@@ -150,7 +316,7 @@ with persistent memory enabled. Status reflects memory resource health.
 
 ---
 
-#### Issue #4: Wire observability configuration (CloudWatch + X-Ray)
+#### Issue #8: Wire observability configuration (CloudWatch + X-Ray)
 
 **Labels**: `enhancement`, `priority/medium`
 
@@ -169,11 +335,11 @@ X-Ray tracing is enabled when configured.
 
 ---
 
-### Milestone 3: Policy and Guardrails
+### Milestone 5: Policy and Guardrails
 
 Map PromptPack validators and tool policies to AgentCore's policy enforcement.
 
-#### Issue #5: Generate Cedar policies from validators
+#### Issue #9: Generate Cedar policies from validators
 
 **Labels**: `enhancement`, `priority/medium`
 
@@ -200,7 +366,7 @@ The policy ARN is stored in state. Destroy removes it.
 
 ---
 
-#### Issue #6: Map tool_policy to Cedar enforcement
+#### Issue #10: Map tool_policy to Cedar enforcement
 
 **Labels**: `enhancement`, `priority/medium`
 
@@ -220,11 +386,11 @@ a policy that prevents invocation of that tool.
 
 ---
 
-### Milestone 4: Evaluations Pipeline
+### Milestone 6: Evaluations Pipeline
 
 Bridge PromptPack eval definitions to AgentCore's evaluation framework and CloudWatch.
 
-#### Issue #7: Create evaluator resources from pack evals
+#### Issue #11: Create evaluator resources from pack evals
 
 **Labels**: `enhancement`, `priority/medium`, `blocked`
 
@@ -249,7 +415,7 @@ evaluator health. Destroy removes them.
 
 ---
 
-#### Issue #8: Publish eval metrics to CloudWatch
+#### Issue #12: Publish eval metrics to CloudWatch
 
 **Labels**: `enhancement`, `priority/low`
 
@@ -262,9 +428,8 @@ publish to CloudWatch as custom metrics with pack/agent dimensions.
 - Generate CloudWatch metric namespace: `PromptPack/Evals`
 - Add dimensions: `pack_id`, `agent` (for multi-agent), `eval_id`
 - Generate metric `range` definitions as CloudWatch Alarms (optional)
-- This may be runtime-side config rather than deploy-side — determine whether the
-  adapter generates config that the runtime container reads, or creates CloudWatch
-  resources directly
+- This is runtime-side config — the adapter generates a metric config that the
+  PromptKit runtime container reads via env var (`PROMPTPACK_METRICS_CONFIG`)
 - Tests: metric definition → CloudWatch config
 
 **Acceptance criteria**: Eval metrics are publishable to CloudWatch with correct
@@ -272,7 +437,7 @@ namespaces and dimensions. Alarms fire when metrics exceed defined ranges.
 
 ---
 
-#### Issue #9: Auto-generate CloudWatch dashboard
+#### Issue #13: Auto-generate CloudWatch dashboard
 
 **Labels**: `enhancement`, `priority/low`
 
@@ -294,57 +459,9 @@ dashboard. Destroy removes it.
 
 ---
 
-### Milestone 5: A2A Endpoint Hardening
+### Milestone 7: Dry-Run and Operational Tooling
 
-Move A2A wiring from a logical placeholder to real endpoint configuration.
-
-#### Issue #10: Configure A2A endpoint discovery on runtimes
-
-**Labels**: `enhancement`, `priority/medium`
-
-Currently A2A wiring returns a synthetic ARN. The entry agent needs to know the
-endpoints of member agents for A2A `message/send` calls.
-
-**Scope**:
-- After all runtimes are created, collect their endpoints/ARNs
-- Inject member agent endpoints into the entry agent's runtime configuration
-  (environment variables, or update runtime with discovery config)
-- If AgentCore provides a native A2A registration/discovery API, use it
-- Otherwise, generate a discovery manifest and pass via runtime env vars:
-  `PROMPTPACK_AGENTS={"researcher":"https://...","analyst":"https://..."}`
-- Update Apply ordering: create all runtimes first, then configure A2A discovery
-- This may require a two-pass Apply or an `UpdateAgentRuntime` call after initial creation
-- Tests: multi-agent apply → entry agent has member endpoints in config
-
-**Acceptance criteria**: The entry agent runtime can discover and invoke member agent
-runtimes via A2A protocol.
-
-**Depends on**: Issue #1 (UpdateAgentRuntime)
-
----
-
-#### Issue #11: Configure A2A authentication between runtimes
-
-**Labels**: `enhancement`, `priority/medium`
-
-Inter-agent A2A calls need authentication. Configure OAuth 2.0 or SigV4 between
-runtimes.
-
-**Scope**:
-- Determine AgentCore's supported A2A auth mechanisms (OAuth 2.0, SigV4, IAM)
-- Add `a2a_auth_mode` config field (or derive from runtime role)
-- Configure auth on each runtime's A2A endpoint
-- If IAM-based, ensure the runtime role has permission to invoke sibling runtimes
-- Tests: config with auth → correct auth configuration on runtimes
-
-**Acceptance criteria**: A2A calls between runtimes are authenticated. Unauthenticated
-calls are rejected.
-
----
-
-### Milestone 6: Dry-Run and Operational Tooling
-
-#### Issue #12: Implement dry-run mode
+#### Issue #14: Implement dry-run mode
 
 **Labels**: `enhancement`, `priority/low`
 
@@ -363,7 +480,7 @@ creating any AWS resources.
 
 ---
 
-#### Issue #13: Add resource tagging support
+#### Issue #15: Add resource tagging support
 
 **Labels**: `enhancement`, `priority/low`
 
@@ -381,7 +498,7 @@ from config are applied.
 
 ---
 
-#### Issue #14: Improve error messages and deployment diagnostics
+#### Issue #16: Improve error messages and deployment diagnostics
 
 **Labels**: `enhancement`, `priority/low`, `dx`
 
@@ -391,7 +508,6 @@ Improve the developer experience when deployments fail.
 - Include `FailureReason` from AWS responses in error events
 - Add a `diagnose` capability that checks IAM permissions before deploying
 - Emit warnings for common misconfigurations (wrong region, insufficient permissions)
-- Include cost estimation hints in plan output (optional)
 - Tests: failure scenarios produce actionable error messages
 
 **Acceptance criteria**: Failed deployments produce clear, actionable error messages
@@ -399,9 +515,9 @@ that tell the user what to fix.
 
 ---
 
-### Milestone 7: CI and Quality Infrastructure
+### Milestone 8: CI and Quality Infrastructure
 
-#### Issue #15: Add SonarCloud analysis to CI pipeline
+#### Issue #17: Add SonarCloud analysis to CI pipeline
 
 **Labels**: `ci`, `priority/high`
 
@@ -421,7 +537,7 @@ if thresholds are not met.
 
 ---
 
-#### Issue #16: Reach 80% test coverage on existing code
+#### Issue #18: Reach 80% test coverage on existing code
 
 **Labels**: `testing`, `priority/high`
 
@@ -446,63 +562,72 @@ SonarCloud quality gate passes on main.
 
 ## Issue Summary by Milestone
 
-| # | Milestone | Issues | Priority |
-|---|---|---|---|
-| M1 | Update Support & Container Config | #1, #2 | High |
-| M2 | Memory & Observability Wiring | #3, #4 | Medium |
-| M3 | Policy & Guardrails | #5, #6 | Medium |
-| M4 | Evaluations Pipeline | #7, #8, #9 | Medium/Low (partially blocked) |
-| M5 | A2A Endpoint Hardening | #10, #11 | Medium |
-| M6 | Dry-Run & Operational Tooling | #12, #13, #14 | Low |
-| M7 | CI & Quality Infrastructure | #15, #16 | High |
+| # | Milestone | Issues | Priority | Repo |
+|---|---|---|---|---|
+| M1 | PromptKit Container Runtime | #1, #2, #3 | High | PromptKit + this repo |
+| M2 | Update Support & Lifecycle | #4 | High | This repo |
+| M3 | A2A Endpoint Hardening | #5, #6 | Medium | This repo |
+| M4 | Memory & Observability Wiring | #7, #8 | Medium | This repo |
+| M5 | Policy & Guardrails | #9, #10 | Medium | This repo |
+| M6 | Evaluations Pipeline | #11, #12, #13 | Medium/Low (partially blocked) | This repo |
+| M7 | Dry-Run & Operational Tooling | #14, #15, #16 | Low | This repo |
+| M8 | CI & Quality Infrastructure | #17, #18 | High | This repo |
 
 ### Recommended execution order
 
-1. **M7** (CI + coverage) — establish the quality gate first so all subsequent work is measured
-2. **M1** (updates + container config) — unblocks real iterative deployments
-3. **M2** (memory + observability) — wires existing config fields
-4. **M5** (A2A hardening) — depends on M1 for UpdateAgentRuntime
-5. **M3** (policies) — new resource type, independent of others
-6. **M4** (evals) — partially blocked on AWS SDK; start with CloudWatch metrics
-7. **M6** (DX tooling) — polish
+1. **M8** (CI + coverage) — establish the quality gate first so all subsequent work is measured
+2. **M1** (PromptKit runtime) — the core architectural change; makes everything else real
+3. **M2** (update support) — unblocks iterative deployments
+4. **M3** (A2A hardening) — depends on M1 + M2; wires up multi-agent communication
+5. **M4** (memory + observability) — wires existing config fields
+6. **M5** (policies) — new resource type, independent of others
+7. **M6** (evals) — partially blocked on AWS SDK; start with CloudWatch metrics
+8. **M7** (DX tooling) — polish
 
 ---
 
 ## Dependency Graph
 
 ```
-M7 (CI + Quality)
+M8 (CI + Quality)
  │
  ▼
-M1 (Update + Container) ──────────┐
- │                                 │
- ├──▶ M2 (Memory + Observability)  │
- │                                 │
- └──▶ M5 (A2A Hardening) ◄────────┘
+M1 (PromptKit Container Runtime) ←── Issues #1, #2 in PromptKit repo
+ │
+ ▼
+M2 (Update Support) ─────────────┐
+ │                                │
+ ├──▶ M4 (Memory + Observability) │
+ │                                │
+ └──▶ M3 (A2A Hardening) ◄───────┘
       │
       ▼
-M3 (Policy + Guardrails)
+M5 (Policy + Guardrails)
  │
  ▼
-M4 (Evaluations) ← blocked on AWS SDK for #7
+M6 (Evaluations) ← blocked on AWS SDK for #11
  │
  ▼
-M6 (Dry-Run + DX)
+M7 (Dry-Run + DX)
 ```
 
 ---
 
-## Out of Scope
+## What This Replaces
 
-These items from the original proposal are **not** part of this adapter's responsibility.
-They belong to the Python runtime package (`promptpack-agentcore` in `promptpack-python`):
+The original proposal envisioned a separate **Python** runtime package
+(`promptpack-agentcore` in `promptpack-python`). That package is no longer needed.
+By running PromptKit as the AgentCore container runtime, we get:
 
-- Agent Card generation from prompt metadata
-- A2A JSON-RPC 2.0 server implementation
-- A2A tool bridge (resolve prompt-key tool refs as A2A calls)
-- Template rendering inside the container
-- Per-agent prompt routing
-- LLM inference calls
+| Original Python Proposal Item | Replaced By |
+|---|---|
+| `promptpack-agentcore` Python package | PromptKit `cmd/agentcore-runtime` Go binary |
+| Agent Card generation (Python) | `sdk.NewA2AServer()` — already serves cards |
+| A2A JSON-RPC 2.0 server (Python) | `sdk/a2a_server.go` — already implemented |
+| A2A tool bridge (Python) | `runtime/a2a/bridge.go` — already implemented |
+| Template rendering (Python) | `sdk.Open()` — already handles templates + fragments |
+| Per-agent prompt routing (Python) | `PROMPTPACK_AGENT` env var → `sdk.Open(pack, agentName)` |
+| LLM inference (Python) | PromptKit SDK auto-detects provider from env vars |
 
-This Go adapter creates and manages the **infrastructure**. The Python runtime code
-runs **inside** the containers this adapter deploys.
+The Python SDK (`promptpack-python`) remains useful for LangChain integration and
+local development, but it is not needed for AgentCore deployment.
