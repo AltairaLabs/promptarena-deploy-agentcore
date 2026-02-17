@@ -3,6 +3,8 @@ package agentcore
 import (
 	"encoding/json"
 	"strconv"
+
+	"github.com/AltairaLabs/PromptKit/runtime/prompt"
 )
 
 // Environment variable keys injected into AgentCore runtimes.
@@ -15,6 +17,7 @@ const (
 	EnvA2AAuthMode     = "PROMPTPACK_A2A_AUTH_MODE"
 	EnvA2AAuthRole     = "PROMPTPACK_A2A_AUTH_ROLE"
 	EnvPolicyEngineARN = "PROMPTPACK_POLICY_ENGINE_ARN"
+	EnvMetricsConfig   = "PROMPTPACK_METRICS_CONFIG"
 )
 
 // buildRuntimeEnvVars constructs the environment variable map that will be
@@ -64,4 +67,19 @@ func buildA2AEndpointMap(runtimeResources []ResourceState) string {
 	}
 	b, _ := json.Marshal(m)
 	return string(b)
+}
+
+// injectMetricsConfig builds the CloudWatch metrics configuration from pack
+// evals and sets it as an env var on the runtime config. No-op if no evals
+// define metrics.
+func injectMetricsConfig(cfg *Config, pack *prompt.Pack) {
+	mc := buildMetricsConfig(pack)
+	if mc == nil {
+		return
+	}
+	b, err := json.Marshal(mc)
+	if err != nil {
+		return
+	}
+	cfg.RuntimeEnvVars[EnvMetricsConfig] = string(b)
 }
