@@ -31,24 +31,33 @@ Before starting, make sure you have the following ready:
    ```bash
    promptarena --version
    ```
-4. **Compiled pack** -- a `.pack.json` file produced by `packc`. For this tutorial, any single-agent pack will work. If you do not have one, compile the quickstart example:
+4. **Compiled pack** -- a `.pack.json` file produced by `packc compile`. For this tutorial, any single-agent pack will work. If you do not have one, compile the quickstart example:
    ```bash
-   packc build -o my-agent.pack.json
+   packc compile -o my-agent.pack.json
    ```
 
 ---
 
 ## Step 1: Create the Deploy Configuration
 
-Open (or create) the `arena.yaml` file in your project root and add the `deploy` section:
+Open your `config.arena.yaml` file and add a `deploy` section under `spec:`. If you do not have an arena config yet, create one:
 
 ```yaml
-# arena.yaml
-deploy:
-  provider: agentcore
-  config:
-    region: us-west-2
-    runtime_role_arn: arn:aws:iam::123456789012:role/AgentCoreRuntime
+# config.arena.yaml
+apiVersion: promptkit.altairalabs.ai/v1alpha1
+kind: Arena
+metadata:
+  name: my-agent
+spec:
+  prompt_configs:
+    - id: main
+      file: prompts/main.yaml
+
+  deploy:
+    provider: agentcore
+    config:
+      region: us-west-2
+      runtime_role_arn: arn:aws:iam::123456789012:role/AgentCoreRuntime
 ```
 
 Replace the values:

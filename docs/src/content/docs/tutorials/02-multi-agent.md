@@ -35,72 +35,188 @@ Everything from [Tutorial 01](01-first-deployment), plus:
 
 ---
 
-## Step 1: Understand the Pack Structure
+## Step 1: Create the Project Structure
 
-A multi-agent pack has an `agents` section that declares the entry point and the member agents. Here is the relevant portion of a `pack.yaml` before compilation:
+A multi-agent project uses standard PromptKit source files. Create the following directory layout:
+
+```
+content-team/
+├── config.arena.yaml              # main config — ties everything together
+├── prompts/
+│   ├── coordinator.yaml           # kind: PromptConfig
+│   ├── researcher.yaml            # kind: PromptConfig
+│   └── writer.yaml                # kind: PromptConfig
+└── tools/
+    └── web-search.tool.yaml       # kind: Tool
+```
+
+### Define the prompts
+
+Each agent needs a `PromptConfig` YAML file. The key under `agents.members` must match the prompt's `task_type`.
 
 ```yaml
-# pack.yaml
-id: content-team
-version: "1.0.0"
+# prompts/coordinator.yaml
+apiVersion: promptkit.altairalabs.ai/v1alpha1
+kind: PromptConfig
+metadata:
+  name: coordinator
+spec:
+  task_type: coordinator
+  version: "v1.0.0"
+  description: "Routes tasks to the appropriate worker agent"
+  system_template: |
+    You are a coordinator agent. Delegate research tasks to the
+    researcher agent and writing tasks to the writer agent.
+    Synthesize their results into a final response.
+  variables:
+    - name: topic
+      type: string
+      required: true
+      description: "The topic to research and write about"
+```
 
-agents:
-  entry: coordinator
-  members:
-    - name: coordinator
-      prompt: coordinator_prompt
-      description: Routes tasks to the appropriate worker agent
-    - name: researcher
-      prompt: researcher_prompt
-      description: Searches knowledge bases and returns findings
-    - name: writer
-      prompt: writer_prompt
-      description: Produces written content from research findings
+```yaml
+# prompts/researcher.yaml
+apiVersion: promptkit.altairalabs.ai/v1alpha1
+kind: PromptConfig
+metadata:
+  name: researcher
+spec:
+  task_type: researcher
+  version: "v1.0.0"
+  description: "Searches knowledge bases and returns findings"
+  system_template: |
+    You are a research assistant. Find relevant information on the
+    given topic and return structured findings.
+  allowed_tools:
+    - web_search
+  variables:
+    - name: query
+      type: string
+      required: true
+      description: "The search query"
+```
 
-prompts:
-  coordinator_prompt:
-    model: anthropic.claude-sonnet-4-20250514
-    system: "You are a coordinator. Delegate research to the researcher and writing to the writer."
-  researcher_prompt:
-    model: anthropic.claude-sonnet-4-20250514
-    system: "You are a research assistant. Find relevant information."
-  writer_prompt:
-    model: anthropic.claude-sonnet-4-20250514
-    system: "You are a technical writer. Produce clear, well-structured content."
+```yaml
+# prompts/writer.yaml
+apiVersion: promptkit.altairalabs.ai/v1alpha1
+kind: PromptConfig
+metadata:
+  name: writer
+spec:
+  task_type: writer
+  version: "v1.0.0"
+  description: "Produces written content from research findings"
+  system_template: |
+    You are a technical writer. Produce clear, well-structured
+    content based on the provided research findings.
+  variables:
+    - name: findings
+      type: string
+      required: true
+      description: "Research findings to write about"
+```
 
-tools:
-  web_search:
-    type: mcp
-    uri: "https://search-api.example.com/mcp"
+### Define the tool
+
+Tools are defined at the pack level and referenced by name in prompts via `allowed_tools`.
+
+```yaml
+# tools/web-search.tool.yaml
+apiVersion: promptkit.altairalabs.ai/v1alpha1
+kind: Tool
+metadata:
+  name: web_search
+spec:
+  name: web_search
+  description: "Search the web for information on a topic"
+  input_schema:
+    type: object
+    properties:
+      query:
+        type: string
+        description: "The search query"
+    required:
+      - query
+  mode: mock
+  mock_result:
+    results:
+      - title: "Example result"
+        snippet: "This is a mock search result."
+```
+
+### Define the arena config
+
+The `config.arena.yaml` ties everything together. The `agents` section declares the entry point and members. Each member key must match a `task_type` from the prompt configs.
+
+```yaml
+# config.arena.yaml
+apiVersion: promptkit.altairalabs.ai/v1alpha1
+kind: Arena
+metadata:
+  name: content-team
+spec:
+  prompt_configs:
+    - id: coordinator
+      file: prompts/coordinator.yaml
+    - id: researcher
+      file: prompts/researcher.yaml
+    - id: writer
+      file: prompts/writer.yaml
+
+  tools:
+    - file: tools/web-search.tool.yaml
+
+  agents:
+    entry: coordinator
+    members:
+      coordinator:
+        description: "Routes tasks to the appropriate worker agent"
+        tags: ["router", "coordinator"]
+        input_modes: ["text/plain"]
+        output_modes: ["text/plain"]
+      researcher:
+        description: "Searches knowledge bases and returns findings"
+        tags: ["research", "search"]
+        input_modes: ["text/plain"]
+        output_modes: ["text/plain"]
+      writer:
+        description: "Produces written content from research findings"
+        tags: ["writing", "content"]
+        input_modes: ["text/plain"]
+        output_modes: ["text/plain"]
 ```
 
 Key points:
 - **`agents.entry`** identifies which member is the coordinator (receives external requests).
-- **`agents.members`** lists all agents. Each gets its own AgentCore runtime.
+- **`agents.members`** is a map where each key matches a prompt's `task_type`. Each member gets its own AgentCore runtime.
 - **`tools`** at the pack level are shared across agents via tool gateways.
+- Member fields (`description`, `tags`, `input_modes`, `output_modes`) provide A2A Agent Card metadata.
 
-Compile the pack:
+### Compile the pack
 
 ```bash
-packc build -o content-team.pack.json
+packc compile -o content-team.pack.json
 ```
+
+This reads the arena config, compiles all prompts, tools, and the agents section into a single `.pack.json` file.
 
 ## Step 2: Configure the Deployment
 
-Add the deploy configuration to `arena.yaml`. For multi-agent packs, you should also configure **A2A authentication** so agents can securely invoke each other:
+Add a `deploy` section to your `config.arena.yaml`. For multi-agent packs, you should also configure **A2A authentication** so agents can securely invoke each other:
 
 ```yaml
-# arena.yaml
-deploy:
-  provider: agentcore
-  config:
-    region: us-west-2
-    runtime_role_arn: arn:aws:iam::123456789012:role/AgentCoreRuntime
-    a2a_auth:
-      mode: iam
-    tags:
-      team: content-platform
-      environment: staging
+# Add this under spec: in config.arena.yaml
+  deploy:
+    provider: agentcore
+    config:
+      region: us-west-2
+      runtime_role_arn: arn:aws:iam::123456789012:role/AgentCoreRuntime
+      a2a_auth:
+        mode: iam
+      tags:
+        team: content-platform
+        environment: staging
 ```
 
 The `a2a_auth` section is optional but recommended for multi-agent deployments:
