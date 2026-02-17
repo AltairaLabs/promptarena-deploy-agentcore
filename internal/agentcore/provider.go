@@ -40,6 +40,15 @@ const configSchema = `{
         "tracing_enabled": { "type": "boolean" }
       }
     },
+    "tags": {
+      "type": "object",
+      "additionalProperties": { "type": "string" },
+      "description": "User-defined tags to apply to all created AWS resources"
+    },
+    "dry_run": {
+      "type": "boolean",
+      "description": "When true, Apply simulates resource creation without calling AWS APIs"
+    },
     "a2a_auth": {
       "type": "object",
       "required": ["mode"],
@@ -101,12 +110,14 @@ func (p *Provider) GetProviderInfo(_ context.Context) (*deploy.ProviderInfo, err
 	return &deploy.ProviderInfo{
 		Name:         "agentcore",
 		Version:      Version,
-		Capabilities: []string{"plan", "apply", "destroy", "status"},
+		Capabilities: []string{"plan", "apply", "destroy", "status", "diagnose"},
 		ConfigSchema: configSchema,
 	}, nil
 }
 
 // ValidateConfig parses and validates the provider configuration.
+// In addition to hard errors, it runs diagnostic checks and appends
+// non-fatal warnings so the user can fix common misconfigurations.
 func (p *Provider) ValidateConfig(
 	_ context.Context, req *deploy.ValidateRequest,
 ) (*deploy.ValidateResponse, error) {
@@ -119,8 +130,17 @@ func (p *Provider) ValidateConfig(
 	}
 
 	errs := cfg.validate()
+
+	// Append diagnostic warnings as informational entries.
+	warnings := DiagnoseConfig(cfg)
+	for _, w := range warnings {
+		errs = append(errs, "warning: "+w.String())
+	}
+
+	// Only validation errors (not warnings) affect the valid flag.
+	validationErrorCount := len(errs) - len(warnings)
 	return &deploy.ValidateResponse{
-		Valid:  len(errs) == 0,
+		Valid:  validationErrorCount == 0,
 		Errors: errs,
 	}, nil
 }

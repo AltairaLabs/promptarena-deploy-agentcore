@@ -1513,6 +1513,331 @@ func TestApply_PolicyEngineFailure_ContinuesToRuntime(t *testing.T) {
 	}
 }
 
+// --- dry-run tests ---
+
+// validConfigDryRun returns a deploy config with dry_run enabled.
+func validConfigDryRun() string {
+	return `{"region":"us-west-2","runtime_role_arn":"arn:aws:iam::123456789012:role/test","dry_run":true}`
+}
+
+func TestApply_DryRun_SingleAgent_NoAWSCalls(t *testing.T) {
+	// Use a provider whose AWS client factory panics — proves no AWS calls.
+	provider := &Provider{
+		awsClientFunc: func(_ context.Context, _ *Config) (awsClient, error) {
+			panic("dry-run should not create AWS client")
+		},
+	}
+
+	req := &deploy.PlanRequest{
+		PackJSON:     singleAgentPack(),
+		DeployConfig: validConfigDryRun(),
+	}
+
+	events, stateStr, err := collectEvents(t, provider, req)
+	if err != nil {
+		t.Fatalf("Apply returned error: %v", err)
+	}
+	if stateStr == "" {
+		t.Fatal("Apply returned empty state")
+	}
+
+	// All resource events should have status=planned.
+	var resourceCount int
+	for _, ev := range events {
+		if ev.Type == "resource" && ev.Resource != nil {
+			resourceCount++
+			if ev.Resource.Status != "planned" {
+				t.Errorf("resource %s/%s status = %q, want planned",
+					ev.Resource.Type, ev.Resource.Name, ev.Resource.Status)
+			}
+		}
+	}
+	if resourceCount < 1 {
+		t.Error("expected at least 1 resource event")
+	}
+
+	// State should have planned resources with no ARNs.
+	var state AdapterState
+	if err := json.Unmarshal([]byte(stateStr), &state); err != nil {
+		t.Fatalf("failed to unmarshal state: %v", err)
+	}
+	if len(state.Resources) != 1 {
+		t.Errorf("expected 1 resource in state, got %d", len(state.Resources))
+	}
+	for _, r := range state.Resources {
+		if r.Status != "planned" {
+			t.Errorf("resource %s/%s status = %q, want planned", r.Type, r.Name, r.Status)
+		}
+		if r.ARN != "" {
+			t.Errorf("resource %s/%s should have no ARN in dry-run, got %q", r.Type, r.Name, r.ARN)
+		}
+	}
+	if state.PackID != "mypack" {
+		t.Errorf("state.PackID = %q, want mypack", state.PackID)
+	}
+}
+
+func TestApply_DryRun_WithTools_PlansAllResources(t *testing.T) {
+	provider := &Provider{
+		awsClientFunc: func(_ context.Context, _ *Config) (awsClient, error) {
+			panic("dry-run should not create AWS client")
+		},
+	}
+
+	req := &deploy.PlanRequest{
+		PackJSON:     singleAgentPackWithTools(),
+		DeployConfig: validConfigDryRun(),
+	}
+
+	events, stateStr, err := collectEvents(t, provider, req)
+	if err != nil {
+		t.Fatalf("Apply returned error: %v", err)
+	}
+
+	// Should have resource events for tools + runtime.
+	var resourceTypes []string
+	for _, ev := range events {
+		if ev.Type == "resource" && ev.Resource != nil {
+			resourceTypes = append(resourceTypes, ev.Resource.Type)
+		}
+	}
+
+	// Single-agent pack doesn't generate tool_gateway in plan (only for multi-agent).
+	// It should have 1 runtime.
+	if len(resourceTypes) < 1 {
+		t.Fatalf("expected at least 1 resource event, got %d: %v", len(resourceTypes), resourceTypes)
+	}
+
+	var state AdapterState
+	if err := json.Unmarshal([]byte(stateStr), &state); err != nil {
+		t.Fatalf("failed to unmarshal state: %v", err)
+	}
+	for _, r := range state.Resources {
+		if r.Status != "planned" {
+			t.Errorf("resource %s/%s status = %q, want planned", r.Type, r.Name, r.Status)
+		}
+	}
+}
+
+func TestApply_DryRun_MultiAgent_PlansAllResources(t *testing.T) {
+	provider := &Provider{
+		awsClientFunc: func(_ context.Context, _ *Config) (awsClient, error) {
+			panic("dry-run should not create AWS client")
+		},
+	}
+
+	req := &deploy.PlanRequest{
+		PackJSON:     multiAgentPack(),
+		DeployConfig: validConfigDryRun(),
+	}
+
+	events, stateStr, err := collectEvents(t, provider, req)
+	if err != nil {
+		t.Fatalf("Apply returned error: %v", err)
+	}
+
+	// Collect resource events.
+	var resourceTypes []string
+	for _, ev := range events {
+		if ev.Type == "resource" && ev.Resource != nil {
+			resourceTypes = append(resourceTypes, ev.Resource.Type)
+			if ev.Resource.Status != "planned" {
+				t.Errorf("resource %s/%s status = %q, want planned",
+					ev.Resource.Type, ev.Resource.Name, ev.Resource.Status)
+			}
+		}
+	}
+
+	// Multi-agent pack: 2 runtimes + 2 a2a + 1 tool_gateway = 5 resources.
+	if len(resourceTypes) < 3 {
+		t.Errorf("expected at least 3 resource events for multi-agent dry-run, got %d: %v",
+			len(resourceTypes), resourceTypes)
+	}
+
+	var state AdapterState
+	if err := json.Unmarshal([]byte(stateStr), &state); err != nil {
+		t.Fatalf("failed to unmarshal state: %v", err)
+	}
+	if state.PackID != "multipack" {
+		t.Errorf("state.PackID = %q, want multipack", state.PackID)
+	}
+	for _, r := range state.Resources {
+		if r.Status != "planned" {
+			t.Errorf("resource %s/%s status = %q, want planned", r.Type, r.Name, r.Status)
+		}
+		if r.ARN != "" {
+			t.Errorf("resource %s/%s should have no ARN, got %q", r.Type, r.Name, r.ARN)
+		}
+	}
+}
+
+func TestApply_DryRun_WithMemory_PlansMemoryResource(t *testing.T) {
+	provider := &Provider{
+		awsClientFunc: func(_ context.Context, _ *Config) (awsClient, error) {
+			panic("dry-run should not create AWS client")
+		},
+	}
+
+	cfg := `{"region":"us-west-2","runtime_role_arn":"arn:aws:iam::123456789012:role/test","dry_run":true,"memory_store":"session"}`
+	req := &deploy.PlanRequest{
+		PackJSON:     singleAgentPack(),
+		DeployConfig: cfg,
+	}
+
+	events, stateStr, err := collectEvents(t, provider, req)
+	if err != nil {
+		t.Fatalf("Apply returned error: %v", err)
+	}
+
+	// Should have memory + runtime planned resources.
+	var resourceTypes []string
+	for _, ev := range events {
+		if ev.Type == "resource" && ev.Resource != nil {
+			resourceTypes = append(resourceTypes, ev.Resource.Type)
+		}
+	}
+
+	if len(resourceTypes) != 2 {
+		t.Fatalf("expected 2 resource events (memory + runtime), got %d: %v",
+			len(resourceTypes), resourceTypes)
+	}
+
+	var state AdapterState
+	if err := json.Unmarshal([]byte(stateStr), &state); err != nil {
+		t.Fatalf("failed to unmarshal state: %v", err)
+	}
+
+	var memoryFound bool
+	for _, r := range state.Resources {
+		if r.Type == ResTypeMemory {
+			memoryFound = true
+			if r.Status != "planned" {
+				t.Errorf("memory status = %q, want planned", r.Status)
+			}
+		}
+	}
+	if !memoryFound {
+		t.Error("expected memory resource in dry-run state")
+	}
+}
+
+func TestApply_DryRun_EmitsProgressEvents(t *testing.T) {
+	provider := &Provider{
+		awsClientFunc: func(_ context.Context, _ *Config) (awsClient, error) {
+			panic("dry-run should not create AWS client")
+		},
+	}
+
+	req := &deploy.PlanRequest{
+		PackJSON:     singleAgentPack(),
+		DeployConfig: validConfigDryRun(),
+	}
+
+	events, _, err := collectEvents(t, provider, req)
+	if err != nil {
+		t.Fatalf("Apply returned error: %v", err)
+	}
+
+	var progressCount int
+	for _, ev := range events {
+		if ev.Type == "progress" {
+			progressCount++
+			if !strings.Contains(ev.Message, "Planned") {
+				t.Errorf("dry-run progress message should contain 'Planned', got %q", ev.Message)
+			}
+		}
+	}
+	if progressCount < 1 {
+		t.Error("expected at least 1 progress event in dry-run mode")
+	}
+}
+
+func TestApply_DryRun_BadPackJSON(t *testing.T) {
+	provider := &Provider{
+		awsClientFunc: func(_ context.Context, _ *Config) (awsClient, error) {
+			panic("dry-run should not create AWS client")
+		},
+	}
+
+	req := &deploy.PlanRequest{
+		PackJSON:     `{not valid}`,
+		DeployConfig: validConfigDryRun(),
+	}
+
+	_, _, err := collectEvents(t, provider, req)
+	if err == nil {
+		t.Fatal("expected error for bad pack JSON in dry-run")
+	}
+	if !strings.Contains(err.Error(), "failed to parse pack") {
+		t.Errorf("error = %q, want 'failed to parse pack'", err.Error())
+	}
+}
+
+func TestApply_DryRun_CallbackError_AbortsEarly(t *testing.T) {
+	provider := &Provider{
+		awsClientFunc: func(_ context.Context, _ *Config) (awsClient, error) {
+			panic("dry-run should not create AWS client")
+		},
+	}
+
+	req := &deploy.PlanRequest{
+		PackJSON:     singleAgentPack(),
+		DeployConfig: validConfigDryRun(),
+	}
+
+	callCount := 0
+	callback := func(_ *deploy.ApplyEvent) error {
+		callCount++
+		if callCount >= 2 {
+			return fmt.Errorf("callback abort")
+		}
+		return nil
+	}
+	_, err := provider.Apply(context.Background(), req, callback)
+	if err == nil {
+		t.Fatal("expected error from callback abort in dry-run")
+	}
+	if !strings.Contains(err.Error(), "callback abort") {
+		t.Errorf("error = %q, want callback abort", err.Error())
+	}
+}
+
+func TestApply_DryRunFalse_StillCallsAWS(t *testing.T) {
+	// When dry_run is false (default), normal behavior should apply.
+	provider := newSimulatedProvider()
+	req := &deploy.PlanRequest{
+		PackJSON:     singleAgentPack(),
+		DeployConfig: `{"region":"us-west-2","runtime_role_arn":"arn:aws:iam::123456789012:role/test","dry_run":false}`,
+	}
+
+	events, stateStr, err := collectEvents(t, provider, req)
+	if err != nil {
+		t.Fatalf("Apply returned error: %v", err)
+	}
+
+	// Should have created (not planned) resources.
+	for _, ev := range events {
+		if ev.Type == "resource" && ev.Resource != nil {
+			if ev.Resource.Status == "planned" {
+				t.Error("dry_run=false should not produce planned resources")
+			}
+		}
+	}
+
+	var state AdapterState
+	if err := json.Unmarshal([]byte(stateStr), &state); err != nil {
+		t.Fatalf("failed to unmarshal state: %v", err)
+	}
+	for _, r := range state.Resources {
+		if r.Status != "created" {
+			t.Errorf("resource %s/%s status = %q, want created", r.Type, r.Name, r.Status)
+		}
+		if r.ARN == "" {
+			t.Errorf("resource %s/%s should have ARN when not in dry-run", r.Type, r.Name)
+		}
+	}
+}
+
 // trackingAWSClient wraps simulatedAWSClient to record UpdateRuntime calls.
 type trackingAWSClient struct {
 	simulatedAWSClient
@@ -1538,4 +1863,260 @@ func (c *trackingAWSClient) CreateCedarPolicy(
 	ctx context.Context, engineID string, name string, stmt string, cfg *Config,
 ) (string, string, error) {
 	return c.simulatedAWSClient.CreateCedarPolicy(ctx, engineID, name, stmt, cfg)
+}
+
+// --- resource tagging tests ---
+
+// validConfigWithTags returns a deploy config with user-defined tags.
+func validConfigWithTags() string {
+	return `{
+		"region":"us-west-2",
+		"runtime_role_arn":"arn:aws:iam::123456789012:role/test",
+		"tags":{"env":"production","team":"platform"}
+	}`
+}
+
+// tagCapturingClient records the Config.ResourceTags from each Create call.
+type tagCapturingClient struct {
+	simulatedAWSClient
+	capturedTags []map[string]string
+}
+
+func (c *tagCapturingClient) CreateRuntime(_ context.Context, name string, cfg *Config) (string, error) {
+	c.capturedTags = append(c.capturedTags, copyTags(cfg.ResourceTags))
+	return c.simulatedAWSClient.CreateRuntime(nil, name, cfg)
+}
+
+func (c *tagCapturingClient) CreateGatewayTool(_ context.Context, name string, cfg *Config) (string, error) {
+	c.capturedTags = append(c.capturedTags, copyTags(cfg.ResourceTags))
+	return c.simulatedAWSClient.CreateGatewayTool(nil, name, cfg)
+}
+
+func (c *tagCapturingClient) CreateMemory(_ context.Context, name string, cfg *Config) (string, error) {
+	c.capturedTags = append(c.capturedTags, copyTags(cfg.ResourceTags))
+	return c.simulatedAWSClient.CreateMemory(nil, name, cfg)
+}
+
+func (c *tagCapturingClient) CreatePolicyEngine(
+	_ context.Context, name string, cfg *Config,
+) (string, string, error) {
+	return c.simulatedAWSClient.CreatePolicyEngine(nil, name, cfg)
+}
+
+func (c *tagCapturingClient) CreateCedarPolicy(
+	_ context.Context, engineID string, name string, stmt string, cfg *Config,
+) (string, string, error) {
+	return c.simulatedAWSClient.CreateCedarPolicy(nil, engineID, name, stmt, cfg)
+}
+
+func copyTags(m map[string]string) map[string]string {
+	if m == nil {
+		return nil
+	}
+	cp := make(map[string]string, len(m))
+	for k, v := range m {
+		cp[k] = v
+	}
+	return cp
+}
+
+func TestApply_SingleAgent_ResourceTagsIncludePackMetadata(t *testing.T) {
+	capClient := &tagCapturingClient{
+		simulatedAWSClient: *newSimulatedAWSClient("us-west-2"),
+	}
+
+	provider := &Provider{
+		awsClientFunc: func(_ context.Context, _ *Config) (awsClient, error) {
+			return capClient, nil
+		},
+		destroyerFunc: newSimulatedProvider().destroyerFunc,
+		checkerFunc:   newSimulatedProvider().checkerFunc,
+	}
+
+	req := &deploy.PlanRequest{
+		PackJSON:     singleAgentPack(),
+		DeployConfig: validConfig(),
+	}
+
+	_, _, err := collectEvents(t, provider, req)
+	if err != nil {
+		t.Fatalf("Apply returned error: %v", err)
+	}
+
+	if len(capClient.capturedTags) == 0 {
+		t.Fatal("expected at least one Create call with tags")
+	}
+
+	// The runtime create call should have pack metadata tags.
+	tags := capClient.capturedTags[0]
+	if tags[TagKeyPackID] != "mypack" {
+		t.Errorf("ResourceTags[pack-id] = %q, want mypack", tags[TagKeyPackID])
+	}
+	if tags[TagKeyVersion] != "v1.0.0" {
+		t.Errorf("ResourceTags[version] = %q, want v1.0.0", tags[TagKeyVersion])
+	}
+}
+
+func TestApply_SingleAgent_ResourceTagsIncludeUserTags(t *testing.T) {
+	capClient := &tagCapturingClient{
+		simulatedAWSClient: *newSimulatedAWSClient("us-west-2"),
+	}
+
+	provider := &Provider{
+		awsClientFunc: func(_ context.Context, _ *Config) (awsClient, error) {
+			return capClient, nil
+		},
+		destroyerFunc: newSimulatedProvider().destroyerFunc,
+		checkerFunc:   newSimulatedProvider().checkerFunc,
+	}
+
+	req := &deploy.PlanRequest{
+		PackJSON:     singleAgentPack(),
+		DeployConfig: validConfigWithTags(),
+	}
+
+	_, _, err := collectEvents(t, provider, req)
+	if err != nil {
+		t.Fatalf("Apply returned error: %v", err)
+	}
+
+	if len(capClient.capturedTags) == 0 {
+		t.Fatal("expected at least one Create call with tags")
+	}
+
+	tags := capClient.capturedTags[0]
+	// User tags should be present.
+	if tags["env"] != "production" {
+		t.Errorf("ResourceTags[env] = %q, want production", tags["env"])
+	}
+	if tags["team"] != "platform" {
+		t.Errorf("ResourceTags[team] = %q, want platform", tags["team"])
+	}
+	// Default tags should also be present.
+	if tags[TagKeyPackID] != "mypack" {
+		t.Errorf("ResourceTags[pack-id] = %q, want mypack", tags[TagKeyPackID])
+	}
+}
+
+func TestApply_WithTools_TagsAppliedToGateway(t *testing.T) {
+	capClient := &tagCapturingClient{
+		simulatedAWSClient: *newSimulatedAWSClient("us-west-2"),
+	}
+
+	provider := &Provider{
+		awsClientFunc: func(_ context.Context, _ *Config) (awsClient, error) {
+			return capClient, nil
+		},
+		destroyerFunc: newSimulatedProvider().destroyerFunc,
+		checkerFunc:   newSimulatedProvider().checkerFunc,
+	}
+
+	req := &deploy.PlanRequest{
+		PackJSON:     singleAgentPackWithTools(),
+		DeployConfig: validConfigWithTags(),
+	}
+
+	_, _, err := collectEvents(t, provider, req)
+	if err != nil {
+		t.Fatalf("Apply returned error: %v", err)
+	}
+
+	// Should have captures for tool gateways + runtime.
+	if len(capClient.capturedTags) < 3 {
+		t.Fatalf("expected at least 3 tag captures (2 tools + 1 runtime), got %d",
+			len(capClient.capturedTags))
+	}
+
+	// All captures should include pack metadata + user tags.
+	for i, tags := range capClient.capturedTags {
+		if tags[TagKeyPackID] != "toolpack" {
+			t.Errorf("capture %d: pack-id = %q, want toolpack", i, tags[TagKeyPackID])
+		}
+		if tags["env"] != "production" {
+			t.Errorf("capture %d: env = %q, want production", i, tags["env"])
+		}
+	}
+}
+
+func TestApply_WithMemory_TagsAppliedToMemory(t *testing.T) {
+	capClient := &tagCapturingClient{
+		simulatedAWSClient: *newSimulatedAWSClient("us-west-2"),
+	}
+
+	provider := &Provider{
+		awsClientFunc: func(_ context.Context, _ *Config) (awsClient, error) {
+			return capClient, nil
+		},
+		destroyerFunc: newSimulatedProvider().destroyerFunc,
+		checkerFunc:   newSimulatedProvider().checkerFunc,
+	}
+
+	cfgWithTags := `{
+		"region":"us-west-2",
+		"runtime_role_arn":"arn:aws:iam::123456789012:role/test",
+		"memory_store":"session",
+		"tags":{"env":"staging"}
+	}`
+
+	req := &deploy.PlanRequest{
+		PackJSON:     singleAgentPack(),
+		DeployConfig: cfgWithTags,
+	}
+
+	_, _, err := collectEvents(t, provider, req)
+	if err != nil {
+		t.Fatalf("Apply returned error: %v", err)
+	}
+
+	// First capture should be the memory resource.
+	if len(capClient.capturedTags) < 1 {
+		t.Fatal("expected at least 1 tag capture")
+	}
+	tags := capClient.capturedTags[0]
+	if tags["env"] != "staging" {
+		t.Errorf("memory tags[env] = %q, want staging", tags["env"])
+	}
+	if tags[TagKeyPackID] != "mypack" {
+		t.Errorf("memory tags[pack-id] = %q, want mypack", tags[TagKeyPackID])
+	}
+}
+
+func TestApply_NoTags_ResourceTagsHaveDefaultsOnly(t *testing.T) {
+	capClient := &tagCapturingClient{
+		simulatedAWSClient: *newSimulatedAWSClient("us-west-2"),
+	}
+
+	provider := &Provider{
+		awsClientFunc: func(_ context.Context, _ *Config) (awsClient, error) {
+			return capClient, nil
+		},
+		destroyerFunc: newSimulatedProvider().destroyerFunc,
+		checkerFunc:   newSimulatedProvider().checkerFunc,
+	}
+
+	req := &deploy.PlanRequest{
+		PackJSON:     singleAgentPack(),
+		DeployConfig: validConfig(),
+	}
+
+	_, _, err := collectEvents(t, provider, req)
+	if err != nil {
+		t.Fatalf("Apply returned error: %v", err)
+	}
+
+	if len(capClient.capturedTags) == 0 {
+		t.Fatal("expected at least one Create call with tags")
+	}
+
+	tags := capClient.capturedTags[0]
+	// Should have exactly 2 default tags (pack-id, version) — no agent for single-agent.
+	if len(tags) != 2 {
+		t.Errorf("expected 2 default tags, got %d: %v", len(tags), tags)
+	}
+	if tags[TagKeyPackID] != "mypack" {
+		t.Errorf("pack-id = %q, want mypack", tags[TagKeyPackID])
+	}
+	if tags[TagKeyVersion] != "v1.0.0" {
+		t.Errorf("version = %q, want v1.0.0", tags[TagKeyVersion])
+	}
 }
