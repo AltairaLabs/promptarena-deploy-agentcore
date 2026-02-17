@@ -168,6 +168,13 @@ func (c *failingAWSClient) CreateRuntime(ctx context.Context, name string, cfg *
 	return c.simulatedAWSClient.CreateRuntime(ctx, name, cfg)
 }
 
+func (c *failingAWSClient) UpdateRuntime(ctx context.Context, arn string, name string, cfg *Config) (string, error) {
+	if c.failOn["agent_runtime_update"] {
+		return "", fmt.Errorf("simulated runtime update failure for %s", name)
+	}
+	return c.simulatedAWSClient.UpdateRuntime(ctx, arn, name, cfg)
+}
+
 func (c *failingAWSClient) CreateGatewayTool(ctx context.Context, name string, cfg *Config) (string, error) {
 	if c.failOn["tool_gateway"] {
 		return "", fmt.Errorf("simulated gateway tool failure for %s", name)
@@ -889,5 +896,187 @@ func TestApply_EvalFailure(t *testing.T) {
 		if r.Type == "evaluator" && r.Status != "failed" {
 			t.Errorf("evaluator %q status = %q, want failed", r.Name, r.Status)
 		}
+	}
+}
+
+// priorStateWithRuntime returns a PriorState JSON containing one agent_runtime.
+func priorStateWithRuntime(name, arn string) string {
+	state := AdapterState{
+		PackID:  "mypack",
+		Version: "v1.0.0",
+		Resources: []ResourceState{
+			{Type: ResTypeAgentRuntime, Name: name, ARN: arn, Status: "created"},
+		},
+	}
+	b, _ := json.Marshal(state)
+	return string(b)
+}
+
+func TestApply_SingleAgent_Update(t *testing.T) {
+	provider := newSimulatedProvider()
+	priorARN := "arn:aws:bedrock:us-west-2:123456789012:agent-runtime/mypack"
+	req := &deploy.PlanRequest{
+		PackJSON:     singleAgentPack(),
+		DeployConfig: validConfig(),
+		PriorState:   priorStateWithRuntime("mypack", priorARN),
+	}
+
+	events, stateStr, err := collectEvents(t, provider, req)
+	if err != nil {
+		t.Fatalf("Apply returned error: %v", err)
+	}
+
+	// Should have an update resource event, not a create.
+	var foundUpdate bool
+	for _, ev := range events {
+		if ev.Type == "resource" && ev.Resource != nil &&
+			ev.Resource.Type == "agent_runtime" &&
+			ev.Resource.Action == deploy.ActionUpdate &&
+			ev.Resource.Status == "updated" {
+			foundUpdate = true
+		}
+		// Should NOT have a create event for the runtime.
+		if ev.Type == "resource" && ev.Resource != nil &&
+			ev.Resource.Type == "agent_runtime" &&
+			ev.Resource.Action == deploy.ActionCreate {
+			t.Error("expected ActionUpdate for existing runtime, got ActionCreate")
+		}
+	}
+	if !foundUpdate {
+		t.Error("expected a resource event with ActionUpdate and status=updated")
+	}
+
+	// Progress message should say "Updating" not "Creating".
+	for _, ev := range events {
+		if ev.Type == "progress" && strings.Contains(ev.Message, "agent_runtime") {
+			if !strings.Contains(ev.Message, "Updating") {
+				t.Errorf("progress message should say Updating, got %q", ev.Message)
+			}
+		}
+	}
+
+	// State should have the resource with status=updated and the prior ARN.
+	var state AdapterState
+	if err := json.Unmarshal([]byte(stateStr), &state); err != nil {
+		t.Fatalf("failed to unmarshal state: %v", err)
+	}
+	if len(state.Resources) != 1 {
+		t.Fatalf("expected 1 resource, got %d", len(state.Resources))
+	}
+	r := state.Resources[0]
+	if r.Status != "updated" {
+		t.Errorf("resource status = %q, want updated", r.Status)
+	}
+	if r.ARN != priorARN {
+		t.Errorf("resource ARN = %q, want %q", r.ARN, priorARN)
+	}
+}
+
+func TestApply_MixedCreateAndUpdate(t *testing.T) {
+	provider := newSimulatedProvider()
+
+	// Prior state has only "coordinator" runtime — "worker" is new.
+	coordARN := "arn:aws:bedrock:us-west-2:123456789012:agent-runtime/coordinator"
+	priorState := AdapterState{
+		PackID:  "multipack",
+		Version: "v1.0.0",
+		Resources: []ResourceState{
+			{Type: ResTypeAgentRuntime, Name: "coordinator", ARN: coordARN, Status: "created"},
+			{Type: ResTypeToolGateway, Name: "lookup", ARN: "arn:aws:bedrock:us-west-2:123456789012:gateway-tool/lookup", Status: "created"},
+		},
+	}
+	priorJSON, _ := json.Marshal(priorState)
+
+	req := &deploy.PlanRequest{
+		PackJSON:     multiAgentPack(),
+		DeployConfig: validConfig(),
+		PriorState:   string(priorJSON),
+	}
+
+	events, stateStr, err := collectEvents(t, provider, req)
+	if err != nil {
+		t.Fatalf("Apply returned error: %v", err)
+	}
+
+	// Collect resource events by name.
+	actionByName := make(map[string]deploy.Action)
+	statusByName := make(map[string]string)
+	for _, ev := range events {
+		if ev.Type == "resource" && ev.Resource != nil {
+			actionByName[ev.Resource.Name] = ev.Resource.Action
+			statusByName[ev.Resource.Name] = ev.Resource.Status
+		}
+	}
+
+	// coordinator should be updated, worker should be created.
+	if actionByName["coordinator"] != deploy.ActionUpdate {
+		t.Errorf("coordinator action = %q, want %q", actionByName["coordinator"], deploy.ActionUpdate)
+	}
+	if statusByName["coordinator"] != "updated" {
+		t.Errorf("coordinator status = %q, want updated", statusByName["coordinator"])
+	}
+	if actionByName["worker"] != deploy.ActionCreate {
+		t.Errorf("worker action = %q, want %q", actionByName["worker"], deploy.ActionCreate)
+	}
+	if statusByName["worker"] != "created" {
+		t.Errorf("worker status = %q, want created", statusByName["worker"])
+	}
+
+	// Verify state.
+	var state AdapterState
+	if err := json.Unmarshal([]byte(stateStr), &state); err != nil {
+		t.Fatalf("failed to unmarshal state: %v", err)
+	}
+	for _, r := range state.Resources {
+		if r.Type == ResTypeAgentRuntime && r.Name == "coordinator" {
+			if r.Status != "updated" {
+				t.Errorf("coordinator state status = %q, want updated", r.Status)
+			}
+			if r.ARN != coordARN {
+				t.Errorf("coordinator ARN = %q, want %q (preserved from prior)", r.ARN, coordARN)
+			}
+		}
+		if r.Type == ResTypeAgentRuntime && r.Name == "worker" {
+			if r.Status != "created" {
+				t.Errorf("worker state status = %q, want created", r.Status)
+			}
+		}
+	}
+}
+
+func TestApply_UpdateRuntime_Failure(t *testing.T) {
+	sim := newSimulatedProvider()
+	provider := &Provider{
+		awsClientFunc: func(_ context.Context, cfg *Config) (awsClient, error) {
+			return &failingAWSClient{
+				simulatedAWSClient: *newSimulatedAWSClient(cfg.Region),
+				failOn:             map[string]bool{"agent_runtime_update": true},
+			}, nil
+		},
+		destroyerFunc: sim.destroyerFunc,
+		checkerFunc:   sim.checkerFunc,
+	}
+
+	priorARN := "arn:aws:bedrock:us-west-2:123456789012:agent-runtime/mypack"
+	req := &deploy.PlanRequest{
+		PackJSON:     singleAgentPack(),
+		DeployConfig: validConfig(),
+		PriorState:   priorStateWithRuntime("mypack", priorARN),
+	}
+
+	_, stateStr, err := collectEvents(t, provider, req)
+	if err == nil {
+		t.Fatal("expected error for update failure")
+	}
+
+	var state AdapterState
+	if err := json.Unmarshal([]byte(stateStr), &state); err != nil {
+		t.Fatalf("failed to unmarshal state: %v", err)
+	}
+	if len(state.Resources) != 1 {
+		t.Fatalf("expected 1 resource, got %d", len(state.Resources))
+	}
+	if state.Resources[0].Status != "failed" {
+		t.Errorf("runtime status = %q, want failed", state.Resources[0].Status)
 	}
 }
