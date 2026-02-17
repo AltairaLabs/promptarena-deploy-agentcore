@@ -1,4 +1,5 @@
-package main
+// Package agentcore implements the AWS Bedrock AgentCore deploy adapter for PromptKit.
+package agentcore
 
 import (
 	"context"

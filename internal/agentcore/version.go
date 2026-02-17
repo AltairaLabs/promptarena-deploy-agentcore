@@ -1,4 +1,4 @@
-package main
+package agentcore
 
 // Build-time variables injected via ldflags.
 var (

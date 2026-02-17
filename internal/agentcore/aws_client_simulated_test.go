@@ -1,17 +1,10 @@
-package main
+package agentcore
 
 import (
 	"context"
 	"fmt"
+	"log"
 )
-
-// awsClient abstracts AWS AgentCore API calls for testing.
-type awsClient interface {
-	CreateRuntime(ctx context.Context, name string, cfg *AgentCoreConfig) (arn string, err error)
-	CreateGatewayTool(ctx context.Context, name string, cfg *AgentCoreConfig) (arn string, err error)
-	CreateA2AWiring(ctx context.Context, name string, cfg *AgentCoreConfig) (arn string, err error)
-	CreateEvaluator(ctx context.Context, name string, cfg *AgentCoreConfig) (arn string, err error)
-}
 
 // simulatedAWSClient returns mock ARNs for all operations.
 type simulatedAWSClient struct {
@@ -40,6 +33,22 @@ func (c *simulatedAWSClient) CreateA2AWiring(_ context.Context, name string, _ *
 
 func (c *simulatedAWSClient) CreateEvaluator(_ context.Context, name string, _ *AgentCoreConfig) (string, error) {
 	return fmt.Sprintf("arn:aws:bedrock:%s:%s:evaluator/%s", c.region, c.accountID, name), nil
+}
+
+// simulatedDestroyer is a placeholder that logs intent without calling AWS.
+type simulatedDestroyer struct{}
+
+func (s *simulatedDestroyer) DeleteResource(_ context.Context, res ResourceState) error {
+	log.Printf("agentcore: simulated delete %s %q (arn=%s)", res.Type, res.Name, res.ARN)
+	return nil
+}
+
+// simulatedChecker is a placeholder that assumes all existing resources are healthy.
+type simulatedChecker struct{}
+
+func (s *simulatedChecker) CheckResource(_ context.Context, res ResourceState) (string, error) {
+	log.Printf("agentcore: simulated health check %s %q (arn=%s)", res.Type, res.Name, res.ARN)
+	return "healthy", nil
 }
 
 // newSimulatedProvider creates an AgentCoreProvider wired with simulated

@@ -79,15 +79,17 @@ SonarCloud runs on every PR and enforces the **Sonar Way** quality profile. The 
 | Path | Purpose |
 |------|---------|
 | `main.go` | Entry point — calls `adaptersdk.Serve(provider)` |
-| `provider.go` | `AgentCoreProvider` — implements PromptKit `deploy.Provider` interface |
-| `config.go` | Config parsing, validation, JSON Schema definition |
-| `plan.go` | Plan generation — diffs desired resources vs prior state |
-| `apply.go` | Apply — creates resources in 4 dependency-ordered phases |
-| `status.go` | Destroy + Status — teardown and health checks |
-| `state.go` | `AdapterState` and `ResourceState` type definitions |
-| `aws_client.go` | `awsClient` interface + simulated implementation for tests |
-| `aws_client_real.go` | Real AWS SDK implementation (`bedrockagentcorecontrol`) |
-| `version.go` | Version metadata (injected via ldflags) |
+| `main.go` | Entry point — thin wrapper calling `adaptersdk.Serve(provider)` |
+| `internal/agentcore/provider.go` | `AgentCoreProvider`, factories, `GetProviderInfo`, `ValidateConfig` |
+| `internal/agentcore/config.go` | Config parsing, validation, JSON Schema definition |
+| `internal/agentcore/plan.go` | Plan generation — diffs desired resources vs prior state |
+| `internal/agentcore/apply.go` | Apply — creates resources in 4 dependency-ordered phases |
+| `internal/agentcore/status.go` | Destroy + Status — teardown and health checks |
+| `internal/agentcore/state.go` | `AdapterState` and `ResourceState` type definitions |
+| `internal/agentcore/aws_client.go` | `awsClient`, `resourceDestroyer`, `resourceChecker` interfaces |
+| `internal/agentcore/aws_client_real.go` | Real AWS SDK implementation (`bedrockagentcorecontrol`) |
+| `internal/agentcore/aws_client_simulated_test.go` | Simulated clients for unit tests |
+| `internal/agentcore/version.go` | Version metadata (injected via ldflags) |
 | `.golangci.yml` | Linter configuration (25 linters) |
 | `.github/workflows/ci.yml` | CI pipeline (test + lint) |
 | `.github/workflows/release.yml` | Release pipeline (GoReleaser) |

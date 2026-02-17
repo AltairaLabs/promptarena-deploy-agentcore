@@ -1,4 +1,4 @@
-package main
+package agentcore
 
 // AdapterState holds resource info from previous deploys. It is serialized
 // as the opaque "prior_state" string exchanged between Plan, Apply, and Status.

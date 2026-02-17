@@ -1,45 +1,12 @@
-package main
+package agentcore
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 
 	"github.com/AltairaLabs/PromptKit/runtime/deploy"
 )
-
-// resourceDestroyer abstracts resource deletion so that real AWS calls
-// can be swapped in later.
-type resourceDestroyer interface {
-	// DeleteResource simulates (or performs) deletion of a single resource.
-	// It returns an error only for unexpected failures; already-deleted
-	// resources should return nil.
-	DeleteResource(ctx context.Context, res ResourceState) error
-}
-
-// resourceChecker abstracts resource health checks.
-type resourceChecker interface {
-	// CheckResource returns the health status of a single resource.
-	// Returns one of "healthy", "unhealthy", or "missing".
-	CheckResource(ctx context.Context, res ResourceState) (string, error)
-}
-
-// simulatedDestroyer is a placeholder that logs intent without calling AWS.
-type simulatedDestroyer struct{}
-
-func (s *simulatedDestroyer) DeleteResource(_ context.Context, res ResourceState) error {
-	log.Printf("agentcore: simulated delete %s %q (arn=%s)", res.Type, res.Name, res.ARN)
-	return nil
-}
-
-// simulatedChecker is a placeholder that assumes all existing resources are healthy.
-type simulatedChecker struct{}
-
-func (s *simulatedChecker) CheckResource(_ context.Context, res ResourceState) (string, error) {
-	log.Printf("agentcore: simulated health check %s %q (arn=%s)", res.Type, res.Name, res.ARN)
-	return "healthy", nil
-}
 
 // destroyOrder defines the reverse dependency order for teardown.
 // Resources are grouped by type; each group is destroyed in sequence.
@@ -218,7 +185,6 @@ func (p *AgentCoreProvider) Status(ctx context.Context, req *deploy.StatusReques
 		State:     string(stateJSON),
 	}, nil
 }
-
 
 // parseAdapterState deserializes the opaque prior_state JSON.
 // An empty string is treated as no state (returns zero-value AdapterState).

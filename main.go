@@ -7,10 +7,12 @@ import (
 	"os"
 
 	"github.com/AltairaLabs/PromptKit/runtime/deploy/adaptersdk"
+
+	"github.com/AltairaLabs/promptarena-deploy-agentcore/internal/agentcore"
 )
 
 func main() {
-	provider := NewAgentCoreProvider()
+	provider := agentcore.NewAgentCoreProvider()
 	if err := adaptersdk.Serve(provider); err != nil {
 		fmt.Fprintf(os.Stderr, "agentcore: %v\n", err)
 		os.Exit(1)

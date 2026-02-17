@@ -1,4 +1,4 @@
-package main
+package agentcore
 
 import (
 	"encoding/json"
@@ -8,10 +8,10 @@ import (
 
 // AgentCoreConfig holds AWS Bedrock AgentCore-specific configuration.
 type AgentCoreConfig struct {
-	Region         string              `json:"region"`
-	RuntimeRoleARN string              `json:"runtime_role_arn"`
-	MemoryStore    string              `json:"memory_store,omitempty"`
-	Tools          *ToolsConfig        `json:"tools,omitempty"`
+	Region         string               `json:"region"`
+	RuntimeRoleARN string               `json:"runtime_role_arn"`
+	MemoryStore    string               `json:"memory_store,omitempty"`
+	Tools          *ToolsConfig         `json:"tools,omitempty"`
 	Observability  *ObservabilityConfig `json:"observability,omitempty"`
 }
 
@@ -27,7 +27,7 @@ type ObservabilityConfig struct {
 }
 
 var (
-	regionRE = regexp.MustCompile(`^[a-z]{2}-[a-z]+-\d+$`)
+	regionRE  = regexp.MustCompile(`^[a-z]{2}-[a-z]+-\d+$`)
 	roleARNRE = regexp.MustCompile(`^arn:aws:iam::\d{12}:role/.+$`)
 )
 
