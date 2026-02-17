@@ -1,4 +1,4 @@
-.PHONY: fmt lint test build check install-hooks
+.PHONY: fmt lint test build build-runtime check install-hooks
 
 # Format code with goimports
 fmt:
@@ -15,6 +15,10 @@ test:
 # Build binary
 build:
 	GOWORK=off go build -o promptarena-deploy-agentcore .
+
+# Build runtime binary
+build-runtime:
+	GOWORK=off go build -o agentcore-runtime ./cmd/agentcore-runtime/
 
 # Run all quality checks (what pre-commit runs)
 check: fmt lint test build
