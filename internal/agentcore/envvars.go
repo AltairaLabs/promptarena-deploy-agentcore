@@ -1,6 +1,9 @@
 package agentcore
 
-import "strconv"
+import (
+	"encoding/json"
+	"strconv"
+)
 
 // Environment variable keys injected into AgentCore runtimes.
 const (
@@ -33,4 +36,24 @@ func buildRuntimeEnvVars(cfg *Config) map[string]string {
 	}
 
 	return env
+}
+
+// buildA2AEndpointMap builds a JSON string mapping agent member names to their
+// runtime ARNs. Only successfully created/updated runtimes are included.
+func buildA2AEndpointMap(runtimeResources []ResourceState) string {
+	m := make(map[string]string)
+	for _, r := range runtimeResources {
+		if r.Type != ResTypeAgentRuntime {
+			continue
+		}
+		if r.Status != "created" && r.Status != "updated" {
+			continue
+		}
+		m[r.Name] = r.ARN
+	}
+	if len(m) == 0 {
+		return ""
+	}
+	b, _ := json.Marshal(m)
+	return string(b)
 }

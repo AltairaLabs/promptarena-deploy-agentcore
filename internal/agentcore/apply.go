@@ -24,6 +24,9 @@ const (
 	stepEvaluators = 3
 )
 
+// progressA2ADiscovery is the progress percentage for the A2A discovery step.
+const progressA2ADiscovery = 0.5
+
 // createFunc is the signature shared by all awsClient Create* methods.
 type createFunc func(ctx context.Context, name string, cfg *Config) (string, error)
 
@@ -114,15 +117,7 @@ func (p *Provider) executeApplyPhases(
 	var applyErr, cbErr error
 
 	// Pre-step — Memory (if configured).
-	if ac.cfg.MemoryStore != "" {
-		memRes, memErr := createMemoryResource(ctx, ac.reporter, ac.client, ac.cfg, ac.pack)
-		if memErr != nil {
-			applyErr = combineErrors(applyErr, memErr)
-		}
-		if memRes != nil {
-			resources = append(resources, *memRes)
-		}
-	}
+	resources, applyErr = applyMemoryPreStep(ctx, ac, resources, applyErr)
 
 	// Step 1 — Tool Gateway entries (no update support yet).
 	phase := applyPhase(ctx, ac.reporter, ac.client.CreateGatewayTool, nil, ac.cfg,
@@ -138,6 +133,15 @@ func (p *Provider) executeApplyPhases(
 	resources, applyErr, cbErr = mergePhase(resources, applyErr, phase)
 	if cbErr != nil {
 		return resources, cbErr
+	}
+
+	// Post-runtime step — A2A endpoint discovery (multi-agent only).
+	// Injects PROMPTPACK_AGENTS env var on the entry agent so it knows
+	// how to reach other members.
+	if adaptersdk.IsMultiAgent(ac.pack) {
+		if discoverErr := injectA2AEndpoints(ctx, ac, resources); discoverErr != nil {
+			applyErr = combineErrors(applyErr, discoverErr)
+		}
 	}
 
 	// Step 3 — A2A wiring (only for multi-agent packs, no update support).
@@ -162,6 +166,24 @@ func (p *Provider) executeApplyPhases(
 	return resources, applyErr
 }
 
+// applyMemoryPreStep creates a memory resource if configured.
+func applyMemoryPreStep(
+	ctx context.Context, ac *applyContext,
+	resources []ResourceState, applyErr error,
+) ([]ResourceState, error) {
+	if ac.cfg.MemoryStore == "" {
+		return resources, applyErr
+	}
+	memRes, memErr := createMemoryResource(ctx, ac.reporter, ac.client, ac.cfg, ac.pack)
+	if memErr != nil {
+		applyErr = combineErrors(applyErr, memErr)
+	}
+	if memRes != nil {
+		resources = append(resources, *memRes)
+	}
+	return resources, applyErr
+}
+
 // applyA2AWiring runs the A2A wiring phase for multi-agent packs.
 func applyA2AWiring(
 	ctx context.Context, ac *applyContext,
@@ -175,6 +197,46 @@ func applyA2AWiring(
 	phase := applyPhase(ctx, ac.reporter, ac.client.CreateA2AWiring, nil, ac.cfg,
 		wireNames, ResTypeA2AEndpoint, stepA2A, ac.priorMap)
 	return mergePhase(resources, applyErr, phase)
+}
+
+// injectA2AEndpoints updates the entry agent runtime with a PROMPTPACK_AGENTS
+// env var containing a JSON map of {memberName: runtimeARN}. This allows the
+// entry agent to discover and route to other members.
+func injectA2AEndpoints(
+	ctx context.Context, ac *applyContext, resources []ResourceState,
+) error {
+	endpointJSON := buildA2AEndpointMap(resources)
+	if endpointJSON == "" {
+		return nil
+	}
+
+	ac.cfg.RuntimeEnvVars[EnvA2AAgents] = endpointJSON
+
+	// Find the entry agent name and its ARN.
+	entryName := ac.pack.Agents.Entry
+	var entryARN string
+	for _, r := range resources {
+		if r.Type == ResTypeAgentRuntime && r.Name == entryName && r.ARN != "" {
+			entryARN = r.ARN
+			break
+		}
+	}
+	if entryARN == "" {
+		return nil // entry agent wasn't successfully created; skip
+	}
+
+	msg := "Injecting A2A endpoint map on entry agent: " + entryName
+	if err := ac.reporter.Progress(msg, progressA2ADiscovery); err != nil {
+		return err
+	}
+
+	_, err := ac.client.UpdateRuntime(ctx, entryARN, entryName, ac.cfg)
+	if err != nil {
+		_ = ac.reporter.Error(fmt.Errorf("failed to inject A2A endpoints on %s: %w", entryName, err))
+		return err
+	}
+
+	return nil
 }
 
 // applyPhase creates or updates resources of a single type, reporting progress.

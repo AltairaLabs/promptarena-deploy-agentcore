@@ -1221,3 +1221,67 @@ func TestApply_WithoutMemory_NoMemoryResource(t *testing.T) {
 		}
 	}
 }
+
+func TestApply_MultiAgent_EntryAgentGetsEndpoints(t *testing.T) {
+	// Track UpdateRuntime calls to verify A2A discovery injection.
+	var updateCalls []string
+	sim := newSimulatedAWSClient("us-west-2")
+	trackingClient := &trackingAWSClient{
+		simulatedAWSClient: *sim,
+		onUpdate: func(arn, name string) {
+			updateCalls = append(updateCalls, name)
+		},
+	}
+
+	provider := &Provider{
+		awsClientFunc: func(_ context.Context, _ *Config) (awsClient, error) {
+			return trackingClient, nil
+		},
+		destroyerFunc: newSimulatedProvider().destroyerFunc,
+		checkerFunc:   newSimulatedProvider().checkerFunc,
+	}
+
+	req := &deploy.PlanRequest{
+		PackJSON:     multiAgentPack(),
+		DeployConfig: validConfig(),
+	}
+
+	events, _, err := collectEvents(t, provider, req)
+	if err != nil {
+		t.Fatalf("Apply returned error: %v", err)
+	}
+
+	// The entry agent "coordinator" should have been updated with A2A endpoints.
+	found := false
+	for _, name := range updateCalls {
+		if name == "coordinator" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected UpdateRuntime call for entry agent 'coordinator', got: %v", updateCalls)
+	}
+
+	// Verify a progress event for A2A injection exists.
+	for _, ev := range events {
+		if ev.Type == "progress" && strings.Contains(ev.Message, "A2A endpoint map") {
+			return
+		}
+	}
+	t.Error("expected a progress event for A2A endpoint map injection")
+}
+
+// trackingAWSClient wraps simulatedAWSClient to record UpdateRuntime calls.
+type trackingAWSClient struct {
+	simulatedAWSClient
+	onUpdate func(arn, name string)
+}
+
+func (c *trackingAWSClient) UpdateRuntime(
+	ctx context.Context, arn string, name string, cfg *Config,
+) (string, error) {
+	if c.onUpdate != nil {
+		c.onUpdate(arn, name)
+	}
+	return c.simulatedAWSClient.UpdateRuntime(ctx, arn, name, cfg)
+}

@@ -1,6 +1,9 @@
 package agentcore
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+)
 
 func TestBuildRuntimeEnvVars(t *testing.T) {
 	tests := []struct {
@@ -104,6 +107,79 @@ func TestBuildRuntimeEnvVars(t *testing.T) {
 					t.Errorf("missing key %q", k)
 				} else if gotV != wantV {
 					t.Errorf("key %q = %q, want %q", k, gotV, wantV)
+				}
+			}
+		})
+	}
+}
+
+func TestBuildA2AEndpointMap(t *testing.T) {
+	tests := []struct {
+		name      string
+		resources []ResourceState
+		wantMap   map[string]string // nil means expect empty string
+	}{
+		{
+			name:      "empty resources",
+			resources: nil,
+			wantMap:   nil,
+		},
+		{
+			name: "only non-runtime resources ignored",
+			resources: []ResourceState{
+				{Type: ResTypeToolGateway, Name: "gw", ARN: "arn:gw", Status: "created"},
+			},
+			wantMap: nil,
+		},
+		{
+			name: "failed runtimes excluded",
+			resources: []ResourceState{
+				{Type: ResTypeAgentRuntime, Name: "agent1", ARN: "", Status: "failed"},
+			},
+			wantMap: nil,
+		},
+		{
+			name: "single created runtime",
+			resources: []ResourceState{
+				{Type: ResTypeAgentRuntime, Name: "worker", ARN: "arn:worker", Status: "created"},
+			},
+			wantMap: map[string]string{"worker": "arn:worker"},
+		},
+		{
+			name: "multiple runtimes mixed status",
+			resources: []ResourceState{
+				{Type: ResTypeAgentRuntime, Name: "coord", ARN: "arn:coord", Status: "updated"},
+				{Type: ResTypeAgentRuntime, Name: "worker", ARN: "arn:worker", Status: "created"},
+				{Type: ResTypeAgentRuntime, Name: "broken", ARN: "", Status: "failed"},
+				{Type: ResTypeToolGateway, Name: "gw", ARN: "arn:gw", Status: "created"},
+			},
+			wantMap: map[string]string{
+				"coord":  "arn:coord",
+				"worker": "arn:worker",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := buildA2AEndpointMap(tt.resources)
+			if tt.wantMap == nil {
+				if got != "" {
+					t.Errorf("expected empty string, got %q", got)
+				}
+				return
+			}
+
+			var gotMap map[string]string
+			if err := json.Unmarshal([]byte(got), &gotMap); err != nil {
+				t.Fatalf("failed to parse JSON: %v (raw=%q)", err, got)
+			}
+			if len(gotMap) != len(tt.wantMap) {
+				t.Fatalf("got %d entries, want %d", len(gotMap), len(tt.wantMap))
+			}
+			for k, wantV := range tt.wantMap {
+				if gotMap[k] != wantV {
+					t.Errorf("key %q = %q, want %q", k, gotMap[k], wantV)
 				}
 			}
 		})
