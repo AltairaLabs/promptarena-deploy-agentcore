@@ -30,6 +30,33 @@ AGENTCORE_TEST_REGION=us-west-2 AGENTCORE_TEST_ROLE_ARN=arn:aws:iam::123:role/te
 echo '{"jsonrpc":"2.0","method":"get_provider_info","id":1}' | ./promptarena-deploy-agentcore
 ```
 
+## Local Development Setup
+
+Install the pre-commit hook to catch issues before they reach CI:
+
+```bash
+make install-hooks
+```
+
+This configures git to use `.githooks/pre-commit`, which runs on every commit that includes Go files:
+1. **goimports** — checks formatting (fails if files need formatting)
+2. **golangci-lint** — runs all 25 linters
+3. **go test** — runs tests with race detector
+4. **go build** — verifies the binary compiles
+
+Makefile targets available individually:
+
+| Target | Description |
+|--------|-------------|
+| `make fmt` | Format code with goimports |
+| `make lint` | Run golangci-lint |
+| `make test` | Run tests with race detector |
+| `make build` | Build binary |
+| `make check` | Run all checks (fmt + lint + test + build) |
+| `make install-hooks` | Install the pre-commit hook |
+
+Prerequisites: `go`, `golangci-lint`, `goimports` (`go install golang.org/x/tools/cmd/goimports@latest`), and sibling `../promptkit` checkout.
+
 ## Sibling Repo Dependency
 
 This repo depends on `github.com/AltairaLabs/PromptKit/runtime` via `replace` directives in `go.mod` pointing to `../promptkit/runtime`. This is temporary until the next PromptKit release tags `runtime/v1.3.0`. Once released, the `update-deps.yml` workflow will auto-create a PR to drop the replace directives.
@@ -90,6 +117,8 @@ SonarCloud runs on every PR and enforces the **Sonar Way** quality profile. The 
 | `internal/agentcore/aws_client_real.go` | Real AWS SDK implementation (`bedrockagentcorecontrol`) |
 | `internal/agentcore/aws_client_simulated_test.go` | Simulated clients for unit tests |
 | `internal/agentcore/version.go` | Version metadata (injected via ldflags) |
+| `Makefile` | Build targets: fmt, lint, test, build, check, install-hooks |
+| `.githooks/pre-commit` | Pre-commit hook — runs formatting, lint, test, build |
 | `.golangci.yml` | Linter configuration (25 linters) |
 | `.github/workflows/ci.yml` | CI pipeline (test + lint) |
 | `.github/workflows/release.yml` | Release pipeline (GoReleaser) |
