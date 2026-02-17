@@ -452,6 +452,59 @@ func TestPlan_WithoutMemory_NoMemoryResource(t *testing.T) {
 	}
 }
 
+func TestPlan_WithValidators_IncludesPolicyResources(t *testing.T) {
+	provider := newSimulatedProvider()
+	packJSON := `{
+		"id": "valpack", "version": "v1.0.0",
+		"prompts": {
+			"chat": {
+				"id": "chat", "system_template": "hello",
+				"validators": [{"type": "banned_words", "params": {"words": ["bad"]}}]
+			}
+		}
+	}`
+	resp, err := provider.Plan(context.Background(), &deploy.PlanRequest{
+		PackJSON:     packJSON,
+		DeployConfig: validDeployConfig,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Should have cedar_policy + agent_runtime = 2 changes.
+	if len(resp.Changes) != 2 {
+		t.Fatalf("expected 2 changes, got %d: %+v", len(resp.Changes), resp.Changes)
+	}
+
+	typeCounts := map[string]int{}
+	for _, c := range resp.Changes {
+		typeCounts[c.Type]++
+	}
+	if typeCounts[ResTypeCedarPolicy] != 1 {
+		t.Errorf("expected 1 cedar_policy, got %d", typeCounts[ResTypeCedarPolicy])
+	}
+	if typeCounts[ResTypeAgentRuntime] != 1 {
+		t.Errorf("expected 1 agent_runtime, got %d", typeCounts[ResTypeAgentRuntime])
+	}
+}
+
+func TestPlan_NoValidators_NoPolicyResources(t *testing.T) {
+	provider := newSimulatedProvider()
+	resp, err := provider.Plan(context.Background(), &deploy.PlanRequest{
+		PackJSON:     singleAgentPackJSON(),
+		DeployConfig: validDeployConfig,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	for _, c := range resp.Changes {
+		if c.Type == ResTypeCedarPolicy {
+			t.Error("should not have cedar_policy when no validators")
+		}
+	}
+}
+
 func TestBuildSummary_NoChanges(t *testing.T) {
 	summary := buildSummary(nil)
 	if summary != "Plan: 0 to create, 0 to update, 0 to delete" {

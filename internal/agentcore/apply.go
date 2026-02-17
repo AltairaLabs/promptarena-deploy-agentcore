@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/AltairaLabs/PromptKit/runtime/deploy"
 	"github.com/AltairaLabs/PromptKit/runtime/deploy/adaptersdk"
@@ -13,15 +14,16 @@ import (
 )
 
 // progressStepSize is the fraction of the overall progress bar each of the
-// four apply phases occupies (tools, runtimes, a2a, evaluators).
-const progressStepSize = 0.25
+// five apply phases occupies (tools, policies, runtimes, a2a, evaluators).
+const progressStepSize = 0.20
 
 // Apply phase step indices for progress tracking.
 const (
 	stepTools      = 0
-	stepRuntimes   = 1
-	stepA2A        = 2
-	stepEvaluators = 3
+	stepPolicies   = 1
+	stepRuntimes   = 2
+	stepA2A        = 3
+	stepEvaluators = 4
 )
 
 // progressA2ADiscovery is the progress percentage for the A2A discovery step.
@@ -127,7 +129,15 @@ func (p *Provider) executeApplyPhases(
 		return resources, cbErr
 	}
 
-	// Step 2 — Agent runtimes (supports update).
+	// Step 2 — Cedar Policies (policy engine + policy per prompt with validators/tool_policy).
+	policyRes, policyErr, policyCbErr := applyPoliciesPhase(ctx, ac)
+	resources = append(resources, policyRes...)
+	applyErr = combineErrors(applyErr, policyErr)
+	if policyCbErr != nil {
+		return resources, policyCbErr
+	}
+
+	// Step 3 — Agent runtimes (supports update).
 	phase = applyPhase(ctx, ac.reporter, ac.client.CreateRuntime, ac.client.UpdateRuntime, ac.cfg,
 		agentRuntimeNames(ac.pack), ResTypeAgentRuntime, stepRuntimes, ac.priorMap)
 	resources, applyErr, cbErr = mergePhase(resources, applyErr, phase)
@@ -144,7 +154,7 @@ func (p *Provider) executeApplyPhases(
 		}
 	}
 
-	// Step 3 — A2A wiring (only for multi-agent packs, no update support).
+	// Step 4 — A2A wiring (only for multi-agent packs, no update support).
 	if adaptersdk.IsMultiAgent(ac.pack) {
 		resources, applyErr, cbErr = applyA2AWiring(ctx, ac, resources, applyErr)
 		if cbErr != nil {
@@ -152,7 +162,7 @@ func (p *Provider) executeApplyPhases(
 		}
 	}
 
-	// Step 4 — Evaluators (no update support yet).
+	// Step 5 — Evaluators (no update support yet).
 	evalNames := evalResourceNames(ac.pack)
 	if len(evalNames) > 0 {
 		phase = applyPhase(ctx, ac.reporter, ac.client.CreateEvaluator, nil, ac.cfg,
@@ -182,6 +192,112 @@ func applyMemoryPreStep(
 		resources = append(resources, *memRes)
 	}
 	return resources, applyErr
+}
+
+// applyPoliciesPhase creates Cedar policy engines and policies for prompts
+// that have validators or tool_policy defined. It returns the created
+// resources, any apply error, and any callback error.
+func applyPoliciesPhase(
+	ctx context.Context, ac *applyContext,
+) ([]ResourceState, error, error) {
+	names := policyResourceNames(ac.pack)
+	if len(names) == 0 {
+		return nil, nil, nil
+	}
+
+	var resources []ResourceState
+	var applyErr error
+	baseProgress := float64(stepPolicies) * progressStepSize
+
+	for i, promptName := range names {
+		pct := baseProgress + float64(i)/float64(len(names)+1)*progressStepSize
+		engineName := promptName + "_policy_engine"
+
+		if err := ac.reporter.Progress(
+			fmt.Sprintf("Creating %s: %s", ResTypeCedarPolicy, promptName), pct,
+		); err != nil {
+			return resources, applyErr, err
+		}
+
+		res, err := createPolicyForPrompt(ctx, ac, promptName, engineName)
+		if err != nil {
+			_ = ac.reporter.Error(fmt.Errorf(
+				"failed to create cedar_policy for %s: %w", promptName, err,
+			))
+			resources = append(resources, ResourceState{
+				Type: ResTypeCedarPolicy, Name: promptName, Status: "failed",
+			})
+			applyErr = combineErrors(applyErr, err)
+			continue
+		}
+
+		if err := ac.reporter.Resource(&deploy.ResourceResult{
+			Type: ResTypeCedarPolicy, Name: promptName,
+			Action: deploy.ActionCreate, Status: ResStatusCreated,
+			Detail: res.ARN,
+		}); err != nil {
+			return resources, applyErr, err
+		}
+		resources = append(resources, *res)
+	}
+
+	injectPolicyEngineARNs(ac.cfg, resources)
+
+	return resources, applyErr, nil
+}
+
+// createPolicyForPrompt creates a policy engine and a Cedar policy for a
+// single prompt. Returns the resource state on success.
+func createPolicyForPrompt(
+	ctx context.Context, ac *applyContext,
+	promptName, engineName string,
+) (*ResourceState, error) {
+	p := ac.pack.Prompts[promptName]
+	statement := generateCedarStatement(p.Validators, p.ToolPolicy)
+	if statement == "" {
+		return nil, fmt.Errorf("no Cedar rules generated for prompt %s", promptName)
+	}
+
+	engineARN, engineID, err := ac.client.CreatePolicyEngine(ctx, engineName, ac.cfg)
+	if err != nil {
+		return nil, fmt.Errorf("policy engine: %w", err)
+	}
+
+	policyName := promptName + "_policy"
+	policyARN, policyID, err := ac.client.CreateCedarPolicy(
+		ctx, engineID, policyName, statement, ac.cfg,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("cedar policy: %w", err)
+	}
+
+	return &ResourceState{
+		Type:   ResTypeCedarPolicy,
+		Name:   promptName,
+		ARN:    policyARN,
+		Status: ResStatusCreated,
+		Metadata: map[string]string{
+			"policy_engine_id":  engineID,
+			"policy_engine_arn": engineARN,
+			"policy_id":         policyID,
+		},
+	}, nil
+}
+
+// injectPolicyEngineARNs adds the PROMPTPACK_POLICY_ENGINE_ARN env var to
+// the runtime config so runtimes can reference their policy engines.
+func injectPolicyEngineARNs(cfg *Config, resources []ResourceState) {
+	var arns []string
+	for _, r := range resources {
+		if r.Type == ResTypeCedarPolicy && r.Status == ResStatusCreated {
+			if arn, ok := r.Metadata["policy_engine_arn"]; ok {
+				arns = append(arns, arn)
+			}
+		}
+	}
+	if len(arns) > 0 {
+		cfg.RuntimeEnvVars[EnvPolicyEngineARN] = strings.Join(arns, ",")
+	}
 }
 
 // applyA2AWiring runs the A2A wiring phase for multi-agent packs.

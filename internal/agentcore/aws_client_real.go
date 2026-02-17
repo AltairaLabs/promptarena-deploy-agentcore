@@ -276,6 +276,68 @@ func memoryStrategies(storeType string) []types.MemoryStrategyInput {
 	}
 }
 
+// CreatePolicyEngine provisions a policy engine and polls until it reaches
+// ACTIVE status.
+func (c *realAWSClient) CreatePolicyEngine(
+	ctx context.Context, name string, _ *Config,
+) (arn, engineID string, err error) {
+	out, err := c.client.CreatePolicyEngine(ctx, &bedrockagentcorecontrol.CreatePolicyEngineInput{
+		Name: aws.String(name),
+	})
+	if err != nil {
+		return "", "", fmt.Errorf("CreatePolicyEngine %q: %w", name, err)
+	}
+
+	engineID = aws.ToString(out.PolicyEngineId)
+	if err = c.waitForPolicyEngineActive(ctx, engineID); err != nil {
+		return aws.ToString(out.PolicyEngineArn), engineID,
+			fmt.Errorf("policy engine %q created but not active: %w", name, err)
+	}
+
+	return aws.ToString(out.PolicyEngineArn), engineID, nil
+}
+
+// CreateCedarPolicy creates a Cedar policy within a policy engine.
+func (c *realAWSClient) CreateCedarPolicy(
+	ctx context.Context, engineID string, name string, cedarStatement string, _ *Config,
+) (policyARN, policyID string, retErr error) {
+	out, err := c.client.CreatePolicy(ctx, &bedrockagentcorecontrol.CreatePolicyInput{
+		PolicyEngineId: aws.String(engineID),
+		Name:           aws.String(name),
+		Definition: &types.PolicyDefinitionMemberCedar{
+			Value: types.CedarPolicy{
+				Statement: aws.String(cedarStatement),
+			},
+		},
+	})
+	if err != nil {
+		return "", "", fmt.Errorf("CreatePolicy %q on engine %q: %w", name, engineID, err)
+	}
+
+	return aws.ToString(out.PolicyArn), aws.ToString(out.PolicyId), nil
+}
+
+// waitForPolicyEngineActive polls GetPolicyEngine until the status is ACTIVE.
+func (c *realAWSClient) waitForPolicyEngineActive(ctx context.Context, id string) error {
+	for i := 0; i < maxPollAttempts; i++ {
+		out, err := c.client.GetPolicyEngine(ctx, &bedrockagentcorecontrol.GetPolicyEngineInput{
+			PolicyEngineId: aws.String(id),
+		})
+		if err != nil {
+			return fmt.Errorf("polling policy engine %q: %w", id, err)
+		}
+		if out.Status == types.PolicyEngineStatusActive {
+			return nil
+		}
+		if out.Status == types.PolicyEngineStatusCreating {
+			time.Sleep(pollInterval)
+			continue
+		}
+		return fmt.Errorf("policy engine %q entered status %s", id, out.Status)
+	}
+	return fmt.Errorf("policy engine %q did not become active after %d attempts", id, maxPollAttempts)
+}
+
 // ---------- resourceDestroyer implementation ----------
 
 // DeleteResource removes a single resource by type.
@@ -293,6 +355,8 @@ func (c *realAWSClient) DeleteResource(ctx context.Context, res ResourceState) e
 	case ResTypeEvaluator:
 		log.Printf("agentcore: evaluator %q delete not yet supported; skipping", res.Name)
 		return nil
+	case ResTypeCedarPolicy:
+		return c.deleteCedarPolicy(ctx, res)
 	default:
 		return fmt.Errorf("unknown resource type %q for deletion", res.Type)
 	}
@@ -340,6 +404,32 @@ func (c *realAWSClient) deleteGateway(ctx context.Context, res ResourceState) er
 	return nil
 }
 
+func (c *realAWSClient) deleteCedarPolicy(ctx context.Context, res ResourceState) error {
+	engineID := res.Metadata["policy_engine_id"]
+	policyID := res.Metadata["policy_id"]
+
+	if policyID != "" && engineID != "" {
+		_, err := c.client.DeletePolicy(ctx, &bedrockagentcorecontrol.DeletePolicyInput{
+			PolicyEngineId: aws.String(engineID),
+			PolicyId:       aws.String(policyID),
+		})
+		if err != nil && !isNotFound(err) {
+			return fmt.Errorf("DeletePolicy %q: %w", res.Name, err)
+		}
+	}
+
+	if engineID != "" {
+		_, err := c.client.DeletePolicyEngine(ctx, &bedrockagentcorecontrol.DeletePolicyEngineInput{
+			PolicyEngineId: aws.String(engineID),
+		})
+		if err != nil && !isNotFound(err) {
+			return fmt.Errorf("DeletePolicyEngine %q: %w", res.Name, err)
+		}
+	}
+
+	return nil
+}
+
 // ---------- resourceChecker implementation ----------
 
 // CheckResource returns the health status of a single resource.
@@ -355,6 +445,8 @@ func (c *realAWSClient) CheckResource(ctx context.Context, res ResourceState) (s
 		return StatusHealthy, nil
 	case ResTypeEvaluator:
 		return StatusHealthy, nil
+	case ResTypeCedarPolicy:
+		return c.checkCedarPolicy(ctx, res)
 	default:
 		return StatusMissing, fmt.Errorf("unknown resource type %q", res.Type)
 	}
@@ -415,6 +507,26 @@ func (c *realAWSClient) checkGateway(ctx context.Context, res ResourceState) (st
 		return StatusUnhealthy, fmt.Errorf("GetGateway %q: %w", res.Name, err)
 	}
 	if out.Status == types.GatewayStatusReady {
+		return StatusHealthy, nil
+	}
+	return StatusUnhealthy, nil
+}
+
+func (c *realAWSClient) checkCedarPolicy(ctx context.Context, res ResourceState) (string, error) {
+	engineID := res.Metadata["policy_engine_id"]
+	if engineID == "" {
+		return StatusMissing, nil
+	}
+	out, err := c.client.GetPolicyEngine(ctx, &bedrockagentcorecontrol.GetPolicyEngineInput{
+		PolicyEngineId: aws.String(engineID),
+	})
+	if err != nil {
+		if isNotFound(err) {
+			return StatusMissing, nil
+		}
+		return StatusUnhealthy, fmt.Errorf("GetPolicyEngine %q: %w", res.Name, err)
+	}
+	if out.Status == types.PolicyEngineStatusActive {
 		return StatusHealthy, nil
 	}
 	return StatusUnhealthy, nil

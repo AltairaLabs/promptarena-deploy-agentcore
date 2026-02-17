@@ -7,13 +7,14 @@ import (
 
 // Environment variable keys injected into AgentCore runtimes.
 const (
-	EnvLogGroup       = "PROMPTPACK_LOG_GROUP"
-	EnvTracingEnabled = "PROMPTPACK_TRACING_ENABLED"
-	EnvMemoryStore    = "PROMPTPACK_MEMORY_STORE"
-	EnvMemoryID       = "PROMPTPACK_MEMORY_ID"
-	EnvA2AAgents      = "PROMPTPACK_AGENTS"
-	EnvA2AAuthMode    = "PROMPTPACK_A2A_AUTH_MODE"
-	EnvA2AAuthRole    = "PROMPTPACK_A2A_AUTH_ROLE"
+	EnvLogGroup        = "PROMPTPACK_LOG_GROUP"
+	EnvTracingEnabled  = "PROMPTPACK_TRACING_ENABLED"
+	EnvMemoryStore     = "PROMPTPACK_MEMORY_STORE"
+	EnvMemoryID        = "PROMPTPACK_MEMORY_ID"
+	EnvA2AAgents       = "PROMPTPACK_AGENTS"
+	EnvA2AAuthMode     = "PROMPTPACK_A2A_AUTH_MODE"
+	EnvA2AAuthRole     = "PROMPTPACK_A2A_AUTH_ROLE"
+	EnvPolicyEngineARN = "PROMPTPACK_POLICY_ENGINE_ARN"
 )
 
 // buildRuntimeEnvVars constructs the environment variable map that will be
