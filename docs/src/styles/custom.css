@@ -1,0 +1,18 @@
+/* AgentCore Adapter Docs — matches PromptKit theme */
+
+:root,
+::backdrop {
+  --sl-color-accent: hsl(258, 90%, 66%);
+  --sl-color-accent-low: hsl(258, 70%, 30%);
+  --sl-color-accent-high: #c4b5fd;
+  --fb-steps-bg-color: var(--sl-color-accent-high);
+  --fb-toc-color-current-bg: rgba(139, 92, 246, 0.2);
+}
+
+:root[data-theme='light'] {
+  --sl-color-accent: hsl(258, 89%, 55%);
+  --sl-color-accent-low: hsl(258, 89%, 90%);
+  --sl-color-accent-high: hsl(258, 80%, 40%);
+  --fb-steps-bg-color: hsl(258, 89%, 55%);
+  --fb-toc-color-current-bg: rgba(139, 92, 246, 0.15);
+}
