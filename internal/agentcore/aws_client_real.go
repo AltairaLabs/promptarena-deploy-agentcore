@@ -64,7 +64,7 @@ func newRealCheckerFactory(ctx context.Context, cfg *Config) (resourceChecker, e
 func (c *realAWSClient) CreateRuntime(
 	ctx context.Context, name string, cfg *Config,
 ) (string, error) {
-	out, err := c.client.CreateAgentRuntime(ctx, &bedrockagentcorecontrol.CreateAgentRuntimeInput{
+	input := &bedrockagentcorecontrol.CreateAgentRuntimeInput{
 		AgentRuntimeName: aws.String(name),
 		RoleArn:          aws.String(cfg.RuntimeRoleARN),
 		AgentRuntimeArtifact: &types.AgentRuntimeArtifactMemberContainerConfiguration{
@@ -75,7 +75,11 @@ func (c *realAWSClient) CreateRuntime(
 		NetworkConfiguration: &types.NetworkConfiguration{
 			NetworkMode: types.NetworkModePublic,
 		},
-	})
+	}
+	if len(cfg.RuntimeEnvVars) > 0 {
+		input.EnvironmentVariables = cfg.RuntimeEnvVars
+	}
+	out, err := c.client.CreateAgentRuntime(ctx, input)
 	if err != nil {
 		return "", fmt.Errorf("CreateAgentRuntime %q: %w", name, err)
 	}
@@ -98,7 +102,7 @@ func (c *realAWSClient) UpdateRuntime(
 		return "", fmt.Errorf("UpdateAgentRuntime %q: could not extract ID from ARN %q", name, arn)
 	}
 
-	_, err := c.client.UpdateAgentRuntime(ctx, &bedrockagentcorecontrol.UpdateAgentRuntimeInput{
+	input := &bedrockagentcorecontrol.UpdateAgentRuntimeInput{
 		AgentRuntimeId: aws.String(id),
 		RoleArn:        aws.String(cfg.RuntimeRoleARN),
 		AgentRuntimeArtifact: &types.AgentRuntimeArtifactMemberContainerConfiguration{
@@ -109,7 +113,11 @@ func (c *realAWSClient) UpdateRuntime(
 		NetworkConfiguration: &types.NetworkConfiguration{
 			NetworkMode: types.NetworkModePublic,
 		},
-	})
+	}
+	if len(cfg.RuntimeEnvVars) > 0 {
+		input.EnvironmentVariables = cfg.RuntimeEnvVars
+	}
+	_, err := c.client.UpdateAgentRuntime(ctx, input)
 	if err != nil {
 		return arn, fmt.Errorf("UpdateAgentRuntime %q: %w", name, err)
 	}

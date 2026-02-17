@@ -63,6 +63,9 @@ func (p *Provider) Apply(
 		return "", fmt.Errorf("agentcore: failed to create AWS client: %w", err)
 	}
 
+	// Build runtime environment variables from config.
+	cfg.RuntimeEnvVars = buildRuntimeEnvVars(cfg)
+
 	// Parse prior state to distinguish create vs update.
 	priorMap := parsePriorState(req.PriorState)
 

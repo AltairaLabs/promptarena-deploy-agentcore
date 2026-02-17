@@ -13,6 +13,10 @@ type Config struct {
 	MemoryStore    string               `json:"memory_store,omitempty"`
 	Tools          *ToolsConfig         `json:"tools,omitempty"`
 	Observability  *ObservabilityConfig `json:"observability,omitempty"`
+
+	// RuntimeEnvVars is populated at apply-time from config fields.
+	// It is NOT serialized — it is a transient, computed field.
+	RuntimeEnvVars map[string]string `json:"-"`
 }
 
 // ToolsConfig holds tool-related settings for the AgentCore runtime.
