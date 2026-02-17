@@ -3,6 +3,9 @@ package agentcore
 import (
 	"encoding/json"
 	"testing"
+
+	"github.com/AltairaLabs/PromptKit/runtime/evals"
+	"github.com/AltairaLabs/PromptKit/runtime/prompt"
 )
 
 func TestBuildRuntimeEnvVars(t *testing.T) {
@@ -207,4 +210,76 @@ func TestBuildA2AEndpointMap(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestInjectMetricsConfig(t *testing.T) {
+	t.Run("sets env var when evals have metrics", func(t *testing.T) {
+		cfg := &Config{
+			RuntimeEnvVars: make(map[string]string),
+		}
+		pack := &prompt.Pack{
+			ID: "test-pack",
+			Evals: []evals.EvalDef{
+				{
+					ID: "accuracy",
+					Metric: &evals.MetricDef{
+						Name: "accuracy_score",
+						Type: evals.MetricGauge,
+					},
+				},
+			},
+		}
+
+		injectMetricsConfig(cfg, pack)
+
+		raw, ok := cfg.RuntimeEnvVars[EnvMetricsConfig]
+		if !ok {
+			t.Fatal("expected PROMPTPACK_METRICS_CONFIG to be set")
+		}
+
+		var mc MetricsConfig
+		if err := json.Unmarshal([]byte(raw), &mc); err != nil {
+			t.Fatalf("failed to parse metrics config JSON: %v", err)
+		}
+		if mc.Namespace != metricsNamespace {
+			t.Errorf("namespace = %q, want %q", mc.Namespace, metricsNamespace)
+		}
+		if len(mc.Metrics) != 1 {
+			t.Fatalf("got %d metrics, want 1", len(mc.Metrics))
+		}
+		if mc.Metrics[0].MetricName != "accuracy_score" {
+			t.Errorf("metric name = %q, want %q", mc.Metrics[0].MetricName, "accuracy_score")
+		}
+	})
+
+	t.Run("no-op when no evals have metrics", func(t *testing.T) {
+		cfg := &Config{
+			RuntimeEnvVars: make(map[string]string),
+		}
+		pack := &prompt.Pack{
+			ID: "empty-pack",
+			Evals: []evals.EvalDef{
+				{ID: "no-metric"},
+			},
+		}
+
+		injectMetricsConfig(cfg, pack)
+
+		if _, ok := cfg.RuntimeEnvVars[EnvMetricsConfig]; ok {
+			t.Error("expected PROMPTPACK_METRICS_CONFIG to not be set")
+		}
+	})
+
+	t.Run("no-op when evals slice is empty", func(t *testing.T) {
+		cfg := &Config{
+			RuntimeEnvVars: make(map[string]string),
+		}
+		pack := &prompt.Pack{ID: "no-evals"}
+
+		injectMetricsConfig(cfg, pack)
+
+		if _, ok := cfg.RuntimeEnvVars[EnvMetricsConfig]; ok {
+			t.Error("expected PROMPTPACK_METRICS_CONFIG to not be set")
+		}
+	})
 }

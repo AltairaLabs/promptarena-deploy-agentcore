@@ -72,6 +72,7 @@ func (p *Provider) prepareApply(
 	}
 
 	cfg.RuntimeEnvVars = buildRuntimeEnvVars(cfg)
+	injectMetricsConfig(cfg, pack)
 
 	return &applyContext{
 		pack:     pack,
