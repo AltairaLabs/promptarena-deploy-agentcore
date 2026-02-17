@@ -38,6 +38,45 @@ type applyPhaseResult struct {
 	callbackErr error // non-nil if the callback itself returned an error
 }
 
+// applyContext holds parsed inputs for the Apply method.
+type applyContext struct {
+	pack     *prompt.Pack
+	cfg      *Config
+	reporter *adaptersdk.ProgressReporter
+	client   awsClient
+	priorMap map[string]ResourceState
+}
+
+// prepareApply parses the request and initializes the apply context.
+func (p *Provider) prepareApply(
+	ctx context.Context, req *deploy.PlanRequest, callback deploy.ApplyCallback,
+) (*applyContext, error) {
+	pack, err := adaptersdk.ParsePack([]byte(req.PackJSON))
+	if err != nil {
+		return nil, fmt.Errorf("agentcore: failed to parse pack: %w", err)
+	}
+
+	cfg, err := parseConfig(req.DeployConfig)
+	if err != nil {
+		return nil, fmt.Errorf("agentcore: failed to parse deploy config: %w", err)
+	}
+
+	client, err := p.awsClientFunc(ctx, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("agentcore: failed to create AWS client: %w", err)
+	}
+
+	cfg.RuntimeEnvVars = buildRuntimeEnvVars(cfg)
+
+	return &applyContext{
+		pack:     pack,
+		cfg:      cfg,
+		reporter: adaptersdk.NewProgressReporter(callback),
+		client:   client,
+		priorMap: parsePriorState(req.PriorState),
+	}, nil
+}
+
 // Apply executes a deployment plan, streaming progress events via the callback.
 // Resources are created in dependency order:
 //  1. Tool Gateway entries (from pack tools)
@@ -47,77 +86,17 @@ type applyPhaseResult struct {
 func (p *Provider) Apply(
 	ctx context.Context, req *deploy.PlanRequest, callback deploy.ApplyCallback,
 ) (string, error) {
-	pack, err := adaptersdk.ParsePack([]byte(req.PackJSON))
+	ac, err := p.prepareApply(ctx, req, callback)
 	if err != nil {
-		return "", fmt.Errorf("agentcore: failed to parse pack: %w", err)
+		return "", err
 	}
 
-	cfg, err := parseConfig(req.DeployConfig)
-	if err != nil {
-		return "", fmt.Errorf("agentcore: failed to parse deploy config: %w", err)
-	}
-
-	reporter := adaptersdk.NewProgressReporter(callback)
-	client, err := p.awsClientFunc(ctx, cfg)
-	if err != nil {
-		return "", fmt.Errorf("agentcore: failed to create AWS client: %w", err)
-	}
-
-	// Build runtime environment variables from config.
-	cfg.RuntimeEnvVars = buildRuntimeEnvVars(cfg)
-
-	// Parse prior state to distinguish create vs update.
-	priorMap := parsePriorState(req.PriorState)
-
-	var resources []ResourceState
-	var applyErr, cbErr error
-
-	// Step 1 — Tool Gateway entries (no update support yet).
-	phase := applyPhase(ctx, reporter, client.CreateGatewayTool, nil, cfg,
-		sortedKeys(pack.Tools), ResTypeToolGateway, stepTools, priorMap)
-	resources, applyErr, cbErr = mergePhase(resources, applyErr, phase)
-	if cbErr != nil {
-		return "", cbErr
-	}
-
-	// Step 2 — Agent runtimes (supports update).
-	phase = applyPhase(ctx, reporter, client.CreateRuntime, client.UpdateRuntime, cfg,
-		agentRuntimeNames(pack), ResTypeAgentRuntime, stepRuntimes, priorMap)
-	resources, applyErr, cbErr = mergePhase(resources, applyErr, phase)
-	if cbErr != nil {
-		return "", cbErr
-	}
-
-	// Step 3 — A2A wiring (only for multi-agent packs, no update support).
-	if adaptersdk.IsMultiAgent(pack) {
-		agents := adaptersdk.ExtractAgents(pack)
-		wireNames := make([]string, len(agents))
-		for i, ag := range agents {
-			wireNames[i] = ag.Name + "_a2a"
-		}
-		phase = applyPhase(ctx, reporter, client.CreateA2AWiring, nil, cfg,
-			wireNames, ResTypeA2AEndpoint, stepA2A, priorMap)
-		resources, applyErr, cbErr = mergePhase(resources, applyErr, phase)
-		if cbErr != nil {
-			return "", cbErr
-		}
-	}
-
-	// Step 4 — Evaluators (no update support yet).
-	evalNames := evalResourceNames(pack)
-	if len(evalNames) > 0 {
-		phase = applyPhase(ctx, reporter, client.CreateEvaluator, nil, cfg,
-			evalNames, ResTypeEvaluator, stepEvaluators, priorMap)
-		resources, applyErr, cbErr = mergePhase(resources, applyErr, phase)
-		if cbErr != nil {
-			return "", cbErr
-		}
-	}
+	resources, applyErr := p.executeApplyPhases(ctx, ac)
 
 	state := AdapterState{
 		Resources: resources,
-		PackID:    pack.ID,
-		Version:   pack.Version,
+		PackID:    ac.pack.ID,
+		Version:   ac.pack.Version,
 	}
 	stateJSON, err := json.Marshal(state)
 	if err != nil {
@@ -125,6 +104,77 @@ func (p *Provider) Apply(
 	}
 
 	return string(stateJSON), applyErr
+}
+
+// executeApplyPhases runs all deploy phases in dependency order.
+func (p *Provider) executeApplyPhases(
+	ctx context.Context, ac *applyContext,
+) ([]ResourceState, error) {
+	var resources []ResourceState
+	var applyErr, cbErr error
+
+	// Pre-step — Memory (if configured).
+	if ac.cfg.MemoryStore != "" {
+		memRes, memErr := createMemoryResource(ctx, ac.reporter, ac.client, ac.cfg, ac.pack)
+		if memErr != nil {
+			applyErr = combineErrors(applyErr, memErr)
+		}
+		if memRes != nil {
+			resources = append(resources, *memRes)
+		}
+	}
+
+	// Step 1 — Tool Gateway entries (no update support yet).
+	phase := applyPhase(ctx, ac.reporter, ac.client.CreateGatewayTool, nil, ac.cfg,
+		sortedKeys(ac.pack.Tools), ResTypeToolGateway, stepTools, ac.priorMap)
+	resources, applyErr, cbErr = mergePhase(resources, applyErr, phase)
+	if cbErr != nil {
+		return resources, cbErr
+	}
+
+	// Step 2 — Agent runtimes (supports update).
+	phase = applyPhase(ctx, ac.reporter, ac.client.CreateRuntime, ac.client.UpdateRuntime, ac.cfg,
+		agentRuntimeNames(ac.pack), ResTypeAgentRuntime, stepRuntimes, ac.priorMap)
+	resources, applyErr, cbErr = mergePhase(resources, applyErr, phase)
+	if cbErr != nil {
+		return resources, cbErr
+	}
+
+	// Step 3 — A2A wiring (only for multi-agent packs, no update support).
+	if adaptersdk.IsMultiAgent(ac.pack) {
+		resources, applyErr, cbErr = applyA2AWiring(ctx, ac, resources, applyErr)
+		if cbErr != nil {
+			return resources, cbErr
+		}
+	}
+
+	// Step 4 — Evaluators (no update support yet).
+	evalNames := evalResourceNames(ac.pack)
+	if len(evalNames) > 0 {
+		phase = applyPhase(ctx, ac.reporter, ac.client.CreateEvaluator, nil, ac.cfg,
+			evalNames, ResTypeEvaluator, stepEvaluators, ac.priorMap)
+		resources, applyErr, cbErr = mergePhase(resources, applyErr, phase)
+		if cbErr != nil {
+			return resources, cbErr
+		}
+	}
+
+	return resources, applyErr
+}
+
+// applyA2AWiring runs the A2A wiring phase for multi-agent packs.
+func applyA2AWiring(
+	ctx context.Context, ac *applyContext,
+	resources []ResourceState, applyErr error,
+) ([]ResourceState, error, error) {
+	agents := adaptersdk.ExtractAgents(ac.pack)
+	wireNames := make([]string, len(agents))
+	for i, ag := range agents {
+		wireNames[i] = ag.Name + "_a2a"
+	}
+	phase := applyPhase(ctx, ac.reporter, ac.client.CreateA2AWiring, nil, ac.cfg,
+		wireNames, ResTypeA2AEndpoint, stepA2A, ac.priorMap)
+	return mergePhase(resources, applyErr, phase)
 }
 
 // applyPhase creates or updates resources of a single type, reporting progress.
@@ -283,6 +333,45 @@ func sortedKeys[V any](m map[string]V) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+// createMemoryResource creates a memory resource if configured, injecting
+// the resulting ARN into runtime env vars.
+func createMemoryResource(
+	ctx context.Context,
+	reporter *adaptersdk.ProgressReporter,
+	client awsClient,
+	cfg *Config,
+	pack *prompt.Pack,
+) (*ResourceState, error) {
+	memName := pack.ID + "_memory"
+
+	if err := reporter.Progress("Creating memory: "+memName, 0); err != nil {
+		return nil, err
+	}
+
+	arn, err := client.CreateMemory(ctx, memName, cfg)
+	if err != nil {
+		_ = reporter.Error(fmt.Errorf("failed to create memory %s: %w", memName, err))
+		return &ResourceState{
+			Type: ResTypeMemory, Name: memName, Status: "failed",
+		}, err
+	}
+
+	// Inject memory ARN into runtime env vars so runtimes can discover it.
+	cfg.RuntimeEnvVars[EnvMemoryID] = arn
+
+	if err := reporter.Resource(&deploy.ResourceResult{
+		Type: ResTypeMemory, Name: memName,
+		Action: deploy.ActionCreate, Status: "created",
+		Detail: arn,
+	}); err != nil {
+		return nil, err
+	}
+
+	return &ResourceState{
+		Type: ResTypeMemory, Name: memName, ARN: arn, Status: "created",
+	}, nil
 }
 
 // combineErrors joins two errors, preferring the first non-nil.

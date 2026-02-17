@@ -2,6 +2,7 @@ package agentcore
 
 // Resource type constants used across plan, apply, destroy, and status.
 const (
+	ResTypeMemory       = "memory"
 	ResTypeAgentRuntime = "agent_runtime"
 	ResTypeToolGateway  = "tool_gateway"
 	ResTypeA2AEndpoint  = "a2a_endpoint"

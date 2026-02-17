@@ -407,6 +407,51 @@ func TestDiffResources_MixedWithMultipleDeletes(t *testing.T) {
 	}
 }
 
+func TestPlan_WithMemory_IncludesMemoryResource(t *testing.T) {
+	provider := newSimulatedProvider()
+	memConfig := `{"region":"us-west-2","runtime_role_arn":"arn:aws:iam::123456789012:role/test","memory_store":"session"}`
+	resp, err := provider.Plan(context.Background(), &deploy.PlanRequest{
+		PackJSON:     singleAgentPackJSON(),
+		DeployConfig: memConfig,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Should have memory + agent_runtime = 2 changes.
+	if len(resp.Changes) != 2 {
+		t.Fatalf("expected 2 changes, got %d: %+v", len(resp.Changes), resp.Changes)
+	}
+
+	// Memory should come first.
+	if resp.Changes[0].Type != ResTypeMemory {
+		t.Errorf("first change type = %q, want memory", resp.Changes[0].Type)
+	}
+	if resp.Changes[0].Name != "mypack_memory" {
+		t.Errorf("memory name = %q, want mypack_memory", resp.Changes[0].Name)
+	}
+	if resp.Changes[1].Type != ResTypeAgentRuntime {
+		t.Errorf("second change type = %q, want agent_runtime", resp.Changes[1].Type)
+	}
+}
+
+func TestPlan_WithoutMemory_NoMemoryResource(t *testing.T) {
+	provider := newSimulatedProvider()
+	resp, err := provider.Plan(context.Background(), &deploy.PlanRequest{
+		PackJSON:     singleAgentPackJSON(),
+		DeployConfig: validDeployConfig,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	for _, c := range resp.Changes {
+		if c.Type == ResTypeMemory {
+			t.Error("should not have memory resource when memory_store is not configured")
+		}
+	}
+}
+
 func TestBuildSummary_NoChanges(t *testing.T) {
 	summary := buildSummary(nil)
 	if summary != "Plan: 0 to create, 0 to update, 0 to delete" {
