@@ -3,3 +3,5 @@ go.work
 go.work.sum
 docs/local-backlog/
 coverage.out
+coverage_pkg.out
+.mcp.json

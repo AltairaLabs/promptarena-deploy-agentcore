@@ -27,6 +27,10 @@ const (
 // createFunc is the signature shared by all awsClient Create* methods.
 type createFunc func(ctx context.Context, name string, cfg *Config) (string, error)
 
+// updateFunc is the signature for awsClient Update* methods.
+// It takes the prior ARN so the implementation can extract the resource ID.
+type updateFunc func(ctx context.Context, arn string, name string, cfg *Config) (string, error)
+
 // applyPhaseResult holds the output of a single apply phase.
 type applyPhaseResult struct {
 	resources   []ResourceState
@@ -59,45 +63,48 @@ func (p *Provider) Apply(
 		return "", fmt.Errorf("agentcore: failed to create AWS client: %w", err)
 	}
 
+	// Parse prior state to distinguish create vs update.
+	priorMap := parsePriorState(req.PriorState)
+
 	var resources []ResourceState
 	var applyErr, cbErr error
 
-	// Step 1 — Tool Gateway entries.
-	phase := applyPhase(ctx, reporter, client.CreateGatewayTool, cfg,
-		sortedKeys(pack.Tools), ResTypeToolGateway, stepTools)
+	// Step 1 — Tool Gateway entries (no update support yet).
+	phase := applyPhase(ctx, reporter, client.CreateGatewayTool, nil, cfg,
+		sortedKeys(pack.Tools), ResTypeToolGateway, stepTools, priorMap)
 	resources, applyErr, cbErr = mergePhase(resources, applyErr, phase)
 	if cbErr != nil {
 		return "", cbErr
 	}
 
-	// Step 2 — Agent runtimes.
-	phase = applyPhase(ctx, reporter, client.CreateRuntime, cfg,
-		agentRuntimeNames(pack), ResTypeAgentRuntime, stepRuntimes)
+	// Step 2 — Agent runtimes (supports update).
+	phase = applyPhase(ctx, reporter, client.CreateRuntime, client.UpdateRuntime, cfg,
+		agentRuntimeNames(pack), ResTypeAgentRuntime, stepRuntimes, priorMap)
 	resources, applyErr, cbErr = mergePhase(resources, applyErr, phase)
 	if cbErr != nil {
 		return "", cbErr
 	}
 
-	// Step 3 — A2A wiring (only for multi-agent packs).
+	// Step 3 — A2A wiring (only for multi-agent packs, no update support).
 	if adaptersdk.IsMultiAgent(pack) {
 		agents := adaptersdk.ExtractAgents(pack)
 		wireNames := make([]string, len(agents))
 		for i, ag := range agents {
 			wireNames[i] = ag.Name + "_a2a"
 		}
-		phase = applyPhase(ctx, reporter, client.CreateA2AWiring, cfg,
-			wireNames, ResTypeA2AEndpoint, stepA2A)
+		phase = applyPhase(ctx, reporter, client.CreateA2AWiring, nil, cfg,
+			wireNames, ResTypeA2AEndpoint, stepA2A, priorMap)
 		resources, applyErr, cbErr = mergePhase(resources, applyErr, phase)
 		if cbErr != nil {
 			return "", cbErr
 		}
 	}
 
-	// Step 4 — Evaluators.
+	// Step 4 — Evaluators (no update support yet).
 	evalNames := evalResourceNames(pack)
 	if len(evalNames) > 0 {
-		phase = applyPhase(ctx, reporter, client.CreateEvaluator, cfg,
-			evalNames, ResTypeEvaluator, stepEvaluators)
+		phase = applyPhase(ctx, reporter, client.CreateEvaluator, nil, cfg,
+			evalNames, ResTypeEvaluator, stepEvaluators, priorMap)
 		resources, applyErr, cbErr = mergePhase(resources, applyErr, phase)
 		if cbErr != nil {
 			return "", cbErr
@@ -117,49 +124,114 @@ func (p *Provider) Apply(
 	return string(stateJSON), applyErr
 }
 
-// applyPhase creates resources of a single type, reporting progress.
+// applyPhase creates or updates resources of a single type, reporting progress.
 // stepIndex (0–3) determines which quarter of the progress bar is used.
+// If update is non-nil and the resource exists in priorMap, the update function
+// is called instead of create.
 func applyPhase(
 	ctx context.Context,
 	reporter *adaptersdk.ProgressReporter,
 	create createFunc,
+	update updateFunc,
 	cfg *Config,
 	names []string,
 	resType string,
 	stepIndex int,
+	priorMap map[string]ResourceState,
 ) applyPhaseResult {
 	var result applyPhaseResult
 	baseProgress := float64(stepIndex) * progressStepSize
 
 	for i, name := range names {
 		pct := baseProgress + float64(i)/float64(len(names)+1)*progressStepSize
-		if err := reporter.Progress(fmt.Sprintf("Creating %s: %s", resType, name), pct); err != nil {
+		op := resolveOp(resType, name, update, priorMap)
+
+		if err := reporter.Progress(fmt.Sprintf("%s %s: %s", op.verb, resType, name), pct); err != nil {
 			result.callbackErr = err
 			return result
 		}
 
-		arn, createErr := create(ctx, name, cfg)
-		if createErr != nil {
-			_ = reporter.Error(fmt.Errorf("failed to create %s %s: %w", resType, name, createErr))
+		arn, opErr := execOp(ctx, &op, create, update, name, cfg)
+		if opErr != nil {
+			_ = reporter.Error(fmt.Errorf("failed to %s %s %s: %w", op.failVerb, resType, name, opErr))
 			result.resources = append(result.resources, ResourceState{
 				Type: resType, Name: name, Status: "failed",
 			})
-			result.err = combineErrors(result.err, createErr)
+			result.err = combineErrors(result.err, opErr)
 			continue
 		}
 
 		if err := reporter.Resource(&deploy.ResourceResult{
-			Type: resType, Name: name, Action: deploy.ActionCreate,
-			Status: "created", Detail: arn,
+			Type: resType, Name: name, Action: op.action,
+			Status: op.status, Detail: arn,
 		}); err != nil {
 			result.callbackErr = err
 			return result
 		}
 		result.resources = append(result.resources, ResourceState{
-			Type: resType, Name: name, ARN: arn, Status: "created",
+			Type: resType, Name: name, ARN: arn, Status: op.status,
 		})
 	}
 	return result
+}
+
+// resourceOp holds the resolved operation details for a single resource.
+type resourceOp struct {
+	isUpdate bool
+	priorARN string
+	verb     string // "Creating" or "Updating"
+	failVerb string // "create" or "update"
+	action   deploy.Action
+	status   string
+}
+
+// resolveOp determines whether a resource should be created or updated.
+func resolveOp(
+	resType, name string,
+	update updateFunc,
+	priorMap map[string]ResourceState,
+) resourceOp {
+	prior, hasPrior := priorMap[resourceKey(resType, name)]
+	if hasPrior && update != nil {
+		return resourceOp{
+			isUpdate: true, priorARN: prior.ARN,
+			verb: "Updating", failVerb: "update",
+			action: deploy.ActionUpdate, status: "updated",
+		}
+	}
+	return resourceOp{
+		verb: "Creating", failVerb: "create",
+		action: deploy.ActionCreate, status: "created",
+	}
+}
+
+// execOp runs the appropriate create or update function.
+func execOp(
+	ctx context.Context, op *resourceOp,
+	create createFunc, update updateFunc,
+	name string, cfg *Config,
+) (string, error) {
+	if op.isUpdate {
+		return update(ctx, op.priorARN, name, cfg)
+	}
+	return create(ctx, name, cfg)
+}
+
+// parsePriorState deserializes the prior state string into a lookup map
+// keyed by resourceKey(type, name). Returns an empty map if no prior state.
+func parsePriorState(priorState string) map[string]ResourceState {
+	priorMap := make(map[string]ResourceState)
+	if priorState == "" {
+		return priorMap
+	}
+	var state AdapterState
+	if err := json.Unmarshal([]byte(priorState), &state); err != nil {
+		return priorMap
+	}
+	for _, r := range state.Resources {
+		priorMap[resourceKey(r.Type, r.Name)] = r
+	}
+	return priorMap
 }
 
 // mergePhase appends phase resources and combines errors into the running totals.

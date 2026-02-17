@@ -5,6 +5,7 @@ import "context"
 // awsClient abstracts AWS AgentCore API calls for testing.
 type awsClient interface {
 	CreateRuntime(ctx context.Context, name string, cfg *Config) (arn string, err error)
+	UpdateRuntime(ctx context.Context, arn string, name string, cfg *Config) (string, error)
 	CreateGatewayTool(ctx context.Context, name string, cfg *Config) (arn string, err error)
 	CreateA2AWiring(ctx context.Context, name string, cfg *Config) (arn string, err error)
 	CreateEvaluator(ctx context.Context, name string, cfg *Config) (arn string, err error)

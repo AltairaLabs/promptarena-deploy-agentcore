@@ -88,6 +88,39 @@ func (c *realAWSClient) CreateRuntime(
 	return aws.ToString(out.AgentRuntimeArn), nil
 }
 
+// UpdateRuntime updates an existing AgentCore runtime and polls until it
+// reaches READY status.
+func (c *realAWSClient) UpdateRuntime(
+	ctx context.Context, arn string, name string, cfg *Config,
+) (string, error) {
+	id := extractResourceID(arn, "agent-runtime")
+	if id == "" {
+		return "", fmt.Errorf("UpdateAgentRuntime %q: could not extract ID from ARN %q", name, arn)
+	}
+
+	_, err := c.client.UpdateAgentRuntime(ctx, &bedrockagentcorecontrol.UpdateAgentRuntimeInput{
+		AgentRuntimeId: aws.String(id),
+		RoleArn:        aws.String(cfg.RuntimeRoleARN),
+		AgentRuntimeArtifact: &types.AgentRuntimeArtifactMemberContainerConfiguration{
+			Value: types.ContainerConfiguration{
+				ContainerUri: aws.String("public.ecr.aws/bedrock-agentcore/runtime:latest"),
+			},
+		},
+		NetworkConfiguration: &types.NetworkConfiguration{
+			NetworkMode: types.NetworkModePublic,
+		},
+	})
+	if err != nil {
+		return arn, fmt.Errorf("UpdateAgentRuntime %q: %w", name, err)
+	}
+
+	if err := c.waitForRuntimeReady(ctx, id); err != nil {
+		return arn, fmt.Errorf("runtime %q updated but not ready: %w", name, err)
+	}
+
+	return arn, nil
+}
+
 // CreateGatewayTool provisions a tool gateway target, lazily creating the
 // parent gateway on the first invocation.
 func (c *realAWSClient) CreateGatewayTool(
