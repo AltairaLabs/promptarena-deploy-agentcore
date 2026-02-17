@@ -95,7 +95,7 @@ SonarCloud runs on every PR and enforces the **Sonar Way** quality profile. The 
 
 ## Testing Patterns
 
-- **Unit tests**: Use `simulatedAWSClient` / `failingAWSClient` injection via `awsClientFunc` factory on `AgentCoreProvider`.
+- **Unit tests**: Use `simulatedAWSClient` / `failingAWSClient` injection via `awsClientFunc` factory on `Provider`.
 - **Table-driven tests** for config validation and resource planning.
 - **Event-driven tests** for Apply/Destroy — collect callback events, assert ordering and content.
 - **Integration tests**: Guard with env-var checks (`AGENTCORE_TEST_REGION`), use `//go:build integration` tag.
@@ -107,7 +107,7 @@ SonarCloud runs on every PR and enforces the **Sonar Way** quality profile. The 
 |------|---------|
 | `main.go` | Entry point — calls `adaptersdk.Serve(provider)` |
 | `main.go` | Entry point — thin wrapper calling `adaptersdk.Serve(provider)` |
-| `internal/agentcore/provider.go` | `AgentCoreProvider`, factories, `GetProviderInfo`, `ValidateConfig` |
+| `internal/agentcore/provider.go` | `Provider`, factories, `GetProviderInfo`, `ValidateConfig` |
 | `internal/agentcore/config.go` | Config parsing, validation, JSON Schema definition |
 | `internal/agentcore/plan.go` | Plan generation — diffs desired resources vs prior state |
 | `internal/agentcore/apply.go` | Apply — creates resources in 4 dependency-ordered phases |
@@ -137,7 +137,7 @@ resourceDestroyer   — Delete resources (reverse dependency order)
 resourceChecker     — Health check resources (healthy/unhealthy/missing)
 ```
 
-All three are implemented by `realAWSClient` for production and by simulated/failing variants for tests. Dependency injection is via factory functions on `AgentCoreProvider`.
+All three are implemented by `realAWSClient` for production and by simulated/failing variants for tests. Dependency injection is via factory functions on `Provider`.
 
 ### Deploy Phases (Apply)
 

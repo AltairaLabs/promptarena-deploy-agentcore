@@ -13,7 +13,7 @@ import (
 // --- test helpers ---
 
 // collectEvents runs Apply and collects all emitted events.
-func collectEvents(t *testing.T, provider *AgentCoreProvider, req *deploy.PlanRequest) ([]deploy.ApplyEvent, string, error) {
+func collectEvents(t *testing.T, provider *Provider, req *deploy.PlanRequest) ([]deploy.ApplyEvent, string, error) {
 	t.Helper()
 	var events []deploy.ApplyEvent
 	callback := func(ev *deploy.ApplyEvent) error {
@@ -161,28 +161,28 @@ type failingAWSClient struct {
 	failOn map[string]bool // resource type -> should fail
 }
 
-func (c *failingAWSClient) CreateRuntime(ctx context.Context, name string, cfg *AgentCoreConfig) (string, error) {
+func (c *failingAWSClient) CreateRuntime(ctx context.Context, name string, cfg *Config) (string, error) {
 	if c.failOn["agent_runtime"] {
 		return "", fmt.Errorf("simulated runtime creation failure for %s", name)
 	}
 	return c.simulatedAWSClient.CreateRuntime(ctx, name, cfg)
 }
 
-func (c *failingAWSClient) CreateGatewayTool(ctx context.Context, name string, cfg *AgentCoreConfig) (string, error) {
+func (c *failingAWSClient) CreateGatewayTool(ctx context.Context, name string, cfg *Config) (string, error) {
 	if c.failOn["tool_gateway"] {
 		return "", fmt.Errorf("simulated gateway tool failure for %s", name)
 	}
 	return c.simulatedAWSClient.CreateGatewayTool(ctx, name, cfg)
 }
 
-func (c *failingAWSClient) CreateA2AWiring(ctx context.Context, name string, cfg *AgentCoreConfig) (string, error) {
+func (c *failingAWSClient) CreateA2AWiring(ctx context.Context, name string, cfg *Config) (string, error) {
 	if c.failOn["a2a_endpoint"] {
 		return "", fmt.Errorf("simulated a2a wiring failure for %s", name)
 	}
 	return c.simulatedAWSClient.CreateA2AWiring(ctx, name, cfg)
 }
 
-func (c *failingAWSClient) CreateEvaluator(ctx context.Context, name string, cfg *AgentCoreConfig) (string, error) {
+func (c *failingAWSClient) CreateEvaluator(ctx context.Context, name string, cfg *Config) (string, error) {
 	if c.failOn["evaluator"] {
 		return "", fmt.Errorf("simulated evaluator failure for %s", name)
 	}
@@ -467,8 +467,8 @@ func TestApply_StateContainsAllResourceInfo(t *testing.T) {
 
 func TestApply_PartialFailure_ReturnsStateForSuccessfulResources(t *testing.T) {
 	sim := newSimulatedProvider()
-	provider := &AgentCoreProvider{
-		awsClientFunc: func(_ context.Context, cfg *AgentCoreConfig) (awsClient, error) {
+	provider := &Provider{
+		awsClientFunc: func(_ context.Context, cfg *Config) (awsClient, error) {
 			return &failingAWSClient{
 				simulatedAWSClient: *newSimulatedAWSClient(cfg.Region),
 				failOn:             map[string]bool{"a2a_endpoint": true},
@@ -668,8 +668,8 @@ func TestApply_EmptyPack_CreatesRuntimeOnly(t *testing.T) {
 }
 
 func TestApply_AWSClientFactoryError(t *testing.T) {
-	provider := &AgentCoreProvider{
-		awsClientFunc: func(_ context.Context, _ *AgentCoreConfig) (awsClient, error) {
+	provider := &Provider{
+		awsClientFunc: func(_ context.Context, _ *Config) (awsClient, error) {
 			return nil, fmt.Errorf("simulated client factory failure")
 		},
 	}
@@ -690,8 +690,8 @@ func TestApply_AWSClientFactoryError(t *testing.T) {
 
 func TestApply_ToolFailure_ContinuesToRuntime(t *testing.T) {
 	sim := newSimulatedProvider()
-	provider := &AgentCoreProvider{
-		awsClientFunc: func(_ context.Context, cfg *AgentCoreConfig) (awsClient, error) {
+	provider := &Provider{
+		awsClientFunc: func(_ context.Context, cfg *Config) (awsClient, error) {
 			return &failingAWSClient{
 				simulatedAWSClient: *newSimulatedAWSClient(cfg.Region),
 				failOn:             map[string]bool{"tool_gateway": true},
@@ -747,8 +747,8 @@ func TestApply_ToolFailure_ContinuesToRuntime(t *testing.T) {
 
 func TestApply_RuntimeFailure(t *testing.T) {
 	sim := newSimulatedProvider()
-	provider := &AgentCoreProvider{
-		awsClientFunc: func(_ context.Context, cfg *AgentCoreConfig) (awsClient, error) {
+	provider := &Provider{
+		awsClientFunc: func(_ context.Context, cfg *Config) (awsClient, error) {
 			return &failingAWSClient{
 				simulatedAWSClient: *newSimulatedAWSClient(cfg.Region),
 				failOn:             map[string]bool{"agent_runtime": true},
@@ -859,8 +859,8 @@ func TestApply_EvalWithEmptyID(t *testing.T) {
 
 func TestApply_EvalFailure(t *testing.T) {
 	sim := newSimulatedProvider()
-	provider := &AgentCoreProvider{
-		awsClientFunc: func(_ context.Context, cfg *AgentCoreConfig) (awsClient, error) {
+	provider := &Provider{
+		awsClientFunc: func(_ context.Context, cfg *Config) (awsClient, error) {
 			return &failingAWSClient{
 				simulatedAWSClient: *newSimulatedAWSClient(cfg.Region),
 				failOn:             map[string]bool{"evaluator": true},

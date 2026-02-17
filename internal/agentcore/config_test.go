@@ -52,12 +52,12 @@ func TestParseConfig(t *testing.T) {
 func TestValidate(t *testing.T) {
 	tests := []struct {
 		name     string
-		cfg      AgentCoreConfig
+		cfg      Config
 		wantErrs int
 	}{
 		{
 			name: "valid minimal",
-			cfg: AgentCoreConfig{
+			cfg: Config{
 				Region:         "us-west-2",
 				RuntimeRoleARN: "arn:aws:iam::123456789012:role/test",
 			},
@@ -65,12 +65,12 @@ func TestValidate(t *testing.T) {
 		},
 		{
 			name:     "missing everything",
-			cfg:      AgentCoreConfig{},
+			cfg:      Config{},
 			wantErrs: 2,
 		},
 		{
 			name: "bad region format",
-			cfg: AgentCoreConfig{
+			cfg: Config{
 				Region:         "invalid",
 				RuntimeRoleARN: "arn:aws:iam::123456789012:role/test",
 			},
@@ -78,7 +78,7 @@ func TestValidate(t *testing.T) {
 		},
 		{
 			name: "bad role ARN",
-			cfg: AgentCoreConfig{
+			cfg: Config{
 				Region:         "us-east-1",
 				RuntimeRoleARN: "not-an-arn",
 			},
@@ -86,7 +86,7 @@ func TestValidate(t *testing.T) {
 		},
 		{
 			name: "invalid memory store",
-			cfg: AgentCoreConfig{
+			cfg: Config{
 				Region:         "us-west-2",
 				RuntimeRoleARN: "arn:aws:iam::123456789012:role/test",
 				MemoryStore:    "invalid",
@@ -95,7 +95,7 @@ func TestValidate(t *testing.T) {
 		},
 		{
 			name: "valid with session memory",
-			cfg: AgentCoreConfig{
+			cfg: Config{
 				Region:         "ap-southeast-1",
 				RuntimeRoleARN: "arn:aws:iam::111222333444:role/agent",
 				MemoryStore:    "persistent",

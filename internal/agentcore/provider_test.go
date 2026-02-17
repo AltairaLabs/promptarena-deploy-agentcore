@@ -243,10 +243,10 @@ func TestUnknownMethodReturnsError(t *testing.T) {
 	}
 }
 
-func TestNewAgentCoreProvider(t *testing.T) {
-	p := NewAgentCoreProvider()
+func TestNewProvider(t *testing.T) {
+	p := NewProvider()
 	if p == nil {
-		t.Fatal("NewAgentCoreProvider returned nil")
+		t.Fatal("NewProvider returned nil")
 	}
 	if p.awsClientFunc == nil {
 		t.Error("awsClientFunc is nil")

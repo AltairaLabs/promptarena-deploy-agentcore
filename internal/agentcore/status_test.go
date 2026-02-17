@@ -336,9 +336,9 @@ func TestParseAdapterState_InvalidJSON(t *testing.T) {
 // ---------- Destroy error path tests ----------
 
 func TestDestroy_FailingDestroyer_EmitsErrorEvents(t *testing.T) {
-	p := &AgentCoreProvider{
+	p := &Provider{
 		awsClientFunc: nil,
-		destroyerFunc: func(_ context.Context, _ *AgentCoreConfig) (resourceDestroyer, error) {
+		destroyerFunc: func(_ context.Context, _ *Config) (resourceDestroyer, error) {
 			return &failingDestroyer{failOn: map[string]bool{"agent_runtime": true}}, nil
 		},
 		checkerFunc: nil,
@@ -431,8 +431,8 @@ func TestDestroy_InvalidConfig(t *testing.T) {
 }
 
 func TestDestroy_DestroyerFactoryError(t *testing.T) {
-	p := &AgentCoreProvider{
-		destroyerFunc: func(_ context.Context, _ *AgentCoreConfig) (resourceDestroyer, error) {
+	p := &Provider{
+		destroyerFunc: func(_ context.Context, _ *Config) (resourceDestroyer, error) {
 			return nil, fmt.Errorf("factory failed")
 		},
 	}
@@ -450,8 +450,8 @@ func TestDestroy_DestroyerFactoryError(t *testing.T) {
 // ---------- Status error path tests ----------
 
 func TestStatus_UnhealthyResource_ReturnsDegraded(t *testing.T) {
-	p := &AgentCoreProvider{
-		checkerFunc: func(_ context.Context, _ *AgentCoreConfig) (resourceChecker, error) {
+	p := &Provider{
+		checkerFunc: func(_ context.Context, _ *Config) (resourceChecker, error) {
 			return &failingChecker{unhealthyTypes: map[string]bool{"agent_runtime": true}}, nil
 		},
 	}
@@ -475,8 +475,8 @@ func TestStatus_UnhealthyResource_ReturnsDegraded(t *testing.T) {
 }
 
 func TestStatus_CheckerReturnsError_MarksUnhealthy(t *testing.T) {
-	p := &AgentCoreProvider{
-		checkerFunc: func(_ context.Context, _ *AgentCoreConfig) (resourceChecker, error) {
+	p := &Provider{
+		checkerFunc: func(_ context.Context, _ *Config) (resourceChecker, error) {
 			return &failingChecker{errorTypes: map[string]bool{"evaluator": true}}, nil
 		},
 	}
@@ -515,8 +515,8 @@ func TestStatus_InvalidConfig(t *testing.T) {
 }
 
 func TestStatus_CheckerFactoryError(t *testing.T) {
-	p := &AgentCoreProvider{
-		checkerFunc: func(_ context.Context, _ *AgentCoreConfig) (resourceChecker, error) {
+	p := &Provider{
+		checkerFunc: func(_ context.Context, _ *Config) (resourceChecker, error) {
 			return nil, fmt.Errorf("checker factory failed")
 		},
 	}

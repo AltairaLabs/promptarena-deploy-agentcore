@@ -45,26 +45,26 @@ const configSchema = `{
 }`
 
 // awsClientFactory creates an awsClient for the given config.
-type awsClientFactory func(ctx context.Context, cfg *AgentCoreConfig) (awsClient, error)
+type awsClientFactory func(ctx context.Context, cfg *Config) (awsClient, error)
 
 // destroyerFactory creates a resourceDestroyer for the given config.
-type destroyerFactory func(ctx context.Context, cfg *AgentCoreConfig) (resourceDestroyer, error)
+type destroyerFactory func(ctx context.Context, cfg *Config) (resourceDestroyer, error)
 
 // checkerFactory creates a resourceChecker for the given config.
-type checkerFactory func(ctx context.Context, cfg *AgentCoreConfig) (resourceChecker, error)
+type checkerFactory func(ctx context.Context, cfg *Config) (resourceChecker, error)
 
-// AgentCoreProvider implements deploy.Provider for AWS Bedrock AgentCore.
-type AgentCoreProvider struct {
+// Provider implements deploy.Provider for AWS Bedrock AgentCore.
+type Provider struct {
 	awsClientFunc awsClientFactory
 	destroyerFunc destroyerFactory
 	checkerFunc   checkerFactory
 }
 
-// NewAgentCoreProvider creates a new AgentCoreProvider with the real AWS
+// NewProvider creates a new Provider with the real AWS
 // client factories. Credentials are resolved via the standard
 // aws-sdk-go-v2/config chain.
-func NewAgentCoreProvider() *AgentCoreProvider {
-	return &AgentCoreProvider{
+func NewProvider() *Provider {
+	return &Provider{
 		awsClientFunc: newRealAWSClientFactory,
 		destroyerFunc: newRealDestroyerFactory,
 		checkerFunc:   newRealCheckerFactory,
@@ -72,7 +72,7 @@ func NewAgentCoreProvider() *AgentCoreProvider {
 }
 
 // GetProviderInfo returns metadata about the agentcore adapter.
-func (p *AgentCoreProvider) GetProviderInfo(_ context.Context) (*deploy.ProviderInfo, error) {
+func (p *Provider) GetProviderInfo(_ context.Context) (*deploy.ProviderInfo, error) {
 	return &deploy.ProviderInfo{
 		Name:         "agentcore",
 		Version:      Version,
@@ -82,7 +82,9 @@ func (p *AgentCoreProvider) GetProviderInfo(_ context.Context) (*deploy.Provider
 }
 
 // ValidateConfig parses and validates the provider configuration.
-func (p *AgentCoreProvider) ValidateConfig(_ context.Context, req *deploy.ValidateRequest) (*deploy.ValidateResponse, error) {
+func (p *Provider) ValidateConfig(
+	_ context.Context, req *deploy.ValidateRequest,
+) (*deploy.ValidateResponse, error) {
 	cfg, err := parseConfig(req.Config)
 	if err != nil {
 		return &deploy.ValidateResponse{
