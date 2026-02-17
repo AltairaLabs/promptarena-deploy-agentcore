@@ -93,6 +93,29 @@ func TestBuildRuntimeEnvVars(t *testing.T) {
 				EnvMemoryStore:    "session",
 			},
 		},
+		{
+			name: "a2a auth iam mode",
+			cfg: &Config{
+				RuntimeRoleARN: "arn:aws:iam::123456789012:role/test",
+				A2AAuth:        &A2AAuthConfig{Mode: A2AAuthModeIAM},
+			},
+			want: map[string]string{
+				EnvA2AAuthMode: "iam",
+				EnvA2AAuthRole: "arn:aws:iam::123456789012:role/test",
+			},
+		},
+		{
+			name: "a2a auth jwt mode (no role)",
+			cfg: &Config{
+				A2AAuth: &A2AAuthConfig{
+					Mode:         A2AAuthModeJWT,
+					DiscoveryURL: "https://auth.example.com",
+				},
+			},
+			want: map[string]string{
+				EnvA2AAuthMode: "jwt",
+			},
+		},
 	}
 
 	for _, tt := range tests {

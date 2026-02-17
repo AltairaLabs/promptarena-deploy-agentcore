@@ -35,6 +35,13 @@ func buildRuntimeEnvVars(cfg *Config) map[string]string {
 		env[EnvMemoryStore] = cfg.MemoryStore
 	}
 
+	if cfg.A2AAuth != nil && cfg.A2AAuth.Mode != "" {
+		env[EnvA2AAuthMode] = cfg.A2AAuth.Mode
+		if cfg.A2AAuth.Mode == A2AAuthModeIAM && cfg.RuntimeRoleARN != "" {
+			env[EnvA2AAuthRole] = cfg.RuntimeRoleARN
+		}
+	}
+
 	return env
 }
 

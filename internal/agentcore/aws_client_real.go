@@ -79,6 +79,9 @@ func (c *realAWSClient) CreateRuntime(
 	if len(cfg.RuntimeEnvVars) > 0 {
 		input.EnvironmentVariables = cfg.RuntimeEnvVars
 	}
+	if authCfg := buildAuthorizerConfig(cfg); authCfg != nil {
+		input.AuthorizerConfiguration = authCfg
+	}
 	out, err := c.client.CreateAgentRuntime(ctx, input)
 	if err != nil {
 		return "", fmt.Errorf("CreateAgentRuntime %q: %w", name, err)
@@ -116,6 +119,9 @@ func (c *realAWSClient) UpdateRuntime(
 	}
 	if len(cfg.RuntimeEnvVars) > 0 {
 		input.EnvironmentVariables = cfg.RuntimeEnvVars
+	}
+	if authCfg := buildAuthorizerConfig(cfg); authCfg != nil {
+		input.AuthorizerConfiguration = authCfg
 	}
 	_, err := c.client.UpdateAgentRuntime(ctx, input)
 	if err != nil {
@@ -197,6 +203,21 @@ func (c *realAWSClient) CreateEvaluator(
 ) (string, error) {
 	log.Printf("agentcore: evaluator %q creation not yet supported by SDK; returning placeholder", name)
 	return fmt.Sprintf("arn:aws:bedrock:%s:evaluator/%s", c.cfg.Region, name), nil
+}
+
+// buildAuthorizerConfig returns the SDK AuthorizerConfiguration for the
+// given config, or nil if no auth is configured (or IAM mode is used).
+func buildAuthorizerConfig(cfg *Config) types.AuthorizerConfiguration {
+	if cfg.A2AAuth == nil || cfg.A2AAuth.Mode != A2AAuthModeJWT {
+		return nil
+	}
+	return &types.AuthorizerConfigurationMemberCustomJWTAuthorizer{
+		Value: types.CustomJWTAuthorizerConfiguration{
+			DiscoveryUrl:    aws.String(cfg.A2AAuth.DiscoveryURL),
+			AllowedAudience: cfg.A2AAuth.AllowedAud,
+			AllowedClients:  cfg.A2AAuth.AllowedClts,
+		},
+	}
 }
 
 // memoryExpiryDays is the default event expiry duration for memory resources.

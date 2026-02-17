@@ -113,3 +113,94 @@ func TestValidate(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateA2AAuth(t *testing.T) {
+	base := Config{
+		Region:         "us-west-2",
+		RuntimeRoleARN: "arn:aws:iam::123456789012:role/test",
+	}
+
+	tests := []struct {
+		name     string
+		auth     *A2AAuthConfig
+		wantErrs int
+	}{
+		{
+			name:     "nil auth is valid",
+			auth:     nil,
+			wantErrs: 0,
+		},
+		{
+			name:     "iam mode valid",
+			auth:     &A2AAuthConfig{Mode: "iam"},
+			wantErrs: 0,
+		},
+		{
+			name: "jwt mode with discovery URL valid",
+			auth: &A2AAuthConfig{
+				Mode:         "jwt",
+				DiscoveryURL: "https://login.example.com/.well-known/openid-configuration",
+				AllowedAud:   []string{"my-app"},
+			},
+			wantErrs: 0,
+		},
+		{
+			name:     "jwt mode missing discovery URL",
+			auth:     &A2AAuthConfig{Mode: "jwt"},
+			wantErrs: 1,
+		},
+		{
+			name:     "empty mode",
+			auth:     &A2AAuthConfig{},
+			wantErrs: 1,
+		},
+		{
+			name:     "invalid mode",
+			auth:     &A2AAuthConfig{Mode: "oauth2"},
+			wantErrs: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := base
+			cfg.A2AAuth = tt.auth
+			errs := cfg.validate()
+			if len(errs) != tt.wantErrs {
+				t.Errorf("got %d errors %v, want %d", len(errs), errs, tt.wantErrs)
+			}
+		})
+	}
+}
+
+func TestParseConfig_A2AAuth(t *testing.T) {
+	raw := `{
+		"region": "us-west-2",
+		"runtime_role_arn": "arn:aws:iam::123456789012:role/test",
+		"a2a_auth": {
+			"mode": "jwt",
+			"discovery_url": "https://auth.example.com/.well-known/openid-configuration",
+			"allowed_audience": ["aud1"],
+			"allowed_clients": ["client1", "client2"]
+		}
+	}`
+	cfg, err := parseConfig(raw)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.A2AAuth == nil {
+		t.Fatal("expected a2a_auth to be parsed")
+	}
+	if cfg.A2AAuth.Mode != "jwt" {
+		t.Errorf("mode = %q, want jwt", cfg.A2AAuth.Mode)
+	}
+	if cfg.A2AAuth.DiscoveryURL == "" {
+		t.Error("expected discovery_url to be set")
+	}
+	if len(cfg.A2AAuth.AllowedAud) != 1 {
+		t.Errorf("expected 1 audience, got %d", len(cfg.A2AAuth.AllowedAud))
+	}
+	if len(cfg.A2AAuth.AllowedClts) != 2 {
+		t.Errorf("expected 2 clients, got %d", len(cfg.A2AAuth.AllowedClts))
+	}
+}

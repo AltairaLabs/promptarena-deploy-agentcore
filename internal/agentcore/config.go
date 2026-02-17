@@ -13,11 +13,26 @@ type Config struct {
 	MemoryStore    string               `json:"memory_store,omitempty"`
 	Tools          *ToolsConfig         `json:"tools,omitempty"`
 	Observability  *ObservabilityConfig `json:"observability,omitempty"`
+	A2AAuth        *A2AAuthConfig       `json:"a2a_auth,omitempty"`
 
 	// RuntimeEnvVars is populated at apply-time from config fields.
 	// It is NOT serialized — it is a transient, computed field.
 	RuntimeEnvVars map[string]string `json:"-"`
 }
+
+// A2AAuthConfig holds A2A authentication settings.
+type A2AAuthConfig struct {
+	Mode         string   `json:"mode"`                       // "iam" or "jwt"
+	DiscoveryURL string   `json:"discovery_url,omitempty"`    // required for jwt
+	AllowedAud   []string `json:"allowed_audience,omitempty"` // JWT audiences
+	AllowedClts  []string `json:"allowed_clients,omitempty"`  // JWT client IDs
+}
+
+// A2A auth mode constants.
+const (
+	A2AAuthModeIAM = "iam"
+	A2AAuthModeJWT = "jwt"
+)
 
 // ToolsConfig holds tool-related settings for the AgentCore runtime.
 type ToolsConfig struct {
@@ -70,5 +85,28 @@ func (c *Config) validate() []string {
 		errs = append(errs, fmt.Sprintf("memory_store %q must be \"session\" or \"persistent\"", c.MemoryStore))
 	}
 
+	errs = append(errs, validateA2AAuth(c.A2AAuth)...)
+
+	return errs
+}
+
+// validateA2AAuth checks A2A auth configuration.
+func validateA2AAuth(auth *A2AAuthConfig) []string {
+	if auth == nil {
+		return nil
+	}
+	var errs []string
+	switch auth.Mode {
+	case A2AAuthModeIAM:
+		// IAM mode requires no extra fields.
+	case A2AAuthModeJWT:
+		if auth.DiscoveryURL == "" {
+			errs = append(errs, "a2a_auth.discovery_url is required when mode is \"jwt\"")
+		}
+	case "":
+		errs = append(errs, "a2a_auth.mode is required (\"iam\" or \"jwt\")")
+	default:
+		errs = append(errs, fmt.Sprintf("a2a_auth.mode %q must be \"iam\" or \"jwt\"", auth.Mode))
+	}
 	return errs
 }
