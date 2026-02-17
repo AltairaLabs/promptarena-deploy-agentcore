@@ -73,6 +73,23 @@ const configSchema = `{
           "description": "Allowed JWT client IDs"
         }
       }
+    },
+    "container_image": {
+      "type": "string",
+      "description": "Container image URI for agent runtimes (default: ghcr.io/altairalabs/promptkit-agentcore:latest)"
+    },
+    "agent_overrides": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "container_image": {
+            "type": "string",
+            "description": "Container image URI override for this agent"
+          }
+        }
+      },
+      "description": "Per-agent configuration overrides keyed by agent name"
     }
   },
   "additionalProperties": false

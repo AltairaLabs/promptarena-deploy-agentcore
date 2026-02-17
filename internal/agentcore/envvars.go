@@ -19,7 +19,13 @@ const (
 	EnvPolicyEngineARN = "PROMPTPACK_POLICY_ENGINE_ARN"
 	EnvMetricsConfig   = "PROMPTPACK_METRICS_CONFIG"
 	EnvDashboardConfig = "PROMPTPACK_DASHBOARD_CONFIG"
+	EnvPackFile        = "PROMPTPACK_FILE"
+	EnvAgentName       = "PROMPTPACK_AGENT"
 )
+
+// defaultPackPath is the default path where the pack file is mounted
+// inside the container.
+const defaultPackPath = "/app/pack.json"
 
 // buildRuntimeEnvVars constructs the environment variable map that will be
 // passed to CreateAgentRuntime / UpdateAgentRuntime. It reads observability,
@@ -47,6 +53,20 @@ func buildRuntimeEnvVars(cfg *Config) map[string]string {
 		}
 	}
 
+	env[EnvPackFile] = defaultPackPath
+
+	return env
+}
+
+// runtimeEnvVarsForAgent returns a copy of cfg.RuntimeEnvVars with
+// PROMPTPACK_AGENT set to the given agent name. Each runtime gets its
+// own copy so the per-agent value does not leak across runtimes.
+func runtimeEnvVarsForAgent(cfg *Config, agentName string) map[string]string {
+	env := make(map[string]string, len(cfg.RuntimeEnvVars)+1)
+	for k, v := range cfg.RuntimeEnvVars {
+		env[k] = v
+	}
+	env[EnvAgentName] = agentName
 	return env
 }
 
