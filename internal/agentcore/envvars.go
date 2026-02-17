@@ -18,6 +18,7 @@ const (
 	EnvA2AAuthRole     = "PROMPTPACK_A2A_AUTH_ROLE"
 	EnvPolicyEngineARN = "PROMPTPACK_POLICY_ENGINE_ARN"
 	EnvMetricsConfig   = "PROMPTPACK_METRICS_CONFIG"
+	EnvDashboardConfig = "PROMPTPACK_DASHBOARD_CONFIG"
 )
 
 // buildRuntimeEnvVars constructs the environment variable map that will be
@@ -67,6 +68,21 @@ func buildA2AEndpointMap(runtimeResources []ResourceState) string {
 	}
 	b, _ := json.Marshal(m)
 	return string(b)
+}
+
+// injectDashboardConfig builds the CloudWatch dashboard JSON from the pack
+// structure and sets it as an env var on the runtime config. No-op if no
+// dashboard widgets are generated.
+func injectDashboardConfig(cfg *Config, pack *prompt.Pack) {
+	dc := buildDashboardConfig(pack, cfg.Region)
+	if dc == nil {
+		return
+	}
+	b, err := json.Marshal(dc)
+	if err != nil {
+		return
+	}
+	cfg.RuntimeEnvVars[EnvDashboardConfig] = string(b)
 }
 
 // injectMetricsConfig builds the CloudWatch metrics configuration from pack

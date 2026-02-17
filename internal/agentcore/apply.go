@@ -72,7 +72,9 @@ func (p *Provider) prepareApply(
 	}
 
 	cfg.RuntimeEnvVars = buildRuntimeEnvVars(cfg)
+	cfg.ResourceTags = buildResourceTags(pack.ID, pack.Version, "", cfg.Tags)
 	injectMetricsConfig(cfg, pack)
+	injectDashboardConfig(cfg, pack)
 
 	return &applyContext{
 		pack:     pack,
@@ -89,9 +91,21 @@ func (p *Provider) prepareApply(
 //  2. Agent runtimes (one per agent member, or single for non-multi-agent)
 //  3. A2A wiring between agents
 //  4. Evaluators
+//
+// When DryRun is enabled in config, Apply emits planned resource events
+// without calling any AWS APIs and returns a preview of the deployment.
 func (p *Provider) Apply(
 	ctx context.Context, req *deploy.PlanRequest, callback deploy.ApplyCallback,
 ) (string, error) {
+	// Check for dry-run mode before full preparation (avoids AWS client creation).
+	cfg, err := parseConfig(req.DeployConfig)
+	if err != nil {
+		return "", fmt.Errorf("agentcore: failed to parse deploy config: %w", err)
+	}
+	if cfg.DryRun {
+		return p.applyDryRun(ctx, req, callback)
+	}
+
 	ac, err := p.prepareApply(ctx, req, callback)
 	if err != nil {
 		return "", err
@@ -110,6 +124,80 @@ func (p *Provider) Apply(
 	}
 
 	return string(stateJSON), applyErr
+}
+
+// applyDryRun generates a deployment preview without calling AWS APIs.
+// It emits resource events with status "planned" for each resource that
+// would be created.
+func (p *Provider) applyDryRun(
+	_ context.Context, req *deploy.PlanRequest, callback deploy.ApplyCallback,
+) (string, error) {
+	pack, err := adaptersdk.ParsePack([]byte(req.PackJSON))
+	if err != nil {
+		return "", fmt.Errorf("agentcore: failed to parse pack: %w", err)
+	}
+
+	cfg, err := parseConfig(req.DeployConfig)
+	if err != nil {
+		return "", fmt.Errorf("agentcore: failed to parse deploy config: %w", err)
+	}
+
+	reporter := adaptersdk.NewProgressReporter(callback)
+	desired := generateDesiredResources(pack, cfg)
+
+	resources, cbErr := emitDryRunResources(reporter, desired)
+	if cbErr != nil {
+		return "", cbErr
+	}
+
+	state := AdapterState{
+		Resources: resources,
+		PackID:    pack.ID,
+		Version:   pack.Version,
+	}
+	stateJSON, err := json.Marshal(state)
+	if err != nil {
+		return "", fmt.Errorf("agentcore: failed to marshal state: %w", err)
+	}
+
+	return string(stateJSON), nil
+}
+
+// emitDryRunResources iterates over desired resources, emitting progress and
+// resource events with status "planned". Returns the resource list and any
+// callback error that should abort processing.
+func emitDryRunResources(
+	reporter *adaptersdk.ProgressReporter,
+	desired []deploy.ResourceChange,
+) ([]ResourceState, error) {
+	resources := make([]ResourceState, 0, len(desired))
+
+	for i, d := range desired {
+		pct := float64(i) / float64(len(desired)+1)
+		msg := fmt.Sprintf("Planned %s: %s", d.Type, d.Name)
+
+		if err := reporter.Progress(msg, pct); err != nil {
+			return resources, err
+		}
+
+		if err := reporter.Resource(&deploy.ResourceResult{
+			Type:   d.Type,
+			Name:   d.Name,
+			Action: d.Action,
+			Status: ResStatusPlanned,
+			Detail: d.Detail,
+		}); err != nil {
+			return resources, err
+		}
+
+		resources = append(resources, ResourceState{
+			Type:   d.Type,
+			Name:   d.Name,
+			Status: ResStatusPlanned,
+		})
+	}
+
+	return resources, nil
 }
 
 // executeApplyPhases runs all deploy phases in dependency order.
@@ -222,13 +310,12 @@ func applyPoliciesPhase(
 
 		res, err := createPolicyForPrompt(ctx, ac, promptName, engineName)
 		if err != nil {
-			_ = ac.reporter.Error(fmt.Errorf(
-				"failed to create cedar_policy for %s: %w", promptName, err,
-			))
+			deployErr := newDeployError("create", ResTypeCedarPolicy, promptName, err)
+			_ = ac.reporter.Error(deployErr)
 			resources = append(resources, ResourceState{
 				Type: ResTypeCedarPolicy, Name: promptName, Status: "failed",
 			})
-			applyErr = combineErrors(applyErr, err)
+			applyErr = combineErrors(applyErr, deployErr)
 			continue
 		}
 
@@ -349,8 +436,12 @@ func injectA2AEndpoints(
 
 	_, err := ac.client.UpdateRuntime(ctx, entryARN, entryName, ac.cfg)
 	if err != nil {
-		_ = ac.reporter.Error(fmt.Errorf("failed to inject A2A endpoints on %s: %w", entryName, err))
-		return err
+		deployErr := newDeployError(
+			"update", ResTypeAgentRuntime, entryName,
+			fmt.Errorf("A2A endpoint injection: %w", err),
+		)
+		_ = ac.reporter.Error(deployErr)
+		return deployErr
 	}
 
 	return nil
@@ -385,11 +476,12 @@ func applyPhase(
 
 		arn, opErr := execOp(ctx, &op, create, update, name, cfg)
 		if opErr != nil {
-			_ = reporter.Error(fmt.Errorf("failed to %s %s %s: %w", op.failVerb, resType, name, opErr))
+			deployErr := newDeployError(op.failVerb, resType, name, opErr)
+			_ = reporter.Error(deployErr)
 			result.resources = append(result.resources, ResourceState{
 				Type: resType, Name: name, Status: "failed",
 			})
-			result.err = combineErrors(result.err, opErr)
+			result.err = combineErrors(result.err, deployErr)
 			continue
 		}
 
@@ -531,10 +623,11 @@ func createMemoryResource(
 
 	arn, err := client.CreateMemory(ctx, memName, cfg)
 	if err != nil {
-		_ = reporter.Error(fmt.Errorf("failed to create memory %s: %w", memName, err))
+		deployErr := newDeployError("create", ResTypeMemory, memName, err)
+		_ = reporter.Error(deployErr)
 		return &ResourceState{
 			Type: ResTypeMemory, Name: memName, Status: "failed",
-		}, err
+		}, deployErr
 	}
 
 	// Inject memory ARN into runtime env vars so runtimes can discover it.

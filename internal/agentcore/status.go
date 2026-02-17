@@ -73,13 +73,14 @@ func destroyResourceGroup(
 ) {
 	for _, res := range resources {
 		if err := destroyer.DeleteResource(ctx, res); err != nil {
+			deployErr := newDeployError("delete", res.Type, res.Name, err)
 			_ = callback(&deploy.DestroyEvent{
 				Type:    "error",
-				Message: fmt.Sprintf("Failed to delete %s %q: %v", res.Type, res.Name, err),
+				Message: deployErr.Error(),
 				Resource: &deploy.ResourceResult{
 					Type: res.Type, Name: res.Name,
 					Action: deploy.ActionDelete, Status: "failed",
-					Detail: err.Error(),
+					Detail: deployErr.Error(),
 				},
 			})
 			continue

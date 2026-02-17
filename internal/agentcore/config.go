@@ -11,6 +11,8 @@ type Config struct {
 	Region         string               `json:"region"`
 	RuntimeRoleARN string               `json:"runtime_role_arn"`
 	MemoryStore    string               `json:"memory_store,omitempty"`
+	Tags           map[string]string    `json:"tags,omitempty"`
+	DryRun         bool                 `json:"dry_run,omitempty"`
 	Tools          *ToolsConfig         `json:"tools,omitempty"`
 	Observability  *ObservabilityConfig `json:"observability,omitempty"`
 	A2AAuth        *A2AAuthConfig       `json:"a2a_auth,omitempty"`
@@ -18,6 +20,10 @@ type Config struct {
 	// RuntimeEnvVars is populated at apply-time from config fields.
 	// It is NOT serialized — it is a transient, computed field.
 	RuntimeEnvVars map[string]string `json:"-"`
+
+	// ResourceTags is populated at apply-time by merging default pack
+	// metadata tags with user-defined tags. It is NOT serialized.
+	ResourceTags map[string]string `json:"-"`
 }
 
 // A2AAuthConfig holds A2A authentication settings.
@@ -86,7 +92,40 @@ func (c *Config) validate() []string {
 	}
 
 	errs = append(errs, validateA2AAuth(c.A2AAuth)...)
+	errs = append(errs, validateTags(c.Tags)...)
 
+	return errs
+}
+
+// maxTagKeyLen is the maximum allowed length for a tag key.
+const maxTagKeyLen = 128
+
+// maxTagValueLen is the maximum allowed length for a tag value.
+const maxTagValueLen = 256
+
+// maxTagCount is the maximum number of user-defined tags.
+const maxTagCount = 50
+
+// validateTags checks user-defined tags for valid keys and values.
+func validateTags(tags map[string]string) []string {
+	if len(tags) == 0 {
+		return nil
+	}
+	var errs []string
+	if len(tags) > maxTagCount {
+		errs = append(errs, fmt.Sprintf("tags: at most %d tags allowed, got %d", maxTagCount, len(tags)))
+	}
+	for k, v := range tags {
+		if k == "" {
+			errs = append(errs, "tags: key must not be empty")
+		}
+		if len(k) > maxTagKeyLen {
+			errs = append(errs, fmt.Sprintf("tags: key %q exceeds max length %d", k, maxTagKeyLen))
+		}
+		if len(v) > maxTagValueLen {
+			errs = append(errs, fmt.Sprintf("tags: value for key %q exceeds max length %d", k, maxTagValueLen))
+		}
+	}
 	return errs
 }
 

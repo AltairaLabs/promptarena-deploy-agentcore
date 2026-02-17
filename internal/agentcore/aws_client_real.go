@@ -82,6 +82,9 @@ func (c *realAWSClient) CreateRuntime(
 	if authCfg := buildAuthorizerConfig(cfg); authCfg != nil {
 		input.AuthorizerConfiguration = authCfg
 	}
+	if tags := tagsWithAgent(cfg.ResourceTags, name); len(tags) > 0 {
+		input.Tags = tags
+	}
 	out, err := c.client.CreateAgentRuntime(ctx, input)
 	if err != nil {
 		return "", fmt.Errorf("CreateAgentRuntime %q: %w", name, err)
@@ -169,12 +172,16 @@ func (c *realAWSClient) CreateGatewayTool(
 func (c *realAWSClient) createParentGateway(
 	ctx context.Context, name string, cfg *Config,
 ) error {
-	gwOut, err := c.client.CreateGateway(ctx, &bedrockagentcorecontrol.CreateGatewayInput{
+	gwInput := &bedrockagentcorecontrol.CreateGatewayInput{
 		Name:           aws.String(name + "_gw"),
 		RoleArn:        aws.String(cfg.RuntimeRoleARN),
 		ProtocolType:   types.GatewayProtocolTypeMcp,
 		AuthorizerType: types.AuthorizerTypeNone,
-	})
+	}
+	if len(cfg.ResourceTags) > 0 {
+		gwInput.Tags = cfg.ResourceTags
+	}
+	gwOut, err := c.client.CreateGateway(ctx, gwInput)
 	if err != nil {
 		return fmt.Errorf("CreateGateway for tool %q: %w", name, err)
 	}
@@ -243,6 +250,9 @@ func (c *realAWSClient) CreateMemory(
 	}
 
 	input.MemoryStrategies = memoryStrategies(cfg.MemoryStore)
+	if len(cfg.ResourceTags) > 0 {
+		input.Tags = cfg.ResourceTags
+	}
 
 	out, err := c.client.CreateMemory(ctx, input)
 	if err != nil {

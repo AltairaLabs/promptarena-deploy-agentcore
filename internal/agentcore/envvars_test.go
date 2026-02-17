@@ -283,3 +283,129 @@ func TestInjectMetricsConfig(t *testing.T) {
 		}
 	})
 }
+
+func TestInjectDashboardConfig(t *testing.T) {
+	t.Run("sets env var for pack with evals", func(t *testing.T) {
+		cfg := &Config{
+			Region:         "us-west-2",
+			RuntimeEnvVars: make(map[string]string),
+		}
+		pack := &prompt.Pack{
+			ID: "dash-pack",
+			Evals: []evals.EvalDef{
+				{
+					ID: "accuracy",
+					Metric: &evals.MetricDef{
+						Name: "accuracy_score",
+						Type: evals.MetricGauge,
+					},
+				},
+			},
+		}
+
+		injectDashboardConfig(cfg, pack)
+
+		raw, ok := cfg.RuntimeEnvVars[EnvDashboardConfig]
+		if !ok {
+			t.Fatal("expected PROMPTPACK_DASHBOARD_CONFIG to be set")
+		}
+
+		var dc DashboardConfig
+		if err := json.Unmarshal([]byte(raw), &dc); err != nil {
+			t.Fatalf("failed to parse dashboard config JSON: %v", err)
+		}
+		if len(dc.Widgets) != 2 {
+			t.Fatalf("got %d widgets, want 2 (1 agent + 1 eval)", len(dc.Widgets))
+		}
+		if dc.Widgets[0].Properties.Region != "us-west-2" {
+			t.Errorf("region = %q, want %q", dc.Widgets[0].Properties.Region, "us-west-2")
+		}
+	})
+
+	t.Run("sets env var for single agent pack without evals", func(t *testing.T) {
+		cfg := &Config{
+			Region:         "us-east-1",
+			RuntimeEnvVars: make(map[string]string),
+		}
+		pack := &prompt.Pack{
+			ID: "simple-agent",
+			Prompts: map[string]*prompt.PackPrompt{
+				"main": {},
+			},
+		}
+
+		injectDashboardConfig(cfg, pack)
+
+		raw, ok := cfg.RuntimeEnvVars[EnvDashboardConfig]
+		if !ok {
+			t.Fatal("expected PROMPTPACK_DASHBOARD_CONFIG to be set")
+		}
+
+		var dc DashboardConfig
+		if err := json.Unmarshal([]byte(raw), &dc); err != nil {
+			t.Fatalf("failed to parse dashboard config JSON: %v", err)
+		}
+		if len(dc.Widgets) != 1 {
+			t.Fatalf("got %d widgets, want 1 (agent widget)", len(dc.Widgets))
+		}
+	})
+
+	t.Run("pack with ID always produces dashboard with agent widget", func(t *testing.T) {
+		cfg := &Config{
+			Region:         "us-west-2",
+			RuntimeEnvVars: make(map[string]string),
+		}
+		pack := &prompt.Pack{ID: "minimal"}
+
+		injectDashboardConfig(cfg, pack)
+
+		raw, ok := cfg.RuntimeEnvVars[EnvDashboardConfig]
+		if !ok {
+			t.Fatal("expected PROMPTPACK_DASHBOARD_CONFIG to be set")
+		}
+		var dc DashboardConfig
+		if err := json.Unmarshal([]byte(raw), &dc); err != nil {
+			t.Fatalf("failed to parse dashboard config JSON: %v", err)
+		}
+		if len(dc.Widgets) != 1 {
+			t.Fatalf("got %d widgets, want 1", len(dc.Widgets))
+		}
+	})
+
+	t.Run("multi-agent pack includes A2A widget", func(t *testing.T) {
+		cfg := &Config{
+			Region:         "us-west-2",
+			RuntimeEnvVars: make(map[string]string),
+		}
+		pack := &prompt.Pack{
+			ID: "multi",
+			Agents: &prompt.AgentsConfig{
+				Entry: "coord",
+				Members: map[string]*prompt.AgentDef{
+					"coord":  {},
+					"worker": {},
+				},
+			},
+			Prompts: map[string]*prompt.PackPrompt{
+				"coord":  {},
+				"worker": {},
+			},
+		}
+
+		injectDashboardConfig(cfg, pack)
+
+		raw, ok := cfg.RuntimeEnvVars[EnvDashboardConfig]
+		if !ok {
+			t.Fatal("expected PROMPTPACK_DASHBOARD_CONFIG to be set")
+		}
+
+		var dc DashboardConfig
+		if err := json.Unmarshal([]byte(raw), &dc); err != nil {
+			t.Fatalf("failed to parse dashboard config JSON: %v", err)
+		}
+		// 2 agent widgets + 1 A2A latency widget.
+		if len(dc.Widgets) != 3 {
+			t.Fatalf("got %d widgets, want 3", len(dc.Widgets))
+		}
+	})
+}
