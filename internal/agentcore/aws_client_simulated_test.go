@@ -43,6 +43,22 @@ func (c *simulatedAWSClient) CreateMemory(_ context.Context, name string, _ *Con
 	return fmt.Sprintf("arn:aws:bedrock:%s:%s:memory/%s", c.region, c.accountID, name), nil
 }
 
+func (c *simulatedAWSClient) CreatePolicyEngine(
+	_ context.Context, name string, _ *Config,
+) (string, string, error) {
+	arn := fmt.Sprintf("arn:aws:bedrock:%s:%s:policy-engine/%s", c.region, c.accountID, name)
+	engineID := "pe-" + name
+	return arn, engineID, nil
+}
+
+func (c *simulatedAWSClient) CreateCedarPolicy(
+	_ context.Context, engineID string, name string, _ string, _ *Config,
+) (string, string, error) {
+	arn := fmt.Sprintf("arn:aws:bedrock:%s:%s:policy/%s/%s", c.region, c.accountID, engineID, name)
+	policyID := "pol-" + name
+	return arn, policyID, nil
+}
+
 // simulatedDestroyer is a placeholder that logs intent without calling AWS.
 type simulatedDestroyer struct{}
 

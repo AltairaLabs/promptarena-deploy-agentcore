@@ -203,6 +203,24 @@ func (c *failingAWSClient) CreateMemory(ctx context.Context, name string, cfg *C
 	return c.simulatedAWSClient.CreateMemory(ctx, name, cfg)
 }
 
+func (c *failingAWSClient) CreatePolicyEngine(
+	ctx context.Context, name string, cfg *Config,
+) (string, string, error) {
+	if c.failOn["cedar_policy"] {
+		return "", "", fmt.Errorf("simulated policy engine failure for %s", name)
+	}
+	return c.simulatedAWSClient.CreatePolicyEngine(ctx, name, cfg)
+}
+
+func (c *failingAWSClient) CreateCedarPolicy(
+	ctx context.Context, engineID string, name string, stmt string, cfg *Config,
+) (string, string, error) {
+	if c.failOn["cedar_policy_create"] {
+		return "", "", fmt.Errorf("simulated cedar policy failure for %s", name)
+	}
+	return c.simulatedAWSClient.CreateCedarPolicy(ctx, engineID, name, stmt, cfg)
+}
+
 // --- tests ---
 
 func TestApply_SingleAgent_StreamsCorrectEvents(t *testing.T) {
@@ -1271,6 +1289,230 @@ func TestApply_MultiAgent_EntryAgentGetsEndpoints(t *testing.T) {
 	t.Error("expected a progress event for A2A endpoint map injection")
 }
 
+// singleAgentPackWithValidators returns a pack with banned_words validator.
+func singleAgentPackWithValidators() string {
+	p := map[string]any{
+		"id":      "valpack",
+		"version": "v1.0.0",
+		"name":    "Validator Pack",
+		"prompts": map[string]any{
+			"chat": map[string]any{
+				"id":              "chat",
+				"name":            "Chat",
+				"system_template": "You are a helpful assistant.",
+				"version":         "v1.0.0",
+				"validators": []map[string]any{
+					{
+						"type":   "banned_words",
+						"params": map[string]any{"words": []string{"badword"}},
+					},
+				},
+			},
+		},
+		"template_engine": map[string]any{
+			"version": "1.0",
+			"syntax":  "handlebars",
+		},
+	}
+	b, _ := json.Marshal(p)
+	return string(b)
+}
+
+// singleAgentPackWithToolPolicy returns a pack with tool blocklist.
+func singleAgentPackWithToolPolicy() string {
+	p := map[string]any{
+		"id":      "tppack",
+		"version": "v1.0.0",
+		"name":    "Tool Policy Pack",
+		"prompts": map[string]any{
+			"chat": map[string]any{
+				"id":              "chat",
+				"name":            "Chat",
+				"system_template": "You help.",
+				"version":         "v1.0.0",
+				"tool_policy": map[string]any{
+					"blocklist":               []string{"dangerous_tool"},
+					"max_rounds":              5,
+					"max_tool_calls_per_turn": 3,
+				},
+			},
+		},
+		"template_engine": map[string]any{
+			"version": "1.0",
+			"syntax":  "handlebars",
+		},
+	}
+	b, _ := json.Marshal(p)
+	return string(b)
+}
+
+func TestApply_WithValidators_CreatesPolicyResources(t *testing.T) {
+	provider := newSimulatedProvider()
+	req := &deploy.PlanRequest{
+		PackJSON:     singleAgentPackWithValidators(),
+		DeployConfig: validConfig(),
+	}
+
+	events, stateStr, err := collectEvents(t, provider, req)
+	if err != nil {
+		t.Fatalf("Apply returned error: %v", err)
+	}
+
+	// Should have cedar_policy + agent_runtime resource events.
+	var resourceTypes []string
+	for _, ev := range events {
+		if ev.Type == "resource" && ev.Resource != nil {
+			resourceTypes = append(resourceTypes, ev.Resource.Type)
+		}
+	}
+
+	if len(resourceTypes) != 2 {
+		t.Fatalf("expected 2 resource events (cedar_policy + runtime), got %d: %v",
+			len(resourceTypes), resourceTypes)
+	}
+
+	// Cedar policy should come before runtime.
+	if resourceTypes[0] != ResTypeCedarPolicy {
+		t.Errorf("first resource should be cedar_policy, got %s", resourceTypes[0])
+	}
+	if resourceTypes[1] != ResTypeAgentRuntime {
+		t.Errorf("second resource should be agent_runtime, got %s", resourceTypes[1])
+	}
+
+	// Verify state includes metadata for the policy.
+	var state AdapterState
+	if err := json.Unmarshal([]byte(stateStr), &state); err != nil {
+		t.Fatalf("failed to unmarshal state: %v", err)
+	}
+	var policyRes *ResourceState
+	for i, r := range state.Resources {
+		if r.Type == ResTypeCedarPolicy {
+			policyRes = &state.Resources[i]
+			break
+		}
+	}
+	if policyRes == nil {
+		t.Fatal("expected cedar_policy resource in state")
+	}
+	if policyRes.Metadata["policy_engine_id"] == "" {
+		t.Error("expected policy_engine_id in metadata")
+	}
+	if policyRes.Metadata["policy_id"] == "" {
+		t.Error("expected policy_id in metadata")
+	}
+	if policyRes.ARN == "" {
+		t.Error("expected ARN on cedar_policy resource")
+	}
+}
+
+func TestApply_WithToolPolicy_CreatesPolicyResources(t *testing.T) {
+	provider := newSimulatedProvider()
+	req := &deploy.PlanRequest{
+		PackJSON:     singleAgentPackWithToolPolicy(),
+		DeployConfig: validConfig(),
+	}
+
+	events, _, err := collectEvents(t, provider, req)
+	if err != nil {
+		t.Fatalf("Apply returned error: %v", err)
+	}
+
+	found := false
+	for _, ev := range events {
+		if ev.Type == "resource" && ev.Resource != nil &&
+			ev.Resource.Type == ResTypeCedarPolicy {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected cedar_policy resource event for pack with tool_policy")
+	}
+}
+
+func TestApply_NoValidators_NoPolicyResources(t *testing.T) {
+	provider := newSimulatedProvider()
+	req := &deploy.PlanRequest{
+		PackJSON:     singleAgentPack(),
+		DeployConfig: validConfig(),
+	}
+
+	events, _, err := collectEvents(t, provider, req)
+	if err != nil {
+		t.Fatalf("Apply returned error: %v", err)
+	}
+
+	for _, ev := range events {
+		if ev.Type == "resource" && ev.Resource != nil &&
+			ev.Resource.Type == ResTypeCedarPolicy {
+			t.Error("should not have cedar_policy resource when no validators")
+		}
+	}
+}
+
+func TestApply_PolicyEngineFailure_ContinuesToRuntime(t *testing.T) {
+	sim := newSimulatedProvider()
+	provider := &Provider{
+		awsClientFunc: func(_ context.Context, cfg *Config) (awsClient, error) {
+			return &failingAWSClient{
+				simulatedAWSClient: *newSimulatedAWSClient(cfg.Region),
+				failOn:             map[string]bool{"cedar_policy": true},
+			}, nil
+		},
+		destroyerFunc: sim.destroyerFunc,
+		checkerFunc:   sim.checkerFunc,
+	}
+
+	req := &deploy.PlanRequest{
+		PackJSON:     singleAgentPackWithValidators(),
+		DeployConfig: validConfig(),
+	}
+
+	events, stateStr, err := collectEvents(t, provider, req)
+	if err == nil {
+		t.Fatal("expected error for policy failure")
+	}
+
+	// Should have error events for policy failure but runtime should succeed.
+	var errorCount int
+	var runtimeCreated bool
+	for _, ev := range events {
+		if ev.Type == "error" {
+			errorCount++
+		}
+		if ev.Type == "resource" && ev.Resource != nil &&
+			ev.Resource.Type == ResTypeAgentRuntime && ev.Resource.Status == "created" {
+			runtimeCreated = true
+		}
+	}
+	if errorCount == 0 {
+		t.Error("expected error events for policy failure")
+	}
+	if !runtimeCreated {
+		t.Error("expected agent_runtime to still be created despite policy failure")
+	}
+
+	// State should have both failed policy and successful runtime.
+	var state AdapterState
+	if err := json.Unmarshal([]byte(stateStr), &state); err != nil {
+		t.Fatalf("failed to unmarshal state: %v", err)
+	}
+	var policyFailed, runtimeOK bool
+	for _, r := range state.Resources {
+		if r.Type == ResTypeCedarPolicy && r.Status == "failed" {
+			policyFailed = true
+		}
+		if r.Type == ResTypeAgentRuntime && r.Status == "created" {
+			runtimeOK = true
+		}
+	}
+	if !policyFailed {
+		t.Error("expected cedar_policy resource with status=failed")
+	}
+	if !runtimeOK {
+		t.Error("expected agent_runtime with status=created")
+	}
+}
+
 // trackingAWSClient wraps simulatedAWSClient to record UpdateRuntime calls.
 type trackingAWSClient struct {
 	simulatedAWSClient
@@ -1284,4 +1526,16 @@ func (c *trackingAWSClient) UpdateRuntime(
 		c.onUpdate(arn, name)
 	}
 	return c.simulatedAWSClient.UpdateRuntime(ctx, arn, name, cfg)
+}
+
+func (c *trackingAWSClient) CreatePolicyEngine(
+	ctx context.Context, name string, cfg *Config,
+) (string, string, error) {
+	return c.simulatedAWSClient.CreatePolicyEngine(ctx, name, cfg)
+}
+
+func (c *trackingAWSClient) CreateCedarPolicy(
+	ctx context.Context, engineID string, name string, stmt string, cfg *Config,
+) (string, string, error) {
+	return c.simulatedAWSClient.CreateCedarPolicy(ctx, engineID, name, stmt, cfg)
 }

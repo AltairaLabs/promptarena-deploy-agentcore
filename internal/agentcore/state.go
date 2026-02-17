@@ -7,6 +7,14 @@ const (
 	ResTypeToolGateway  = "tool_gateway"
 	ResTypeA2AEndpoint  = "a2a_endpoint"
 	ResTypeEvaluator    = "evaluator"
+	ResTypeCedarPolicy  = "cedar_policy"
+)
+
+// Resource lifecycle status constants used in ResourceState.Status.
+const (
+	ResStatusCreated = "created"
+	ResStatusUpdated = "updated"
+	ResStatusFailed  = "failed"
 )
 
 // Health status constants returned by resource checks.

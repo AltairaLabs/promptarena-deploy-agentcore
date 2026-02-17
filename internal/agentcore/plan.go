@@ -76,54 +76,72 @@ func generateDesiredResources(pack *prompt.Pack, cfg *Config) []deploy.ResourceC
 		})
 	}
 
-	if adaptersdk.IsMultiAgent(pack) {
-		// Start with the SDK-generated plan (agent_runtime + a2a_endpoint
-		// per member, gateway for entry).
-		desired = adaptersdk.GenerateAgentResourcePlan(pack)
-
-		// Add tool_gateway for pack-level tools.
-		if len(pack.Tools) > 0 {
-			toolNames := make([]string, 0, len(pack.Tools))
-			for name := range pack.Tools {
-				toolNames = append(toolNames, name)
-			}
-			sort.Strings(toolNames)
-			for _, name := range toolNames {
-				desired = append(desired, deploy.ResourceChange{
-					Type:   "tool_gateway",
-					Name:   name + "_tool_gw",
-					Action: deploy.ActionCreate,
-					Detail: fmt.Sprintf("Create tool gateway for %s", name),
-				})
-			}
-		}
-	} else {
-		// Single-agent pack: one agent_runtime.
-		name := pack.ID
-		if name == "" {
-			name = "default"
-		}
+	// Cedar policy resources (per prompt with validators or tool_policy).
+	for _, name := range policyResourceNames(pack) {
 		desired = append(desired, deploy.ResourceChange{
-			Type:   "agent_runtime",
+			Type:   ResTypeCedarPolicy,
 			Name:   name,
 			Action: deploy.ActionCreate,
-			Detail: fmt.Sprintf("Create AgentCore runtime for %s", name),
+			Detail: fmt.Sprintf("Create Cedar policy for prompt %s", name),
 		})
 	}
 
-	// Evals: add an evaluator for each eval definition.
-	if len(pack.Evals) > 0 {
-		for _, ev := range pack.Evals {
+	desired = append(desired, generateAgentResources(pack)...)
+	desired = append(desired, generateEvalResources(pack)...)
+
+	return desired
+}
+
+// generateAgentResources returns agent_runtime (and tool_gateway for multi-agent)
+// resource changes for the pack.
+func generateAgentResources(pack *prompt.Pack) []deploy.ResourceChange {
+	if adaptersdk.IsMultiAgent(pack) {
+		return generateMultiAgentResources(pack)
+	}
+
+	name := pack.ID
+	if name == "" {
+		name = "default"
+	}
+	return []deploy.ResourceChange{{
+		Type:   ResTypeAgentRuntime,
+		Name:   name,
+		Action: deploy.ActionCreate,
+		Detail: fmt.Sprintf("Create AgentCore runtime for %s", name),
+	}}
+}
+
+// generateMultiAgentResources returns SDK-generated resources plus tool_gateways.
+func generateMultiAgentResources(pack *prompt.Pack) []deploy.ResourceChange {
+	desired := adaptersdk.GenerateAgentResourcePlan(pack)
+
+	if len(pack.Tools) > 0 {
+		toolNames := sortedKeys(pack.Tools)
+		for _, name := range toolNames {
 			desired = append(desired, deploy.ResourceChange{
-				Type:   "evaluator",
-				Name:   ev.ID + "_eval",
+				Type:   ResTypeToolGateway,
+				Name:   name + "_tool_gw",
 				Action: deploy.ActionCreate,
-				Detail: fmt.Sprintf("Create evaluator for %s", ev.ID),
+				Detail: fmt.Sprintf("Create tool gateway for %s", name),
 			})
 		}
 	}
 
 	return desired
+}
+
+// generateEvalResources returns evaluator resource changes.
+func generateEvalResources(pack *prompt.Pack) []deploy.ResourceChange {
+	var resources []deploy.ResourceChange
+	for _, ev := range pack.Evals {
+		resources = append(resources, deploy.ResourceChange{
+			Type:   ResTypeEvaluator,
+			Name:   ev.ID + "_eval",
+			Action: deploy.ActionCreate,
+			Detail: fmt.Sprintf("Create evaluator for %s", ev.ID),
+		})
+	}
+	return resources
 }
 
 // diffResources compares desired resources against prior state and assigns

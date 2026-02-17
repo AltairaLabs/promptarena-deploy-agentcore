@@ -11,6 +11,7 @@ import (
 // destroyOrder defines the reverse dependency order for teardown.
 // Resources are grouped by type; each group is destroyed in sequence.
 var destroyOrder = []string{
+	ResTypeCedarPolicy,
 	ResTypeEvaluator,
 	ResTypeA2AEndpoint,
 	ResTypeAgentRuntime,

@@ -10,6 +10,12 @@ type awsClient interface {
 	CreateA2AWiring(ctx context.Context, name string, cfg *Config) (arn string, err error)
 	CreateEvaluator(ctx context.Context, name string, cfg *Config) (arn string, err error)
 	CreateMemory(ctx context.Context, name string, cfg *Config) (arn string, err error)
+	CreatePolicyEngine(ctx context.Context, name string, cfg *Config) (
+		arn string, engineID string, err error,
+	)
+	CreateCedarPolicy(ctx context.Context, engineID string, name string,
+		cedarStatement string, cfg *Config) (arn string, policyID string, err error,
+	)
 }
 
 // resourceDestroyer abstracts resource deletion so that real AWS calls
