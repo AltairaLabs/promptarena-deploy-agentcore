@@ -15,9 +15,11 @@ func TestBuildRuntimeEnvVars(t *testing.T) {
 		want map[string]string
 	}{
 		{
-			name: "empty config produces empty map",
+			name: "empty config includes pack file",
 			cfg:  &Config{},
-			want: map[string]string{},
+			want: map[string]string{
+				EnvPackFile: defaultPackPath,
+			},
 		},
 		{
 			name: "observability log group",
@@ -28,6 +30,7 @@ func TestBuildRuntimeEnvVars(t *testing.T) {
 			},
 			want: map[string]string{
 				EnvLogGroup: "/aws/agentcore/myapp",
+				EnvPackFile: defaultPackPath,
 			},
 		},
 		{
@@ -39,6 +42,7 @@ func TestBuildRuntimeEnvVars(t *testing.T) {
 			},
 			want: map[string]string{
 				EnvTracingEnabled: "true",
+				EnvPackFile:       defaultPackPath,
 			},
 		},
 		{
@@ -52,6 +56,7 @@ func TestBuildRuntimeEnvVars(t *testing.T) {
 			want: map[string]string{
 				EnvLogGroup:       "/aws/agentcore/prod",
 				EnvTracingEnabled: "true",
+				EnvPackFile:       defaultPackPath,
 			},
 		},
 		{
@@ -61,7 +66,9 @@ func TestBuildRuntimeEnvVars(t *testing.T) {
 					TracingEnabled: false,
 				},
 			},
-			want: map[string]string{},
+			want: map[string]string{
+				EnvPackFile: defaultPackPath,
+			},
 		},
 		{
 			name: "memory store session",
@@ -70,6 +77,7 @@ func TestBuildRuntimeEnvVars(t *testing.T) {
 			},
 			want: map[string]string{
 				EnvMemoryStore: "session",
+				EnvPackFile:    defaultPackPath,
 			},
 		},
 		{
@@ -79,6 +87,7 @@ func TestBuildRuntimeEnvVars(t *testing.T) {
 			},
 			want: map[string]string{
 				EnvMemoryStore: "persistent",
+				EnvPackFile:    defaultPackPath,
 			},
 		},
 		{
@@ -94,6 +103,7 @@ func TestBuildRuntimeEnvVars(t *testing.T) {
 				EnvLogGroup:       "/aws/logs",
 				EnvTracingEnabled: "true",
 				EnvMemoryStore:    "session",
+				EnvPackFile:       defaultPackPath,
 			},
 		},
 		{
@@ -105,6 +115,7 @@ func TestBuildRuntimeEnvVars(t *testing.T) {
 			want: map[string]string{
 				EnvA2AAuthMode: "iam",
 				EnvA2AAuthRole: "arn:aws:iam::123456789012:role/test",
+				EnvPackFile:    defaultPackPath,
 			},
 		},
 		{
@@ -117,6 +128,7 @@ func TestBuildRuntimeEnvVars(t *testing.T) {
 			},
 			want: map[string]string{
 				EnvA2AAuthMode: "jwt",
+				EnvPackFile:    defaultPackPath,
 			},
 		},
 	}
@@ -406,6 +418,59 @@ func TestInjectDashboardConfig(t *testing.T) {
 		// 2 agent widgets + 1 A2A latency widget.
 		if len(dc.Widgets) != 3 {
 			t.Fatalf("got %d widgets, want 3", len(dc.Widgets))
+		}
+	})
+}
+
+func TestRuntimeEnvVarsForAgent(t *testing.T) {
+	t.Run("adds agent name to runtime env vars", func(t *testing.T) {
+		cfg := &Config{
+			RuntimeEnvVars: map[string]string{
+				EnvPackFile:    defaultPackPath,
+				EnvMemoryStore: "session",
+			},
+		}
+
+		env := runtimeEnvVarsForAgent(cfg, "worker")
+
+		if env[EnvAgentName] != "worker" {
+			t.Errorf("PROMPTPACK_AGENT = %q, want %q", env[EnvAgentName], "worker")
+		}
+		if env[EnvPackFile] != defaultPackPath {
+			t.Errorf("PROMPTPACK_FILE = %q, want %q", env[EnvPackFile], defaultPackPath)
+		}
+		if env[EnvMemoryStore] != "session" {
+			t.Errorf("PROMPTPACK_MEMORY_STORE = %q, want %q", env[EnvMemoryStore], "session")
+		}
+	})
+
+	t.Run("does not mutate original map", func(t *testing.T) {
+		orig := map[string]string{EnvPackFile: defaultPackPath}
+		cfg := &Config{RuntimeEnvVars: orig}
+
+		env := runtimeEnvVarsForAgent(cfg, "agent-a")
+
+		if _, ok := orig[EnvAgentName]; ok {
+			t.Error("runtimeEnvVarsForAgent mutated the original RuntimeEnvVars map")
+		}
+		if env[EnvAgentName] != "agent-a" {
+			t.Errorf("PROMPTPACK_AGENT = %q, want %q", env[EnvAgentName], "agent-a")
+		}
+	})
+
+	t.Run("different agents get different values", func(t *testing.T) {
+		cfg := &Config{
+			RuntimeEnvVars: map[string]string{EnvPackFile: defaultPackPath},
+		}
+
+		envA := runtimeEnvVarsForAgent(cfg, "coord")
+		envB := runtimeEnvVarsForAgent(cfg, "worker")
+
+		if envA[EnvAgentName] != "coord" {
+			t.Errorf("agent A: PROMPTPACK_AGENT = %q, want %q", envA[EnvAgentName], "coord")
+		}
+		if envB[EnvAgentName] != "worker" {
+			t.Errorf("agent B: PROMPTPACK_AGENT = %q, want %q", envB[EnvAgentName], "worker")
 		}
 	})
 }

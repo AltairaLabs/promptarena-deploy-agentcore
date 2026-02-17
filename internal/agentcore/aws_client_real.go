@@ -64,20 +64,21 @@ func newRealCheckerFactory(ctx context.Context, cfg *Config) (resourceChecker, e
 func (c *realAWSClient) CreateRuntime(
 	ctx context.Context, name string, cfg *Config,
 ) (string, error) {
+	envVars := runtimeEnvVarsForAgent(cfg, name)
 	input := &bedrockagentcorecontrol.CreateAgentRuntimeInput{
 		AgentRuntimeName: aws.String(name),
 		RoleArn:          aws.String(cfg.RuntimeRoleARN),
 		AgentRuntimeArtifact: &types.AgentRuntimeArtifactMemberContainerConfiguration{
 			Value: types.ContainerConfiguration{
-				ContainerUri: aws.String("public.ecr.aws/bedrock-agentcore/runtime:latest"),
+				ContainerUri: aws.String(cfg.containerImageForAgent(name)),
 			},
 		},
 		NetworkConfiguration: &types.NetworkConfiguration{
 			NetworkMode: types.NetworkModePublic,
 		},
 	}
-	if len(cfg.RuntimeEnvVars) > 0 {
-		input.EnvironmentVariables = cfg.RuntimeEnvVars
+	if len(envVars) > 0 {
+		input.EnvironmentVariables = envVars
 	}
 	if authCfg := buildAuthorizerConfig(cfg); authCfg != nil {
 		input.AuthorizerConfiguration = authCfg
@@ -108,20 +109,21 @@ func (c *realAWSClient) UpdateRuntime(
 		return "", fmt.Errorf("UpdateAgentRuntime %q: could not extract ID from ARN %q", name, arn)
 	}
 
+	envVars := runtimeEnvVarsForAgent(cfg, name)
 	input := &bedrockagentcorecontrol.UpdateAgentRuntimeInput{
 		AgentRuntimeId: aws.String(id),
 		RoleArn:        aws.String(cfg.RuntimeRoleARN),
 		AgentRuntimeArtifact: &types.AgentRuntimeArtifactMemberContainerConfiguration{
 			Value: types.ContainerConfiguration{
-				ContainerUri: aws.String("public.ecr.aws/bedrock-agentcore/runtime:latest"),
+				ContainerUri: aws.String(cfg.containerImageForAgent(name)),
 			},
 		},
 		NetworkConfiguration: &types.NetworkConfiguration{
 			NetworkMode: types.NetworkModePublic,
 		},
 	}
-	if len(cfg.RuntimeEnvVars) > 0 {
-		input.EnvironmentVariables = cfg.RuntimeEnvVars
+	if len(envVars) > 0 {
+		input.EnvironmentVariables = envVars
 	}
 	if authCfg := buildAuthorizerConfig(cfg); authCfg != nil {
 		input.AuthorizerConfiguration = authCfg

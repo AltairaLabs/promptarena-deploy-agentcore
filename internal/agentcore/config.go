@@ -4,18 +4,25 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"strings"
 )
+
+// DefaultContainerImage is the PromptKit container image used when no
+// container_image is specified in the config or agent overrides.
+const DefaultContainerImage = "ghcr.io/altairalabs/promptkit-agentcore:latest"
 
 // Config holds AWS Bedrock AgentCore-specific configuration.
 type Config struct {
-	Region         string               `json:"region"`
-	RuntimeRoleARN string               `json:"runtime_role_arn"`
-	MemoryStore    string               `json:"memory_store,omitempty"`
-	Tags           map[string]string    `json:"tags,omitempty"`
-	DryRun         bool                 `json:"dry_run,omitempty"`
-	Tools          *ToolsConfig         `json:"tools,omitempty"`
-	Observability  *ObservabilityConfig `json:"observability,omitempty"`
-	A2AAuth        *A2AAuthConfig       `json:"a2a_auth,omitempty"`
+	Region         string                    `json:"region"`
+	RuntimeRoleARN string                    `json:"runtime_role_arn"`
+	MemoryStore    string                    `json:"memory_store,omitempty"`
+	ContainerImage string                    `json:"container_image,omitempty"`
+	Tags           map[string]string         `json:"tags,omitempty"`
+	DryRun         bool                      `json:"dry_run,omitempty"`
+	Tools          *ToolsConfig              `json:"tools,omitempty"`
+	Observability  *ObservabilityConfig      `json:"observability,omitempty"`
+	A2AAuth        *A2AAuthConfig            `json:"a2a_auth,omitempty"`
+	AgentOverrides map[string]*AgentOverride `json:"agent_overrides,omitempty"`
 
 	// RuntimeEnvVars is populated at apply-time from config fields.
 	// It is NOT serialized — it is a transient, computed field.
@@ -24,6 +31,26 @@ type Config struct {
 	// ResourceTags is populated at apply-time by merging default pack
 	// metadata tags with user-defined tags. It is NOT serialized.
 	ResourceTags map[string]string `json:"-"`
+}
+
+// AgentOverride holds per-agent configuration overrides.
+type AgentOverride struct {
+	ContainerImage string `json:"container_image,omitempty"`
+}
+
+// containerImageForAgent returns the container image to use for the given
+// agent. It checks agent_overrides[name] first, then the global
+// container_image, and finally falls back to DefaultContainerImage.
+func (c *Config) containerImageForAgent(name string) string {
+	if c.AgentOverrides != nil {
+		if ov, ok := c.AgentOverrides[name]; ok && ov.ContainerImage != "" {
+			return ov.ContainerImage
+		}
+	}
+	if c.ContainerImage != "" {
+		return c.ContainerImage
+	}
+	return DefaultContainerImage
 }
 
 // A2AAuthConfig holds A2A authentication settings.
@@ -93,6 +120,12 @@ func (c *Config) validate() []string {
 
 	errs = append(errs, validateA2AAuth(c.A2AAuth)...)
 	errs = append(errs, validateTags(c.Tags)...)
+	errs = append(errs, validateContainerImage(c.ContainerImage)...)
+	for name, ov := range c.AgentOverrides {
+		for _, e := range validateContainerImage(ov.ContainerImage) {
+			errs = append(errs, fmt.Sprintf("agent_overrides[%s].%s", name, e))
+		}
+	}
 
 	return errs
 }
@@ -125,6 +158,22 @@ func validateTags(tags map[string]string) []string {
 		if len(v) > maxTagValueLen {
 			errs = append(errs, fmt.Sprintf("tags: value for key %q exceeds max length %d", k, maxTagValueLen))
 		}
+	}
+	return errs
+}
+
+// validateContainerImage checks that a container image reference is valid
+// if non-empty: must contain a "/" and no whitespace.
+func validateContainerImage(image string) []string {
+	if image == "" {
+		return nil
+	}
+	var errs []string
+	if !strings.Contains(image, "/") {
+		errs = append(errs, fmt.Sprintf("container_image %q must contain a \"/\"", image))
+	}
+	if strings.ContainsAny(image, " \t\n\r") {
+		errs = append(errs, fmt.Sprintf("container_image %q must not contain whitespace", image))
 	}
 	return errs
 }
