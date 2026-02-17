@@ -666,3 +666,228 @@ func TestApply_EmptyPack_CreatesRuntimeOnly(t *testing.T) {
 		t.Errorf("expected agent_runtime, got %s", state.Resources[0].Type)
 	}
 }
+
+func TestApply_AWSClientFactoryError(t *testing.T) {
+	provider := &AgentCoreProvider{
+		awsClientFunc: func(_ context.Context, _ *AgentCoreConfig) (awsClient, error) {
+			return nil, fmt.Errorf("simulated client factory failure")
+		},
+	}
+
+	req := &deploy.PlanRequest{
+		PackJSON:     singleAgentPack(),
+		DeployConfig: validConfig(),
+	}
+
+	_, _, err := collectEvents(t, provider, req)
+	if err == nil {
+		t.Fatal("expected error for client factory failure")
+	}
+	if !strings.Contains(err.Error(), "failed to create AWS client") {
+		t.Errorf("error = %q, want 'failed to create AWS client'", err.Error())
+	}
+}
+
+func TestApply_ToolFailure_ContinuesToRuntime(t *testing.T) {
+	sim := newSimulatedProvider()
+	provider := &AgentCoreProvider{
+		awsClientFunc: func(_ context.Context, cfg *AgentCoreConfig) (awsClient, error) {
+			return &failingAWSClient{
+				simulatedAWSClient: *newSimulatedAWSClient(cfg.Region),
+				failOn:             map[string]bool{"tool_gateway": true},
+			}, nil
+		},
+		destroyerFunc: sim.destroyerFunc,
+		checkerFunc:   sim.checkerFunc,
+	}
+
+	req := &deploy.PlanRequest{
+		PackJSON:     singleAgentPackWithTools(),
+		DeployConfig: validConfig(),
+	}
+
+	events, stateStr, err := collectEvents(t, provider, req)
+	if err == nil {
+		t.Fatal("expected error for tool failure")
+	}
+
+	// Should have error events for tool failures but resource events for runtime.
+	var errorCount int
+	var runtimeCreated bool
+	for _, ev := range events {
+		if ev.Type == "error" {
+			errorCount++
+		}
+		if ev.Type == "resource" && ev.Resource != nil &&
+			ev.Resource.Type == "agent_runtime" && ev.Resource.Status == "created" {
+			runtimeCreated = true
+		}
+	}
+	if errorCount == 0 {
+		t.Error("expected error events for tool failures")
+	}
+	if !runtimeCreated {
+		t.Error("expected agent_runtime to still be created despite tool failures")
+	}
+
+	// State should have failed tools and successful runtime.
+	var state AdapterState
+	if err := json.Unmarshal([]byte(stateStr), &state); err != nil {
+		t.Fatalf("failed to unmarshal state: %v", err)
+	}
+	for _, r := range state.Resources {
+		if r.Type == "tool_gateway" && r.Status != "failed" {
+			t.Errorf("tool_gateway %q status = %q, want failed", r.Name, r.Status)
+		}
+		if r.Type == "agent_runtime" && r.Status != "created" {
+			t.Errorf("agent_runtime %q status = %q, want created", r.Name, r.Status)
+		}
+	}
+}
+
+func TestApply_RuntimeFailure(t *testing.T) {
+	sim := newSimulatedProvider()
+	provider := &AgentCoreProvider{
+		awsClientFunc: func(_ context.Context, cfg *AgentCoreConfig) (awsClient, error) {
+			return &failingAWSClient{
+				simulatedAWSClient: *newSimulatedAWSClient(cfg.Region),
+				failOn:             map[string]bool{"agent_runtime": true},
+			}, nil
+		},
+		destroyerFunc: sim.destroyerFunc,
+		checkerFunc:   sim.checkerFunc,
+	}
+
+	req := &deploy.PlanRequest{
+		PackJSON:     singleAgentPack(),
+		DeployConfig: validConfig(),
+	}
+
+	_, stateStr, err := collectEvents(t, provider, req)
+	if err == nil {
+		t.Fatal("expected error for runtime failure")
+	}
+
+	var state AdapterState
+	if err := json.Unmarshal([]byte(stateStr), &state); err != nil {
+		t.Fatalf("failed to unmarshal state: %v", err)
+	}
+	if len(state.Resources) != 1 {
+		t.Fatalf("expected 1 resource, got %d", len(state.Resources))
+	}
+	if state.Resources[0].Status != "failed" {
+		t.Errorf("runtime status = %q, want failed", state.Resources[0].Status)
+	}
+}
+
+func TestApply_CallbackError_AbortsEarly(t *testing.T) {
+	provider := newSimulatedProvider()
+	req := &deploy.PlanRequest{
+		PackJSON:     singleAgentPack(),
+		DeployConfig: validConfig(),
+	}
+
+	callCount := 0
+	callback := func(_ *deploy.ApplyEvent) error {
+		callCount++
+		if callCount >= 2 {
+			return fmt.Errorf("callback abort")
+		}
+		return nil
+	}
+	_, err := provider.Apply(context.Background(), req, callback)
+	if err == nil {
+		t.Fatal("expected error from callback abort")
+	}
+	if !strings.Contains(err.Error(), "callback abort") {
+		t.Errorf("error = %q, want callback abort", err.Error())
+	}
+}
+
+func TestApply_EvalWithEmptyID(t *testing.T) {
+	// Pack with evals that have empty IDs should use "eval_0", "eval_1" etc.
+	p := map[string]any{
+		"id":      "evalpack",
+		"version": "v1.0.0",
+		"name":    "Eval Pack",
+		"prompts": map[string]any{
+			"coordinator": map[string]any{
+				"id": "coordinator", "name": "Coord",
+				"system_template": "You coordinate.", "version": "v1.0.0",
+			},
+			"worker": map[string]any{
+				"id": "worker", "name": "Worker",
+				"system_template": "You work.", "version": "v1.0.0",
+			},
+		},
+		"agents": map[string]any{
+			"entry": "coordinator",
+			"members": map[string]any{
+				"coordinator": map[string]any{"description": "coord"},
+				"worker":      map[string]any{"description": "work"},
+			},
+		},
+		"evals": []map[string]any{
+			{"id": "", "type": "latency"},
+		},
+		"template_engine": map[string]any{"version": "1.0", "syntax": "handlebars"},
+	}
+	packJSON, _ := json.Marshal(p)
+
+	provider := newSimulatedProvider()
+	req := &deploy.PlanRequest{
+		PackJSON:     string(packJSON),
+		DeployConfig: validConfig(),
+	}
+
+	events, _, err := collectEvents(t, provider, req)
+	if err != nil {
+		t.Fatalf("Apply returned error: %v", err)
+	}
+
+	// Find the evaluator resource event and check its name.
+	for _, ev := range events {
+		if ev.Type == "resource" && ev.Resource != nil && ev.Resource.Type == "evaluator" {
+			if ev.Resource.Name != "eval_0" {
+				t.Errorf("evaluator name = %q, want eval_0", ev.Resource.Name)
+			}
+			return
+		}
+	}
+	t.Error("expected evaluator resource event")
+}
+
+func TestApply_EvalFailure(t *testing.T) {
+	sim := newSimulatedProvider()
+	provider := &AgentCoreProvider{
+		awsClientFunc: func(_ context.Context, cfg *AgentCoreConfig) (awsClient, error) {
+			return &failingAWSClient{
+				simulatedAWSClient: *newSimulatedAWSClient(cfg.Region),
+				failOn:             map[string]bool{"evaluator": true},
+			}, nil
+		},
+		destroyerFunc: sim.destroyerFunc,
+		checkerFunc:   sim.checkerFunc,
+	}
+
+	req := &deploy.PlanRequest{
+		PackJSON:     multiAgentPackWithEvals(),
+		DeployConfig: validConfig(),
+	}
+
+	_, stateStr, err := collectEvents(t, provider, req)
+	if err == nil {
+		t.Fatal("expected error for evaluator failure")
+	}
+
+	var state AdapterState
+	if err := json.Unmarshal([]byte(stateStr), &state); err != nil {
+		t.Fatalf("failed to unmarshal state: %v", err)
+	}
+
+	for _, r := range state.Resources {
+		if r.Type == "evaluator" && r.Status != "failed" {
+			t.Errorf("evaluator %q status = %q, want failed", r.Name, r.Status)
+		}
+	}
+}

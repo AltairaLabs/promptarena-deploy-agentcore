@@ -320,3 +320,96 @@ func TestPlan_InvalidPriorState(t *testing.T) {
 		t.Fatal("expected error for invalid prior state")
 	}
 }
+
+func TestPlan_SingleAgent_EmptyPackID(t *testing.T) {
+	provider := newSimulatedProvider()
+	// Pack with empty ID should default to "default".
+	packJSON := `{"id":"","version":"v1.0.0","prompts":{"x":{"id":"x","system_template":"hi"}}}`
+	resp, err := provider.Plan(context.Background(), &deploy.PlanRequest{
+		PackJSON:     packJSON,
+		DeployConfig: validDeployConfig,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(resp.Changes) != 1 {
+		t.Fatalf("expected 1 change, got %d", len(resp.Changes))
+	}
+	if resp.Changes[0].Name != "default" {
+		t.Errorf("name = %q, want default", resp.Changes[0].Name)
+	}
+}
+
+func TestDiffResources_NoPrior(t *testing.T) {
+	desired := []deploy.ResourceChange{
+		{Type: "agent_runtime", Name: "a", Action: deploy.ActionCreate},
+		{Type: "tool_gateway", Name: "b", Action: deploy.ActionCreate},
+	}
+	result := diffResources(desired, nil)
+	if len(result) != 2 {
+		t.Fatalf("expected 2 changes, got %d", len(result))
+	}
+	for _, c := range result {
+		if c.Action != deploy.ActionCreate {
+			t.Errorf("expected CREATE for %s/%s, got %s", c.Type, c.Name, c.Action)
+		}
+	}
+}
+
+func TestDiffResources_MultipleDeletes_Sorted(t *testing.T) {
+	// Prior state has 3 resources, desired has none -> 3 DELETEs sorted by key.
+	prior := &AdapterState{
+		Resources: []ResourceState{
+			{Type: "agent_runtime", Name: "zebra"},
+			{Type: "tool_gateway", Name: "alpha"},
+			{Type: "a2a_endpoint", Name: "mid"},
+		},
+	}
+	result := diffResources(nil, prior)
+	if len(result) != 3 {
+		t.Fatalf("expected 3 deletes, got %d", len(result))
+	}
+	for _, c := range result {
+		if c.Action != deploy.ActionDelete {
+			t.Errorf("expected DELETE for %s/%s, got %s", c.Type, c.Name, c.Action)
+		}
+	}
+	// Verify sorted by resourceKey (type::name).
+	expectedOrder := []string{"a2a_endpoint", "agent_runtime", "tool_gateway"}
+	for i, c := range result {
+		if c.Type != expectedOrder[i] {
+			t.Errorf("delete[%d].Type = %q, want %q", i, c.Type, expectedOrder[i])
+		}
+	}
+}
+
+func TestDiffResources_MixedWithMultipleDeletes(t *testing.T) {
+	desired := []deploy.ResourceChange{
+		{Type: "agent_runtime", Name: "kept", Action: deploy.ActionCreate},
+	}
+	prior := &AdapterState{
+		Resources: []ResourceState{
+			{Type: "agent_runtime", Name: "kept"},
+			{Type: "agent_runtime", Name: "old_b"},
+			{Type: "agent_runtime", Name: "old_a"},
+		},
+	}
+	result := diffResources(desired, prior)
+	if len(result) != 3 {
+		t.Fatalf("expected 3 changes (1 update + 2 deletes), got %d", len(result))
+	}
+	if result[0].Action != deploy.ActionUpdate {
+		t.Errorf("first change should be UPDATE, got %s", result[0].Action)
+	}
+	// Deletes should be sorted.
+	if result[1].Name != "old_a" || result[2].Name != "old_b" {
+		t.Errorf("deletes not sorted: got %s, %s", result[1].Name, result[2].Name)
+	}
+}
+
+func TestBuildSummary_NoChanges(t *testing.T) {
+	summary := buildSummary(nil)
+	if summary != "Plan: 0 to create, 0 to update, 0 to delete" {
+		t.Errorf("summary = %q", summary)
+	}
+}
