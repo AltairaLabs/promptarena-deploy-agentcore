@@ -12,14 +12,37 @@ import (
 	"github.com/AltairaLabs/PromptKit/runtime/prompt"
 )
 
+// progressStepSize is the fraction of the overall progress bar each of the
+// four apply phases occupies (tools, runtimes, a2a, evaluators).
+const progressStepSize = 0.25
+
+// Apply phase step indices for progress tracking.
+const (
+	stepTools      = 0
+	stepRuntimes   = 1
+	stepA2A        = 2
+	stepEvaluators = 3
+)
+
+// createFunc is the signature shared by all awsClient Create* methods.
+type createFunc func(ctx context.Context, name string, cfg *Config) (string, error)
+
+// applyPhaseResult holds the output of a single apply phase.
+type applyPhaseResult struct {
+	resources   []ResourceState
+	err         error
+	callbackErr error // non-nil if the callback itself returned an error
+}
+
 // Apply executes a deployment plan, streaming progress events via the callback.
 // Resources are created in dependency order:
 //  1. Tool Gateway entries (from pack tools)
 //  2. Agent runtimes (one per agent member, or single for non-multi-agent)
 //  3. A2A wiring between agents
 //  4. Evaluators
-func (p *AgentCoreProvider) Apply(ctx context.Context, req *deploy.PlanRequest, callback deploy.ApplyCallback) (string, error) {
-	// Parse inputs.
+func (p *Provider) Apply(
+	ctx context.Context, req *deploy.PlanRequest, callback deploy.ApplyCallback,
+) (string, error) {
 	pack, err := adaptersdk.ParsePack([]byte(req.PackJSON))
 	if err != nil {
 		return "", fmt.Errorf("agentcore: failed to parse pack: %w", err)
@@ -37,129 +60,50 @@ func (p *AgentCoreProvider) Apply(ctx context.Context, req *deploy.PlanRequest, 
 	}
 
 	var resources []ResourceState
-	var applyErr error
+	var applyErr, cbErr error
 
 	// Step 1 — Tool Gateway entries.
-	toolNames := sortedKeys(pack.Tools)
-	for i, name := range toolNames {
-		pct := float64(i) / float64(len(toolNames)+1) * 0.25
-		if err := reporter.Progress(fmt.Sprintf("Creating tool_gateway: %s", name), pct); err != nil {
-			return "", err
-		}
-
-		arn, createErr := client.CreateGatewayTool(ctx, name, cfg)
-		if createErr != nil {
-			_ = reporter.Error(fmt.Errorf("failed to create tool_gateway %s: %w", name, createErr))
-			resources = append(resources, ResourceState{
-				Type: "tool_gateway", Name: name, Status: "failed",
-			})
-			applyErr = combineErrors(applyErr, createErr)
-			continue
-		}
-
-		if err := reporter.Resource(&deploy.ResourceResult{
-			Type: "tool_gateway", Name: name, Action: deploy.ActionCreate, Status: "created", Detail: arn,
-		}); err != nil {
-			return "", err
-		}
-		resources = append(resources, ResourceState{
-			Type: "tool_gateway", Name: name, ARN: arn, Status: "created",
-		})
+	phase := applyPhase(ctx, reporter, client.CreateGatewayTool, cfg,
+		sortedKeys(pack.Tools), ResTypeToolGateway, stepTools)
+	resources, applyErr, cbErr = mergePhase(resources, applyErr, phase)
+	if cbErr != nil {
+		return "", cbErr
 	}
 
 	// Step 2 — Agent runtimes.
-	runtimeNames := agentRuntimeNames(pack)
-	for i, name := range runtimeNames {
-		pct := 0.25 + float64(i)/float64(len(runtimeNames)+1)*0.25
-		if err := reporter.Progress(fmt.Sprintf("Creating agent_runtime: %s", name), pct); err != nil {
-			return "", err
-		}
-
-		arn, createErr := client.CreateRuntime(ctx, name, cfg)
-		if createErr != nil {
-			_ = reporter.Error(fmt.Errorf("failed to create agent_runtime %s: %w", name, createErr))
-			resources = append(resources, ResourceState{
-				Type: "agent_runtime", Name: name, Status: "failed",
-			})
-			applyErr = combineErrors(applyErr, createErr)
-			continue
-		}
-
-		if err := reporter.Resource(&deploy.ResourceResult{
-			Type: "agent_runtime", Name: name, Action: deploy.ActionCreate, Status: "created", Detail: arn,
-		}); err != nil {
-			return "", err
-		}
-		resources = append(resources, ResourceState{
-			Type: "agent_runtime", Name: name, ARN: arn, Status: "created",
-		})
+	phase = applyPhase(ctx, reporter, client.CreateRuntime, cfg,
+		agentRuntimeNames(pack), ResTypeAgentRuntime, stepRuntimes)
+	resources, applyErr, cbErr = mergePhase(resources, applyErr, phase)
+	if cbErr != nil {
+		return "", cbErr
 	}
 
 	// Step 3 — A2A wiring (only for multi-agent packs).
 	if adaptersdk.IsMultiAgent(pack) {
 		agents := adaptersdk.ExtractAgents(pack)
+		wireNames := make([]string, len(agents))
 		for i, ag := range agents {
-			wireName := ag.Name + "_a2a"
-			pct := 0.50 + float64(i)/float64(len(agents)+1)*0.25
-			if err := reporter.Progress(fmt.Sprintf("Creating a2a_endpoint: %s", wireName), pct); err != nil {
-				return "", err
-			}
-
-			arn, createErr := client.CreateA2AWiring(ctx, wireName, cfg)
-			if createErr != nil {
-				_ = reporter.Error(fmt.Errorf("failed to create a2a_endpoint %s: %w", wireName, createErr))
-				resources = append(resources, ResourceState{
-					Type: "a2a_endpoint", Name: wireName, Status: "failed",
-				})
-				applyErr = combineErrors(applyErr, createErr)
-				continue
-			}
-
-			if err := reporter.Resource(&deploy.ResourceResult{
-				Type: "a2a_endpoint", Name: wireName, Action: deploy.ActionCreate, Status: "created", Detail: arn,
-			}); err != nil {
-				return "", err
-			}
-			resources = append(resources, ResourceState{
-				Type: "a2a_endpoint", Name: wireName, ARN: arn, Status: "created",
-			})
+			wireNames[i] = ag.Name + "_a2a"
+		}
+		phase = applyPhase(ctx, reporter, client.CreateA2AWiring, cfg,
+			wireNames, ResTypeA2AEndpoint, stepA2A)
+		resources, applyErr, cbErr = mergePhase(resources, applyErr, phase)
+		if cbErr != nil {
+			return "", cbErr
 		}
 	}
 
 	// Step 4 — Evaluators.
-	if len(pack.Evals) > 0 {
-		for i, ev := range pack.Evals {
-			evalName := ev.ID
-			if evalName == "" {
-				evalName = fmt.Sprintf("eval_%d", i)
-			}
-			pct := 0.75 + float64(i)/float64(len(pack.Evals)+1)*0.25
-			if err := reporter.Progress(fmt.Sprintf("Creating evaluator: %s", evalName), pct); err != nil {
-				return "", err
-			}
-
-			arn, createErr := client.CreateEvaluator(ctx, evalName, cfg)
-			if createErr != nil {
-				_ = reporter.Error(fmt.Errorf("failed to create evaluator %s: %w", evalName, createErr))
-				resources = append(resources, ResourceState{
-					Type: "evaluator", Name: evalName, Status: "failed",
-				})
-				applyErr = combineErrors(applyErr, createErr)
-				continue
-			}
-
-			if err := reporter.Resource(&deploy.ResourceResult{
-				Type: "evaluator", Name: evalName, Action: deploy.ActionCreate, Status: "created", Detail: arn,
-			}); err != nil {
-				return "", err
-			}
-			resources = append(resources, ResourceState{
-				Type: "evaluator", Name: evalName, ARN: arn, Status: "created",
-			})
+	evalNames := evalResourceNames(pack)
+	if len(evalNames) > 0 {
+		phase = applyPhase(ctx, reporter, client.CreateEvaluator, cfg,
+			evalNames, ResTypeEvaluator, stepEvaluators)
+		resources, applyErr, cbErr = mergePhase(resources, applyErr, phase)
+		if cbErr != nil {
+			return "", cbErr
 		}
 	}
 
-	// Build state blob using the shared AdapterState type from state.go.
 	state := AdapterState{
 		Resources: resources,
 		PackID:    pack.ID,
@@ -171,6 +115,74 @@ func (p *AgentCoreProvider) Apply(ctx context.Context, req *deploy.PlanRequest, 
 	}
 
 	return string(stateJSON), applyErr
+}
+
+// applyPhase creates resources of a single type, reporting progress.
+// stepIndex (0–3) determines which quarter of the progress bar is used.
+func applyPhase(
+	ctx context.Context,
+	reporter *adaptersdk.ProgressReporter,
+	create createFunc,
+	cfg *Config,
+	names []string,
+	resType string,
+	stepIndex int,
+) applyPhaseResult {
+	var result applyPhaseResult
+	baseProgress := float64(stepIndex) * progressStepSize
+
+	for i, name := range names {
+		pct := baseProgress + float64(i)/float64(len(names)+1)*progressStepSize
+		if err := reporter.Progress(fmt.Sprintf("Creating %s: %s", resType, name), pct); err != nil {
+			result.callbackErr = err
+			return result
+		}
+
+		arn, createErr := create(ctx, name, cfg)
+		if createErr != nil {
+			_ = reporter.Error(fmt.Errorf("failed to create %s %s: %w", resType, name, createErr))
+			result.resources = append(result.resources, ResourceState{
+				Type: resType, Name: name, Status: "failed",
+			})
+			result.err = combineErrors(result.err, createErr)
+			continue
+		}
+
+		if err := reporter.Resource(&deploy.ResourceResult{
+			Type: resType, Name: name, Action: deploy.ActionCreate,
+			Status: "created", Detail: arn,
+		}); err != nil {
+			result.callbackErr = err
+			return result
+		}
+		result.resources = append(result.resources, ResourceState{
+			Type: resType, Name: name, ARN: arn, Status: "created",
+		})
+	}
+	return result
+}
+
+// mergePhase appends phase resources and combines errors into the running totals.
+// It returns a non-nil callback error if the phase was aborted by the callback.
+func mergePhase(
+	resources []ResourceState, applyErr error, phase applyPhaseResult,
+) ([]ResourceState, error, error) {
+	return append(resources, phase.resources...),
+		combineErrors(applyErr, phase.err),
+		phase.callbackErr
+}
+
+// evalResourceNames returns the list of evaluator names from the pack.
+func evalResourceNames(pack *prompt.Pack) []string {
+	names := make([]string, 0, len(pack.Evals))
+	for i, ev := range pack.Evals {
+		name := ev.ID
+		if name == "" {
+			name = fmt.Sprintf("eval_%d", i)
+		}
+		names = append(names, name)
+	}
+	return names
 }
 
 // agentRuntimeNames returns the sorted list of agent runtime names to create.
@@ -199,9 +211,9 @@ func sortedKeys[V any](m map[string]V) []string {
 }
 
 // combineErrors joins two errors, preferring the first non-nil.
-func combineErrors(existing, new error) error {
+func combineErrors(existing, additional error) error {
 	if existing == nil {
-		return new
+		return additional
 	}
-	return fmt.Errorf("%w; %v", existing, new)
+	return fmt.Errorf("%w; %v", existing, additional)
 }

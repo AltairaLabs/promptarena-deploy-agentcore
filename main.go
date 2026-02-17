@@ -12,7 +12,7 @@ import (
 )
 
 func main() {
-	provider := agentcore.NewAgentCoreProvider()
+	provider := agentcore.NewProvider()
 	if err := adaptersdk.Serve(provider); err != nil {
 		fmt.Fprintf(os.Stderr, "agentcore: %v\n", err)
 		os.Exit(1)

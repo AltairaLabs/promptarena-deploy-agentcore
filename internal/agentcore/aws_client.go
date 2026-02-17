@@ -4,10 +4,10 @@ import "context"
 
 // awsClient abstracts AWS AgentCore API calls for testing.
 type awsClient interface {
-	CreateRuntime(ctx context.Context, name string, cfg *AgentCoreConfig) (arn string, err error)
-	CreateGatewayTool(ctx context.Context, name string, cfg *AgentCoreConfig) (arn string, err error)
-	CreateA2AWiring(ctx context.Context, name string, cfg *AgentCoreConfig) (arn string, err error)
-	CreateEvaluator(ctx context.Context, name string, cfg *AgentCoreConfig) (arn string, err error)
+	CreateRuntime(ctx context.Context, name string, cfg *Config) (arn string, err error)
+	CreateGatewayTool(ctx context.Context, name string, cfg *Config) (arn string, err error)
+	CreateA2AWiring(ctx context.Context, name string, cfg *Config) (arn string, err error)
+	CreateEvaluator(ctx context.Context, name string, cfg *Config) (arn string, err error)
 }
 
 // resourceDestroyer abstracts resource deletion so that real AWS calls

@@ -19,19 +19,19 @@ func newSimulatedAWSClient(region string) *simulatedAWSClient {
 	}
 }
 
-func (c *simulatedAWSClient) CreateRuntime(_ context.Context, name string, _ *AgentCoreConfig) (string, error) {
+func (c *simulatedAWSClient) CreateRuntime(_ context.Context, name string, _ *Config) (string, error) {
 	return fmt.Sprintf("arn:aws:bedrock:%s:%s:agent-runtime/%s", c.region, c.accountID, name), nil
 }
 
-func (c *simulatedAWSClient) CreateGatewayTool(_ context.Context, name string, _ *AgentCoreConfig) (string, error) {
+func (c *simulatedAWSClient) CreateGatewayTool(_ context.Context, name string, _ *Config) (string, error) {
 	return fmt.Sprintf("arn:aws:bedrock:%s:%s:gateway-tool/%s", c.region, c.accountID, name), nil
 }
 
-func (c *simulatedAWSClient) CreateA2AWiring(_ context.Context, name string, _ *AgentCoreConfig) (string, error) {
+func (c *simulatedAWSClient) CreateA2AWiring(_ context.Context, name string, _ *Config) (string, error) {
 	return fmt.Sprintf("arn:aws:bedrock:%s:%s:a2a-wiring/%s", c.region, c.accountID, name), nil
 }
 
-func (c *simulatedAWSClient) CreateEvaluator(_ context.Context, name string, _ *AgentCoreConfig) (string, error) {
+func (c *simulatedAWSClient) CreateEvaluator(_ context.Context, name string, _ *Config) (string, error) {
 	return fmt.Sprintf("arn:aws:bedrock:%s:%s:evaluator/%s", c.region, c.accountID, name), nil
 }
 
@@ -51,17 +51,17 @@ func (s *simulatedChecker) CheckResource(_ context.Context, res ResourceState) (
 	return "healthy", nil
 }
 
-// newSimulatedProvider creates an AgentCoreProvider wired with simulated
+// newSimulatedProvider creates an Provider wired with simulated
 // (in-memory) clients for unit testing. No AWS credentials are required.
-func newSimulatedProvider() *AgentCoreProvider {
-	return &AgentCoreProvider{
-		awsClientFunc: func(_ context.Context, cfg *AgentCoreConfig) (awsClient, error) {
+func newSimulatedProvider() *Provider {
+	return &Provider{
+		awsClientFunc: func(_ context.Context, cfg *Config) (awsClient, error) {
 			return newSimulatedAWSClient(cfg.Region), nil
 		},
-		destroyerFunc: func(_ context.Context, _ *AgentCoreConfig) (resourceDestroyer, error) {
+		destroyerFunc: func(_ context.Context, _ *Config) (resourceDestroyer, error) {
 			return &simulatedDestroyer{}, nil
 		},
-		checkerFunc: func(_ context.Context, _ *AgentCoreConfig) (resourceChecker, error) {
+		checkerFunc: func(_ context.Context, _ *Config) (resourceChecker, error) {
 			return &simulatedChecker{}, nil
 		},
 	}

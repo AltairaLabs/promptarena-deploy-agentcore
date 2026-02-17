@@ -3,10 +3,39 @@ package agentcore
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"testing"
 
 	"github.com/AltairaLabs/PromptKit/runtime/deploy"
 )
+
+// failingDestroyer returns errors for specific resource types.
+type failingDestroyer struct {
+	failOn map[string]bool
+}
+
+func (d *failingDestroyer) DeleteResource(_ context.Context, res ResourceState) error {
+	if d.failOn[res.Type] {
+		return fmt.Errorf("simulated delete failure for %s %q", res.Type, res.Name)
+	}
+	return nil
+}
+
+// failingChecker returns unhealthy or errors for specific resource types.
+type failingChecker struct {
+	unhealthyTypes map[string]bool
+	errorTypes     map[string]bool
+}
+
+func (c *failingChecker) CheckResource(_ context.Context, res ResourceState) (string, error) {
+	if c.errorTypes[res.Type] {
+		return "", fmt.Errorf("simulated check error for %s %q", res.Type, res.Name)
+	}
+	if c.unhealthyTypes[res.Type] {
+		return "unhealthy", nil
+	}
+	return "healthy", nil
+}
 
 // sampleState builds an AdapterState with the four standard resource types.
 func sampleState() *AdapterState {
@@ -301,5 +330,221 @@ func TestParseAdapterState_InvalidJSON(t *testing.T) {
 	_, err := parseAdapterState(`not json`)
 	if err == nil {
 		t.Fatal("expected error for invalid JSON")
+	}
+}
+
+// ---------- Destroy error path tests ----------
+
+func TestDestroy_FailingDestroyer_EmitsErrorEvents(t *testing.T) {
+	p := &Provider{
+		awsClientFunc: nil,
+		destroyerFunc: func(_ context.Context, _ *Config) (resourceDestroyer, error) {
+			return &failingDestroyer{failOn: map[string]bool{"agent_runtime": true}}, nil
+		},
+		checkerFunc: nil,
+	}
+
+	state := &AdapterState{
+		Resources: []ResourceState{
+			{Type: "agent_runtime", Name: "rt-1", ARN: "arn:test"},
+			{Type: "tool_gateway", Name: "tg-1", ARN: "arn:test2"},
+		},
+	}
+
+	var events []*deploy.DestroyEvent
+	cb := func(e *deploy.DestroyEvent) error {
+		events = append(events, e)
+		return nil
+	}
+
+	err := p.Destroy(context.Background(), &deploy.DestroyRequest{
+		DeployConfig: validDestroyConfig(),
+		PriorState:   mustJSON(t, state),
+	}, cb)
+	if err != nil {
+		t.Fatalf("Destroy returned error: %v", err)
+	}
+
+	// Should have an error event for agent_runtime and a resource event for tool_gateway.
+	var errorCount, resourceCount int
+	for _, e := range events {
+		switch e.Type {
+		case "error":
+			errorCount++
+		case "resource":
+			resourceCount++
+		}
+	}
+	if errorCount == 0 {
+		t.Error("expected at least one error event for failing destroyer")
+	}
+	if resourceCount == 0 {
+		t.Error("expected at least one resource event for successful delete")
+	}
+}
+
+func TestDestroy_UnknownResourceType_StillDeleted(t *testing.T) {
+	p := newSimulatedProvider()
+	state := &AdapterState{
+		Resources: []ResourceState{
+			{Type: "custom_thing", Name: "c-1", ARN: "arn:custom"},
+		},
+	}
+
+	var events []*deploy.DestroyEvent
+	cb := func(e *deploy.DestroyEvent) error {
+		events = append(events, e)
+		return nil
+	}
+
+	err := p.Destroy(context.Background(), &deploy.DestroyRequest{
+		DeployConfig: validDestroyConfig(),
+		PriorState:   mustJSON(t, state),
+	}, cb)
+	if err != nil {
+		t.Fatalf("Destroy returned error: %v", err)
+	}
+
+	// The unknown type should still get a resource event via the fallthrough loop.
+	foundCustom := false
+	for _, e := range events {
+		if e.Type == "resource" && e.Resource != nil && e.Resource.Type == "custom_thing" {
+			foundCustom = true
+		}
+	}
+	if !foundCustom {
+		t.Error("expected resource event for unknown type 'custom_thing'")
+	}
+}
+
+func TestDestroy_InvalidConfig(t *testing.T) {
+	p := newSimulatedProvider()
+	state := sampleState()
+
+	err := p.Destroy(context.Background(), &deploy.DestroyRequest{
+		DeployConfig: `{invalid}`,
+		PriorState:   mustJSON(t, state),
+	}, func(e *deploy.DestroyEvent) error { return nil })
+	if err == nil {
+		t.Fatal("expected error for invalid config")
+	}
+}
+
+func TestDestroy_DestroyerFactoryError(t *testing.T) {
+	p := &Provider{
+		destroyerFunc: func(_ context.Context, _ *Config) (resourceDestroyer, error) {
+			return nil, fmt.Errorf("factory failed")
+		},
+	}
+	state := sampleState()
+
+	err := p.Destroy(context.Background(), &deploy.DestroyRequest{
+		DeployConfig: validDestroyConfig(),
+		PriorState:   mustJSON(t, state),
+	}, func(e *deploy.DestroyEvent) error { return nil })
+	if err == nil {
+		t.Fatal("expected error for factory failure")
+	}
+}
+
+// ---------- Status error path tests ----------
+
+func TestStatus_UnhealthyResource_ReturnsDegraded(t *testing.T) {
+	p := &Provider{
+		checkerFunc: func(_ context.Context, _ *Config) (resourceChecker, error) {
+			return &failingChecker{unhealthyTypes: map[string]bool{"agent_runtime": true}}, nil
+		},
+	}
+	state := &AdapterState{
+		Resources: []ResourceState{
+			{Type: "agent_runtime", Name: "rt-1"},
+			{Type: "tool_gateway", Name: "tg-1"},
+		},
+	}
+
+	resp, err := p.Status(context.Background(), &deploy.StatusRequest{
+		DeployConfig: validDestroyConfig(),
+		PriorState:   mustJSON(t, state),
+	})
+	if err != nil {
+		t.Fatalf("Status returned error: %v", err)
+	}
+	if resp.Status != "degraded" {
+		t.Errorf("status = %q, want degraded", resp.Status)
+	}
+}
+
+func TestStatus_CheckerReturnsError_MarksUnhealthy(t *testing.T) {
+	p := &Provider{
+		checkerFunc: func(_ context.Context, _ *Config) (resourceChecker, error) {
+			return &failingChecker{errorTypes: map[string]bool{"evaluator": true}}, nil
+		},
+	}
+	state := &AdapterState{
+		Resources: []ResourceState{
+			{Type: "evaluator", Name: "ev-1"},
+		},
+	}
+
+	resp, err := p.Status(context.Background(), &deploy.StatusRequest{
+		DeployConfig: validDestroyConfig(),
+		PriorState:   mustJSON(t, state),
+	})
+	if err != nil {
+		t.Fatalf("Status returned error: %v", err)
+	}
+	if resp.Status != "degraded" {
+		t.Errorf("status = %q, want degraded", resp.Status)
+	}
+	if len(resp.Resources) != 1 || resp.Resources[0].Status != "unhealthy" {
+		t.Errorf("expected unhealthy resource, got %+v", resp.Resources)
+	}
+}
+
+func TestStatus_InvalidConfig(t *testing.T) {
+	p := newSimulatedProvider()
+	state := sampleState()
+
+	_, err := p.Status(context.Background(), &deploy.StatusRequest{
+		DeployConfig: `{invalid}`,
+		PriorState:   mustJSON(t, state),
+	})
+	if err == nil {
+		t.Fatal("expected error for invalid config")
+	}
+}
+
+func TestStatus_CheckerFactoryError(t *testing.T) {
+	p := &Provider{
+		checkerFunc: func(_ context.Context, _ *Config) (resourceChecker, error) {
+			return nil, fmt.Errorf("checker factory failed")
+		},
+	}
+	state := sampleState()
+
+	_, err := p.Status(context.Background(), &deploy.StatusRequest{
+		DeployConfig: validDestroyConfig(),
+		PriorState:   mustJSON(t, state),
+	})
+	if err == nil {
+		t.Fatal("expected error for checker factory failure")
+	}
+}
+
+// ---------- isInDestroyOrder tests ----------
+
+func TestIsInDestroyOrder(t *testing.T) {
+	knownTypes := []string{"evaluator", "a2a_endpoint", "agent_runtime", "tool_gateway"}
+	for _, typ := range knownTypes {
+		if !isInDestroyOrder(typ) {
+			t.Errorf("isInDestroyOrder(%q) = false, want true", typ)
+		}
+	}
+
+	unknownTypes := []string{"custom", "unknown", "", "gateway"}
+	for _, typ := range unknownTypes {
+		if isInDestroyOrder(typ) {
+			t.Errorf("isInDestroyOrder(%q) = true, want false", typ)
+		}
 	}
 }

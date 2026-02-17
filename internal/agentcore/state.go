@@ -1,5 +1,20 @@
 package agentcore
 
+// Resource type constants used across plan, apply, destroy, and status.
+const (
+	ResTypeAgentRuntime = "agent_runtime"
+	ResTypeToolGateway  = "tool_gateway"
+	ResTypeA2AEndpoint  = "a2a_endpoint"
+	ResTypeEvaluator    = "evaluator"
+)
+
+// Health status constants returned by resource checks.
+const (
+	StatusHealthy   = "healthy"
+	StatusUnhealthy = "unhealthy"
+	StatusMissing   = "missing"
+)
+
 // AdapterState holds resource info from previous deploys. It is serialized
 // as the opaque "prior_state" string exchanged between Plan, Apply, and Status.
 type AdapterState struct {

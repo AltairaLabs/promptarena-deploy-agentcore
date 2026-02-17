@@ -12,7 +12,7 @@ import (
 )
 
 // Plan generates a deployment plan for the given pack and config.
-func (p *AgentCoreProvider) Plan(_ context.Context, req *deploy.PlanRequest) (*deploy.PlanResponse, error) {
+func (p *Provider) Plan(_ context.Context, req *deploy.PlanRequest) (*deploy.PlanResponse, error) {
 	// 1. Parse the pack.
 	pack, err := adaptersdk.ParsePack([]byte(req.PackJSON))
 	if err != nil {

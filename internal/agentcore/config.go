@@ -6,8 +6,8 @@ import (
 	"regexp"
 )
 
-// AgentCoreConfig holds AWS Bedrock AgentCore-specific configuration.
-type AgentCoreConfig struct {
+// Config holds AWS Bedrock AgentCore-specific configuration.
+type Config struct {
 	Region         string               `json:"region"`
 	RuntimeRoleARN string               `json:"runtime_role_arn"`
 	MemoryStore    string               `json:"memory_store,omitempty"`
@@ -37,9 +37,9 @@ var validMemoryStores = map[string]bool{
 	"persistent": true,
 }
 
-// parseConfig unmarshals JSON config into AgentCoreConfig.
-func parseConfig(raw string) (*AgentCoreConfig, error) {
-	var cfg AgentCoreConfig
+// parseConfig unmarshals JSON config into Config.
+func parseConfig(raw string) (*Config, error) {
+	var cfg Config
 	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
 		return nil, fmt.Errorf("invalid config JSON: %w", err)
 	}
@@ -47,7 +47,7 @@ func parseConfig(raw string) (*AgentCoreConfig, error) {
 }
 
 // validate checks the config and returns any validation errors.
-func (c *AgentCoreConfig) validate() []string {
+func (c *Config) validate() []string {
 	var errs []string
 
 	if c.Region == "" {

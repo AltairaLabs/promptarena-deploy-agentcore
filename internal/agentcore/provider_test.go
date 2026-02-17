@@ -242,3 +242,19 @@ func TestUnknownMethodReturnsError(t *testing.T) {
 		t.Errorf("error code = %d, want -32601", resp.Error.Code)
 	}
 }
+
+func TestNewProvider(t *testing.T) {
+	p := NewProvider()
+	if p == nil {
+		t.Fatal("NewProvider returned nil")
+	}
+	if p.awsClientFunc == nil {
+		t.Error("awsClientFunc is nil")
+	}
+	if p.destroyerFunc == nil {
+		t.Error("destroyerFunc is nil")
+	}
+	if p.checkerFunc == nil {
+		t.Error("checkerFunc is nil")
+	}
+}

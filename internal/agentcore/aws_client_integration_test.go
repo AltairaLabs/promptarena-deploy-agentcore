@@ -18,14 +18,14 @@ import (
 //
 //	GOWORK=off go test -tags=integration -v -run TestIntegration ./...
 
-func integrationConfig(t *testing.T) *AgentCoreConfig {
+func integrationConfig(t *testing.T) *Config {
 	t.Helper()
 	region := os.Getenv("AGENTCORE_TEST_REGION")
 	roleARN := os.Getenv("AGENTCORE_TEST_ROLE_ARN")
 	if region == "" || roleARN == "" {
 		t.Skip("AGENTCORE_TEST_REGION and AGENTCORE_TEST_ROLE_ARN must be set")
 	}
-	return &AgentCoreConfig{
+	return &Config{
 		Region:         region,
 		RuntimeRoleARN: roleARN,
 	}

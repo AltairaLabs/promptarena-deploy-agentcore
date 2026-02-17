@@ -11,29 +11,25 @@ import (
 // destroyOrder defines the reverse dependency order for teardown.
 // Resources are grouped by type; each group is destroyed in sequence.
 var destroyOrder = []string{
-	"evaluator",
-	"a2a_endpoint",
-	"agent_runtime",
-	"tool_gateway",
+	ResTypeEvaluator,
+	ResTypeA2AEndpoint,
+	ResTypeAgentRuntime,
+	ResTypeToolGateway,
 }
 
 // Destroy tears down deployed resources in reverse dependency order,
 // streaming progress events via the callback.
-func (p *AgentCoreProvider) Destroy(ctx context.Context, req *deploy.DestroyRequest, callback deploy.DestroyCallback) error {
+func (p *Provider) Destroy(
+	ctx context.Context, req *deploy.DestroyRequest, callback deploy.DestroyCallback,
+) error {
 	state, err := parseAdapterState(req.PriorState)
 	if err != nil {
 		return fmt.Errorf("agentcore: failed to parse prior state: %w", err)
 	}
 
 	if len(state.Resources) == 0 {
-		_ = callback(&deploy.DestroyEvent{
-			Type:    "progress",
-			Message: "No resources to destroy",
-		})
-		_ = callback(&deploy.DestroyEvent{
-			Type:    "complete",
-			Message: "Destroy complete (nothing to do)",
-		})
+		emitDestroyEvent(callback, "progress", "No resources to destroy")
+		emitDestroyEvent(callback, "complete", "Destroy complete (nothing to do)")
 		return nil
 	}
 
@@ -47,61 +43,63 @@ func (p *AgentCoreProvider) Destroy(ctx context.Context, req *deploy.DestroyRequ
 		return fmt.Errorf("agentcore: failed to create destroyer: %w", err)
 	}
 
-	// Build a lookup of resources by type for ordered deletion.
-	byType := make(map[string][]ResourceState)
-	for _, r := range state.Resources {
-		byType[r.Type] = append(byType[r.Type], r)
-	}
+	byType := groupByType(state.Resources)
 
-	_ = callback(&deploy.DestroyEvent{
-		Type:    "progress",
-		Message: fmt.Sprintf("Destroying %d resources", len(state.Resources)),
-	})
+	emitDestroyEvent(callback, "progress",
+		fmt.Sprintf("Destroying %d resources", len(state.Resources)))
 
 	for step, rtype := range destroyOrder {
 		resources, ok := byType[rtype]
 		if !ok {
 			continue
 		}
-
-		_ = callback(&deploy.DestroyEvent{
-			Type:    "progress",
-			Message: fmt.Sprintf("Step %d: deleting %s resources (%d)", step+1, rtype, len(resources)),
-		})
-
-		for _, res := range resources {
-			err := destroyer.DeleteResource(ctx, res)
-			if err != nil {
-				// Emit error event but continue — best-effort teardown.
-				_ = callback(&deploy.DestroyEvent{
-					Type:    "error",
-					Message: fmt.Sprintf("Failed to delete %s %q: %v", res.Type, res.Name, err),
-					Resource: &deploy.ResourceResult{
-						Type:   res.Type,
-						Name:   res.Name,
-						Action: deploy.ActionDelete,
-						Status: "failed",
-						Detail: err.Error(),
-					},
-				})
-				continue
-			}
-
-			_ = callback(&deploy.DestroyEvent{
-				Type:    "resource",
-				Message: fmt.Sprintf("Deleted %s %q", res.Type, res.Name),
-				Resource: &deploy.ResourceResult{
-					Type:   res.Type,
-					Name:   res.Name,
-					Action: deploy.ActionDelete,
-					Status: "deleted",
-				},
-			})
-		}
+		emitDestroyEvent(callback, "progress",
+			fmt.Sprintf("Step %d: deleting %s resources (%d)", step+1, rtype, len(resources)))
+		destroyResourceGroup(ctx, destroyer, resources, callback)
 	}
 
-	// Handle any resource types not in the standard destroy order.
-	for _, res := range state.Resources {
+	destroyUnorderedResources(ctx, destroyer, state.Resources, callback)
+
+	emitDestroyEvent(callback, "complete", "Destroy complete")
+	return nil
+}
+
+// destroyResourceGroup deletes a slice of resources, emitting events for each.
+func destroyResourceGroup(
+	ctx context.Context, destroyer resourceDestroyer,
+	resources []ResourceState, callback deploy.DestroyCallback,
+) {
+	for _, res := range resources {
+		if err := destroyer.DeleteResource(ctx, res); err != nil {
+			_ = callback(&deploy.DestroyEvent{
+				Type:    "error",
+				Message: fmt.Sprintf("Failed to delete %s %q: %v", res.Type, res.Name, err),
+				Resource: &deploy.ResourceResult{
+					Type: res.Type, Name: res.Name,
+					Action: deploy.ActionDelete, Status: "failed",
+					Detail: err.Error(),
+				},
+			})
+			continue
+		}
+		_ = callback(&deploy.DestroyEvent{
+			Type:    "resource",
+			Message: fmt.Sprintf("Deleted %s %q", res.Type, res.Name),
+			Resource: &deploy.ResourceResult{
+				Type: res.Type, Name: res.Name,
+				Action: deploy.ActionDelete, Status: "deleted",
+			},
+		})
+	}
+}
+
+// destroyUnorderedResources handles resource types not in the standard
+// destroy order.
+func destroyUnorderedResources(
+	ctx context.Context, destroyer resourceDestroyer,
+	resources []ResourceState, callback deploy.DestroyCallback,
+) {
+	for _, res := range resources {
 		if isInDestroyOrder(res.Type) {
 			continue
 		}
@@ -114,24 +112,31 @@ func (p *AgentCoreProvider) Destroy(ctx context.Context, req *deploy.DestroyRequ
 			Type:    "resource",
 			Message: fmt.Sprintf("Deleted %s %q", res.Type, res.Name),
 			Resource: &deploy.ResourceResult{
-				Type:   res.Type,
-				Name:   res.Name,
-				Action: deploy.ActionDelete,
-				Status: status,
+				Type: res.Type, Name: res.Name,
+				Action: deploy.ActionDelete, Status: status,
 			},
 		})
 	}
+}
 
-	_ = callback(&deploy.DestroyEvent{
-		Type:    "complete",
-		Message: "Destroy complete",
-	})
+// emitDestroyEvent is a helper to send a simple destroy event.
+func emitDestroyEvent(callback deploy.DestroyCallback, eventType, message string) {
+	_ = callback(&deploy.DestroyEvent{Type: eventType, Message: message})
+}
 
-	return nil
+// groupByType builds a lookup of resources indexed by type.
+func groupByType(resources []ResourceState) map[string][]ResourceState {
+	byType := make(map[string][]ResourceState)
+	for _, r := range resources {
+		byType[r.Type] = append(byType[r.Type], r)
+	}
+	return byType
 }
 
 // Status returns the current deployment status by checking each resource.
-func (p *AgentCoreProvider) Status(ctx context.Context, req *deploy.StatusRequest) (*deploy.StatusResponse, error) {
+func (p *Provider) Status(
+	ctx context.Context, req *deploy.StatusRequest,
+) (*deploy.StatusResponse, error) {
 	state, err := parseAdapterState(req.PriorState)
 	if err != nil {
 		return nil, fmt.Errorf("agentcore: failed to parse prior state: %w", err)
@@ -157,11 +162,11 @@ func (p *AgentCoreProvider) Status(ctx context.Context, req *deploy.StatusReques
 	hasUnhealthy := false
 
 	for _, res := range state.Resources {
-		health, err := checker.CheckResource(ctx, res)
-		if err != nil {
-			health = "unhealthy"
+		health, checkErr := checker.CheckResource(ctx, res)
+		if checkErr != nil {
+			health = StatusUnhealthy
 		}
-		if health != "healthy" {
+		if health != StatusHealthy {
 			hasUnhealthy = true
 		}
 		resources = append(resources, deploy.ResourceStatus{
@@ -176,7 +181,6 @@ func (p *AgentCoreProvider) Status(ctx context.Context, req *deploy.StatusReques
 		aggregateStatus = "degraded"
 	}
 
-	// Re-serialize state so it round-trips.
 	stateJSON, _ := json.Marshal(state)
 
 	return &deploy.StatusResponse{
