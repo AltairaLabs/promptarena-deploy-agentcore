@@ -39,6 +39,31 @@ const configSchema = `{
         "cloudwatch_log_group": { "type": "string" },
         "tracing_enabled": { "type": "boolean" }
       }
+    },
+    "a2a_auth": {
+      "type": "object",
+      "required": ["mode"],
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["iam", "jwt"],
+          "description": "A2A authentication mode"
+        },
+        "discovery_url": {
+          "type": "string",
+          "description": "OIDC discovery URL (required for jwt mode)"
+        },
+        "allowed_audience": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Allowed JWT audiences"
+        },
+        "allowed_clients": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Allowed JWT client IDs"
+        }
+      }
     }
   },
   "additionalProperties": false

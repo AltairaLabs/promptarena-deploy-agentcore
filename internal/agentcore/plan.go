@@ -38,7 +38,7 @@ func (p *Provider) Plan(_ context.Context, req *deploy.PlanRequest) (*deploy.Pla
 	}
 
 	// 4. Generate desired resources.
-	desired := generateDesiredResources(pack)
+	desired := generateDesiredResources(pack, cfg)
 
 	// 5. Diff against prior state.
 	changes := diffResources(desired, prior)
@@ -62,8 +62,19 @@ func resourceKey(typ, name string) string {
 // starting point and adds tool_gateway (for pack-level tools) and
 // evaluator (for evals). For single-agent packs it generates a
 // single agent_runtime resource.
-func generateDesiredResources(pack *prompt.Pack) []deploy.ResourceChange {
+func generateDesiredResources(pack *prompt.Pack, cfg *Config) []deploy.ResourceChange {
 	var desired []deploy.ResourceChange
+
+	// Memory resource (before tools/runtimes).
+	if cfg.MemoryStore != "" {
+		memName := pack.ID + "_memory"
+		desired = append(desired, deploy.ResourceChange{
+			Type:   ResTypeMemory,
+			Name:   memName,
+			Action: deploy.ActionCreate,
+			Detail: fmt.Sprintf("Create memory store (%s) for %s", cfg.MemoryStore, pack.ID),
+		})
+	}
 
 	if adaptersdk.IsMultiAgent(pack) {
 		// Start with the SDK-generated plan (agent_runtime + a2a_endpoint

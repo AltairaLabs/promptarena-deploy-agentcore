@@ -15,6 +15,7 @@ var destroyOrder = []string{
 	ResTypeA2AEndpoint,
 	ResTypeAgentRuntime,
 	ResTypeToolGateway,
+	ResTypeMemory,
 }
 
 // Destroy tears down deployed resources in reverse dependency order,

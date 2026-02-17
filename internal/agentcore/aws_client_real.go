@@ -64,7 +64,7 @@ func newRealCheckerFactory(ctx context.Context, cfg *Config) (resourceChecker, e
 func (c *realAWSClient) CreateRuntime(
 	ctx context.Context, name string, cfg *Config,
 ) (string, error) {
-	out, err := c.client.CreateAgentRuntime(ctx, &bedrockagentcorecontrol.CreateAgentRuntimeInput{
+	input := &bedrockagentcorecontrol.CreateAgentRuntimeInput{
 		AgentRuntimeName: aws.String(name),
 		RoleArn:          aws.String(cfg.RuntimeRoleARN),
 		AgentRuntimeArtifact: &types.AgentRuntimeArtifactMemberContainerConfiguration{
@@ -75,7 +75,14 @@ func (c *realAWSClient) CreateRuntime(
 		NetworkConfiguration: &types.NetworkConfiguration{
 			NetworkMode: types.NetworkModePublic,
 		},
-	})
+	}
+	if len(cfg.RuntimeEnvVars) > 0 {
+		input.EnvironmentVariables = cfg.RuntimeEnvVars
+	}
+	if authCfg := buildAuthorizerConfig(cfg); authCfg != nil {
+		input.AuthorizerConfiguration = authCfg
+	}
+	out, err := c.client.CreateAgentRuntime(ctx, input)
 	if err != nil {
 		return "", fmt.Errorf("CreateAgentRuntime %q: %w", name, err)
 	}
@@ -98,7 +105,7 @@ func (c *realAWSClient) UpdateRuntime(
 		return "", fmt.Errorf("UpdateAgentRuntime %q: could not extract ID from ARN %q", name, arn)
 	}
 
-	_, err := c.client.UpdateAgentRuntime(ctx, &bedrockagentcorecontrol.UpdateAgentRuntimeInput{
+	input := &bedrockagentcorecontrol.UpdateAgentRuntimeInput{
 		AgentRuntimeId: aws.String(id),
 		RoleArn:        aws.String(cfg.RuntimeRoleARN),
 		AgentRuntimeArtifact: &types.AgentRuntimeArtifactMemberContainerConfiguration{
@@ -109,7 +116,14 @@ func (c *realAWSClient) UpdateRuntime(
 		NetworkConfiguration: &types.NetworkConfiguration{
 			NetworkMode: types.NetworkModePublic,
 		},
-	})
+	}
+	if len(cfg.RuntimeEnvVars) > 0 {
+		input.EnvironmentVariables = cfg.RuntimeEnvVars
+	}
+	if authCfg := buildAuthorizerConfig(cfg); authCfg != nil {
+		input.AuthorizerConfiguration = authCfg
+	}
+	_, err := c.client.UpdateAgentRuntime(ctx, input)
 	if err != nil {
 		return arn, fmt.Errorf("UpdateAgentRuntime %q: %w", name, err)
 	}
@@ -191,11 +205,84 @@ func (c *realAWSClient) CreateEvaluator(
 	return fmt.Sprintf("arn:aws:bedrock:%s:evaluator/%s", c.cfg.Region, name), nil
 }
 
+// buildAuthorizerConfig returns the SDK AuthorizerConfiguration for the
+// given config, or nil if no auth is configured (or IAM mode is used).
+func buildAuthorizerConfig(cfg *Config) types.AuthorizerConfiguration {
+	if cfg.A2AAuth == nil || cfg.A2AAuth.Mode != A2AAuthModeJWT {
+		return nil
+	}
+	return &types.AuthorizerConfigurationMemberCustomJWTAuthorizer{
+		Value: types.CustomJWTAuthorizerConfiguration{
+			DiscoveryUrl:    aws.String(cfg.A2AAuth.DiscoveryURL),
+			AllowedAudience: cfg.A2AAuth.AllowedAud,
+			AllowedClients:  cfg.A2AAuth.AllowedClts,
+		},
+	}
+}
+
+// memoryExpiryDays is the default event expiry duration for memory resources.
+const memoryExpiryDays = 30
+
+// memoryStrategySession is the strategy name for session (episodic) memory.
+const memoryStrategySession = "session_memory"
+
+// memoryStrategyPersistent is the strategy name for persistent (semantic) memory.
+const memoryStrategyPersistent = "persistent_memory"
+
+// CreateMemory provisions a memory resource via the AWS API.
+func (c *realAWSClient) CreateMemory(
+	ctx context.Context, name string, cfg *Config,
+) (string, error) {
+	input := &bedrockagentcorecontrol.CreateMemoryInput{
+		Name:                aws.String(name),
+		EventExpiryDuration: aws.Int32(memoryExpiryDays),
+	}
+
+	if cfg.RuntimeRoleARN != "" {
+		input.MemoryExecutionRoleArn = aws.String(cfg.RuntimeRoleARN)
+	}
+
+	input.MemoryStrategies = memoryStrategies(cfg.MemoryStore)
+
+	out, err := c.client.CreateMemory(ctx, input)
+	if err != nil {
+		return "", fmt.Errorf("CreateMemory %q: %w", name, err)
+	}
+
+	return aws.ToString(out.Memory.Arn), nil
+}
+
+// memoryStrategies returns the SDK strategy inputs for the given store type.
+func memoryStrategies(storeType string) []types.MemoryStrategyInput {
+	switch storeType {
+	case "session":
+		return []types.MemoryStrategyInput{
+			&types.MemoryStrategyInputMemberEpisodicMemoryStrategy{
+				Value: types.EpisodicMemoryStrategyInput{
+					Name: aws.String(memoryStrategySession),
+				},
+			},
+		}
+	case "persistent":
+		return []types.MemoryStrategyInput{
+			&types.MemoryStrategyInputMemberSemanticMemoryStrategy{
+				Value: types.SemanticMemoryStrategyInput{
+					Name: aws.String(memoryStrategyPersistent),
+				},
+			},
+		}
+	default:
+		return nil
+	}
+}
+
 // ---------- resourceDestroyer implementation ----------
 
 // DeleteResource removes a single resource by type.
 func (c *realAWSClient) DeleteResource(ctx context.Context, res ResourceState) error {
 	switch res.Type {
+	case ResTypeMemory:
+		return c.deleteMemory(ctx, res)
 	case ResTypeAgentRuntime:
 		return c.deleteRuntime(ctx, res)
 	case ResTypeToolGateway:
@@ -225,6 +312,20 @@ func (c *realAWSClient) deleteRuntime(ctx context.Context, res ResourceState) er
 	return nil
 }
 
+func (c *realAWSClient) deleteMemory(ctx context.Context, res ResourceState) error {
+	id := extractResourceID(res.ARN, "memory")
+	if id == "" {
+		id = res.Name
+	}
+	_, err := c.client.DeleteMemory(ctx, &bedrockagentcorecontrol.DeleteMemoryInput{
+		MemoryId: aws.String(id),
+	})
+	if err != nil && !isNotFound(err) {
+		return fmt.Errorf("DeleteMemory %q: %w", res.Name, err)
+	}
+	return nil
+}
+
 func (c *realAWSClient) deleteGateway(ctx context.Context, res ResourceState) error {
 	id := extractResourceID(res.ARN, "gateway")
 	if id == "" {
@@ -244,6 +345,8 @@ func (c *realAWSClient) deleteGateway(ctx context.Context, res ResourceState) er
 // CheckResource returns the health status of a single resource.
 func (c *realAWSClient) CheckResource(ctx context.Context, res ResourceState) (string, error) {
 	switch res.Type {
+	case ResTypeMemory:
+		return c.checkMemory(ctx, res)
 	case ResTypeAgentRuntime:
 		return c.checkRuntime(ctx, res)
 	case ResTypeToolGateway:
@@ -255,6 +358,26 @@ func (c *realAWSClient) CheckResource(ctx context.Context, res ResourceState) (s
 	default:
 		return StatusMissing, fmt.Errorf("unknown resource type %q", res.Type)
 	}
+}
+
+func (c *realAWSClient) checkMemory(ctx context.Context, res ResourceState) (string, error) {
+	id := extractResourceID(res.ARN, "memory")
+	if id == "" {
+		id = res.Name
+	}
+	out, err := c.client.GetMemory(ctx, &bedrockagentcorecontrol.GetMemoryInput{
+		MemoryId: aws.String(id),
+	})
+	if err != nil {
+		if isNotFound(err) {
+			return StatusMissing, nil
+		}
+		return StatusUnhealthy, fmt.Errorf("GetMemory %q: %w", res.Name, err)
+	}
+	if out.Memory != nil && out.Memory.Status == types.MemoryStatusActive {
+		return StatusHealthy, nil
+	}
+	return StatusUnhealthy, nil
 }
 
 func (c *realAWSClient) checkRuntime(ctx context.Context, res ResourceState) (string, error) {

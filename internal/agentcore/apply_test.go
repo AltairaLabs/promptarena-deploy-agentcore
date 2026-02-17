@@ -196,6 +196,13 @@ func (c *failingAWSClient) CreateEvaluator(ctx context.Context, name string, cfg
 	return c.simulatedAWSClient.CreateEvaluator(ctx, name, cfg)
 }
 
+func (c *failingAWSClient) CreateMemory(ctx context.Context, name string, cfg *Config) (string, error) {
+	if c.failOn["memory"] {
+		return "", fmt.Errorf("simulated memory creation failure for %s", name)
+	}
+	return c.simulatedAWSClient.CreateMemory(ctx, name, cfg)
+}
+
 // --- tests ---
 
 func TestApply_SingleAgent_StreamsCorrectEvents(t *testing.T) {
@@ -1079,4 +1086,202 @@ func TestApply_UpdateRuntime_Failure(t *testing.T) {
 	if state.Resources[0].Status != "failed" {
 		t.Errorf("runtime status = %q, want failed", state.Resources[0].Status)
 	}
+}
+
+// validConfigWithMemory returns a deploy config with memory_store set.
+func validConfigWithMemory() string {
+	return `{"region":"us-west-2","runtime_role_arn":"arn:aws:iam::123456789012:role/test","memory_store":"session"}`
+}
+
+func TestApply_WithMemory_CreatesMemoryResource(t *testing.T) {
+	provider := newSimulatedProvider()
+	req := &deploy.PlanRequest{
+		PackJSON:     singleAgentPack(),
+		DeployConfig: validConfigWithMemory(),
+	}
+
+	events, stateStr, err := collectEvents(t, provider, req)
+	if err != nil {
+		t.Fatalf("Apply returned error: %v", err)
+	}
+
+	// Should have memory + runtime resource events.
+	var resourceTypes []string
+	for _, ev := range events {
+		if ev.Type == "resource" && ev.Resource != nil {
+			resourceTypes = append(resourceTypes, ev.Resource.Type)
+		}
+	}
+
+	if len(resourceTypes) != 2 {
+		t.Fatalf("expected 2 resource events (memory + runtime), got %d: %v",
+			len(resourceTypes), resourceTypes)
+	}
+	if resourceTypes[0] != ResTypeMemory {
+		t.Errorf("first resource should be memory, got %s", resourceTypes[0])
+	}
+	if resourceTypes[1] != ResTypeAgentRuntime {
+		t.Errorf("second resource should be agent_runtime, got %s", resourceTypes[1])
+	}
+
+	// Verify state.
+	var state AdapterState
+	if err := json.Unmarshal([]byte(stateStr), &state); err != nil {
+		t.Fatalf("failed to unmarshal state: %v", err)
+	}
+	if len(state.Resources) != 2 {
+		t.Fatalf("expected 2 resources in state, got %d", len(state.Resources))
+	}
+
+	// Memory resource should have a valid ARN.
+	memRes := state.Resources[0]
+	if memRes.Type != ResTypeMemory {
+		t.Errorf("first state resource type = %q, want memory", memRes.Type)
+	}
+	if memRes.ARN == "" {
+		t.Error("memory resource has empty ARN")
+	}
+	if memRes.Status != "created" {
+		t.Errorf("memory status = %q, want created", memRes.Status)
+	}
+
+	// Verify progress event for memory.
+	var memoryProgress bool
+	for _, ev := range events {
+		if ev.Type == "progress" && strings.Contains(ev.Message, "memory") {
+			memoryProgress = true
+		}
+	}
+	if !memoryProgress {
+		t.Error("expected a progress event mentioning memory")
+	}
+}
+
+func TestApply_WithMemory_Failure(t *testing.T) {
+	sim := newSimulatedProvider()
+	provider := &Provider{
+		awsClientFunc: func(_ context.Context, cfg *Config) (awsClient, error) {
+			return &failingAWSClient{
+				simulatedAWSClient: *newSimulatedAWSClient(cfg.Region),
+				failOn:             map[string]bool{"memory": true},
+			}, nil
+		},
+		destroyerFunc: sim.destroyerFunc,
+		checkerFunc:   sim.checkerFunc,
+	}
+
+	req := &deploy.PlanRequest{
+		PackJSON:     singleAgentPack(),
+		DeployConfig: validConfigWithMemory(),
+	}
+
+	_, stateStr, err := collectEvents(t, provider, req)
+	if err == nil {
+		t.Fatal("expected error for memory failure")
+	}
+
+	// State should still contain the failed memory and the successful runtime.
+	var state AdapterState
+	if err := json.Unmarshal([]byte(stateStr), &state); err != nil {
+		t.Fatalf("failed to unmarshal state: %v", err)
+	}
+
+	var memoryFailed, runtimeCreated bool
+	for _, r := range state.Resources {
+		if r.Type == ResTypeMemory && r.Status == "failed" {
+			memoryFailed = true
+		}
+		if r.Type == ResTypeAgentRuntime && r.Status == "created" {
+			runtimeCreated = true
+		}
+	}
+	if !memoryFailed {
+		t.Error("expected memory resource with status=failed")
+	}
+	if !runtimeCreated {
+		t.Error("expected agent_runtime to still be created despite memory failure")
+	}
+}
+
+func TestApply_WithoutMemory_NoMemoryResource(t *testing.T) {
+	provider := newSimulatedProvider()
+	req := &deploy.PlanRequest{
+		PackJSON:     singleAgentPack(),
+		DeployConfig: validConfig(),
+	}
+
+	events, _, err := collectEvents(t, provider, req)
+	if err != nil {
+		t.Fatalf("Apply returned error: %v", err)
+	}
+
+	for _, ev := range events {
+		if ev.Type == "resource" && ev.Resource != nil && ev.Resource.Type == ResTypeMemory {
+			t.Error("should not have memory resource when memory_store is not configured")
+		}
+	}
+}
+
+func TestApply_MultiAgent_EntryAgentGetsEndpoints(t *testing.T) {
+	// Track UpdateRuntime calls to verify A2A discovery injection.
+	var updateCalls []string
+	sim := newSimulatedAWSClient("us-west-2")
+	trackingClient := &trackingAWSClient{
+		simulatedAWSClient: *sim,
+		onUpdate: func(arn, name string) {
+			updateCalls = append(updateCalls, name)
+		},
+	}
+
+	provider := &Provider{
+		awsClientFunc: func(_ context.Context, _ *Config) (awsClient, error) {
+			return trackingClient, nil
+		},
+		destroyerFunc: newSimulatedProvider().destroyerFunc,
+		checkerFunc:   newSimulatedProvider().checkerFunc,
+	}
+
+	req := &deploy.PlanRequest{
+		PackJSON:     multiAgentPack(),
+		DeployConfig: validConfig(),
+	}
+
+	events, _, err := collectEvents(t, provider, req)
+	if err != nil {
+		t.Fatalf("Apply returned error: %v", err)
+	}
+
+	// The entry agent "coordinator" should have been updated with A2A endpoints.
+	found := false
+	for _, name := range updateCalls {
+		if name == "coordinator" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected UpdateRuntime call for entry agent 'coordinator', got: %v", updateCalls)
+	}
+
+	// Verify a progress event for A2A injection exists.
+	for _, ev := range events {
+		if ev.Type == "progress" && strings.Contains(ev.Message, "A2A endpoint map") {
+			return
+		}
+	}
+	t.Error("expected a progress event for A2A endpoint map injection")
+}
+
+// trackingAWSClient wraps simulatedAWSClient to record UpdateRuntime calls.
+type trackingAWSClient struct {
+	simulatedAWSClient
+	onUpdate func(arn, name string)
+}
+
+func (c *trackingAWSClient) UpdateRuntime(
+	ctx context.Context, arn string, name string, cfg *Config,
+) (string, error) {
+	if c.onUpdate != nil {
+		c.onUpdate(arn, name)
+	}
+	return c.simulatedAWSClient.UpdateRuntime(ctx, arn, name, cfg)
 }
