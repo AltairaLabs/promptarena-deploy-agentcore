@@ -1,4 +1,4 @@
-.PHONY: fmt lint test build build-runtime check install-hooks
+.PHONY: fmt lint test build build-runtime check install-hooks docker-build
 
 # Format code with goimports
 fmt:
@@ -22,6 +22,10 @@ build-runtime:
 
 # Run all quality checks (what pre-commit runs)
 check: fmt lint test build
+
+# Build Docker image locally
+docker-build:
+	docker build -f Dockerfile.agentcore -t promptkit-agentcore:local .
 
 # Install git hooks
 install-hooks:
