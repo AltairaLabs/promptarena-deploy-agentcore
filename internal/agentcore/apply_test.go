@@ -143,8 +143,16 @@ func multiAgentPackWithEvals() string {
 			},
 		},
 		"evals": []map[string]any{
-			{"id": "latency_check", "type": "latency", "trigger": "post_response", "params": map[string]any{}},
-			{"id": "quality_check", "type": "quality", "trigger": "post_response", "params": map[string]any{}},
+			{
+				"id": "latency_check", "type": "llm_as_judge",
+				"trigger": "every_turn",
+				"params":  map[string]any{"instructions": "Check response latency", "model": "anthropic.claude-sonnet-4-20250514-v1:0"},
+			},
+			{
+				"id": "quality_check", "type": "llm_as_judge",
+				"trigger": "on_session_complete",
+				"params":  map[string]any{"instructions": "Check quality"},
+			},
 		},
 		"template_engine": map[string]any{
 			"version": "1.0",
@@ -860,7 +868,7 @@ func TestApply_EvalWithEmptyID(t *testing.T) {
 			},
 		},
 		"evals": []map[string]any{
-			{"id": "", "type": "latency"},
+			{"id": "", "type": "llm_as_judge", "trigger": "every_turn", "params": map[string]any{"instructions": "Evaluate"}},
 		},
 		"template_engine": map[string]any{"version": "1.0", "syntax": "handlebars"},
 	}
@@ -887,6 +895,55 @@ func TestApply_EvalWithEmptyID(t *testing.T) {
 		}
 	}
 	t.Error("expected evaluator resource event")
+}
+
+func TestApply_NonLLMEvals_Skipped(t *testing.T) {
+	// Pack with non-llm_as_judge evals should produce no evaluator resources.
+	p := map[string]any{
+		"id":      "localpack",
+		"version": "v1.0.0",
+		"name":    "Local Eval Pack",
+		"prompts": map[string]any{
+			"coordinator": map[string]any{
+				"id": "coordinator", "name": "Coord",
+				"system_template": "You coordinate.", "version": "v1.0.0",
+			},
+			"worker": map[string]any{
+				"id": "worker", "name": "Worker",
+				"system_template": "You work.", "version": "v1.0.0",
+			},
+		},
+		"agents": map[string]any{
+			"entry": "coordinator",
+			"members": map[string]any{
+				"coordinator": map[string]any{"description": "coord"},
+				"worker":      map[string]any{"description": "work"},
+			},
+		},
+		"evals": []map[string]any{
+			{"id": "regex_check", "type": "regex", "trigger": "every_turn", "params": map[string]any{}},
+			{"id": "contains_check", "type": "contains", "trigger": "every_turn", "params": map[string]any{}},
+		},
+		"template_engine": map[string]any{"version": "1.0", "syntax": "handlebars"},
+	}
+	packJSON, _ := json.Marshal(p)
+
+	provider := newSimulatedProvider()
+	req := &deploy.PlanRequest{
+		PackJSON:     string(packJSON),
+		DeployConfig: validConfig(),
+	}
+
+	events, _, err := collectEvents(t, provider, req)
+	if err != nil {
+		t.Fatalf("Apply returned error: %v", err)
+	}
+
+	for _, ev := range events {
+		if ev.Type == "resource" && ev.Resource != nil && ev.Resource.Type == "evaluator" {
+			t.Errorf("non-llm_as_judge eval should not create evaluator resources, got %s", ev.Resource.Name)
+		}
+	}
 }
 
 func TestApply_EvalFailure(t *testing.T) {

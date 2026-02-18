@@ -81,8 +81,10 @@ func multiAgentPackWithToolsAndEvalsJSON() string {
 		},
 		"evals": []map[string]any{
 			{
-				"id":   "quality",
-				"type": "llm_judge",
+				"id":      "quality",
+				"type":    "llm_as_judge",
+				"trigger": "every_turn",
+				"params":  map[string]any{"instructions": "Evaluate quality"},
 			},
 		},
 	}

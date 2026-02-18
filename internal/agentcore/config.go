@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+
+	"github.com/AltairaLabs/PromptKit/runtime/evals"
 )
 
 // DefaultContainerImage is the PromptKit container image used when no
@@ -31,6 +33,10 @@ type Config struct {
 	// ResourceTags is populated at apply-time by merging default pack
 	// metadata tags with user-defined tags. It is NOT serialized.
 	ResourceTags map[string]string `json:"-"`
+
+	// EvalDefs is populated at apply-time from pack evals. It maps
+	// evaluator resource names to their definitions. NOT serialized.
+	EvalDefs map[string]evals.EvalDef `json:"-"`
 }
 
 // AgentOverride holds per-agent configuration overrides.
