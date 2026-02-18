@@ -9,6 +9,7 @@ type awsClient interface {
 	CreateGatewayTool(ctx context.Context, name string, cfg *Config) (arn string, err error)
 	CreateA2AWiring(ctx context.Context, name string, cfg *Config) (arn string, err error)
 	CreateEvaluator(ctx context.Context, name string, cfg *Config) (arn string, err error)
+	CreateOnlineEvalConfig(ctx context.Context, name string, cfg *Config) (arn string, err error)
 	CreateMemory(ctx context.Context, name string, cfg *Config) (arn string, err error)
 	CreatePolicyEngine(ctx context.Context, name string, cfg *Config) (
 		arn string, engineID string, err error,

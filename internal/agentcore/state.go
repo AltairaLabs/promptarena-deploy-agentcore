@@ -2,12 +2,13 @@ package agentcore
 
 // Resource type constants used across plan, apply, destroy, and status.
 const (
-	ResTypeMemory       = "memory"
-	ResTypeAgentRuntime = "agent_runtime"
-	ResTypeToolGateway  = "tool_gateway"
-	ResTypeA2AEndpoint  = "a2a_endpoint"
-	ResTypeEvaluator    = "evaluator"
-	ResTypeCedarPolicy  = "cedar_policy"
+	ResTypeMemory           = "memory"
+	ResTypeAgentRuntime     = "agent_runtime"
+	ResTypeToolGateway      = "tool_gateway"
+	ResTypeA2AEndpoint      = "a2a_endpoint"
+	ResTypeEvaluator        = "evaluator"
+	ResTypeOnlineEvalConfig = "online_eval_config"
+	ResTypeCedarPolicy      = "cedar_policy"
 )
 
 // Resource lifecycle status constants used in ResourceState.Status.

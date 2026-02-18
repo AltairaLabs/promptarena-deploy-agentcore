@@ -4,7 +4,7 @@ sidebar:
   order: 1
 ---
 
-The AgentCore adapter manages six resource types across a multi-phase apply pipeline. This page explains the ordering, the reasons behind it, and the behaviours you should expect during deployment, updates, and teardown.
+The AgentCore adapter manages seven resource types across a multi-phase apply pipeline. This page explains the ordering, the reasons behind it, and the behaviours you should expect during deployment, updates, and teardown.
 
 ## Resource types
 
@@ -16,6 +16,7 @@ The AgentCore adapter manages six resource types across a multi-phase apply pipe
 | `agent_runtime` | AgentCore Runtime | One runtime per agent member (multi-agent) or one per pack (single-agent) |
 | `a2a_endpoint` | Logical resource | No AWS API call -- discovery is via env var injection |
 | `evaluator` | Bedrock AgentCore Evaluator | LLM-as-a-Judge evaluator (only for `llm_as_judge` type evals) |
+| `online_eval_config` | Bedrock Online Evaluation Config | Wires evaluators to agent traces via CloudWatch |
 
 ## Apply order
 
@@ -29,6 +30,7 @@ Step 3     Agent Runtimes
 Post-step  A2A Discovery (env var injection on entry agent)
 Step 4     A2A Wiring
 Step 5     Evaluators
+Step 6     Online Evaluation Config
 ```
 
 ### Why this order matters
@@ -43,23 +45,26 @@ Step 5     Evaluators
 
 5. **A2A wiring after runtimes.** The A2A wiring resources are logical -- no separate AWS API call is made. They exist in state so that `Destroy` and `Status` can track the relationship. They are only created for multi-agent packs.
 
-6. **Evaluators last.** Evaluators have no dependencies on other resources and no other resource depends on them, so they run at the end. Only `llm_as_judge` type evals create AWS resources via `CreateEvaluator`; other eval types (regex, contains, etc.) are local-only and are filtered out during plan and apply.
+6. **Evaluators after A2A.** Only `llm_as_judge` type evals create AWS resources via `CreateEvaluator`; other eval types (regex, contains, etc.) are local-only and are filtered out during plan and apply.
+
+7. **Online evaluation config last.** The online evaluation config references evaluator IDs, so it must run after evaluators. It creates a single `OnlineEvaluationConfig` that wires all successfully created evaluators to agent runtime traces via CloudWatch logs, enabling the evaluators to actually process traces.
 
 ### Progress tracking
 
-The five numbered steps divide the progress bar into equal 20% segments. Within each segment, progress advances proportionally to the number of resources in that phase. The memory pre-step and A2A discovery post-step report progress at fixed positions (0% and 50% respectively).
+The six numbered steps divide the progress bar into equal ~17% segments. Within each segment, progress advances proportionally to the number of resources in that phase. The memory pre-step and A2A discovery post-step report progress at fixed positions (0% and 50% respectively).
 
 ## Destroy order
 
 Destroy reverses the apply order. Resources are grouped by type and deleted in this sequence:
 
 ```
-1. cedar_policy    (policy + engine per prompt)
-2. evaluator       (delete via DeleteEvaluator)
-3. a2a_endpoint    (logical -- skip in practice)
-4. agent_runtime   (delete via DeleteAgentRuntime)
-5. tool_gateway    (delete via DeleteGateway)
-6. memory          (delete via DeleteMemory)
+1. online_eval_config  (delete via DeleteOnlineEvaluationConfig)
+2. cedar_policy        (policy + engine per prompt)
+3. evaluator           (delete via DeleteEvaluator)
+4. a2a_endpoint        (logical -- skip in practice)
+5. agent_runtime       (delete via DeleteAgentRuntime)
+6. tool_gateway        (delete via DeleteGateway)
+7. memory              (delete via DeleteMemory)
 ```
 
 The adapter also handles resources whose type does not appear in the standard ordering. These are cleaned up in a final pass after the ordered groups.
@@ -84,7 +89,7 @@ A2A endpoints appear in state so that `Status` can report on them (they always r
 
 ## Polling behaviour
 
-Four resource types require polling after creation or update:
+Five resource types require polling after creation or update:
 
 | Resource | Status field | Ready state | Terminal failure states |
 |----------|-------------|-------------|------------------------|
@@ -92,6 +97,7 @@ Four resource types require polling after creation or update:
 | Gateway | `GatewayStatus` | `READY` | `FAILED` |
 | Policy Engine | `PolicyEngineStatus` | `ACTIVE` | Any state other than `CREATING` or `ACTIVE` |
 | Evaluator | `EvaluatorStatus` | `ACTIVE` | `CREATE_FAILED`, `UPDATE_FAILED` |
+| Online Eval Config | `OnlineEvaluationConfigStatus` | `ACTIVE` | `CREATE_FAILED`, `UPDATE_FAILED` |
 
 Polling uses a fixed interval of **5 seconds** with a maximum of **60 attempts**, giving a timeout window of approximately **5 minutes**. If the resource enters a terminal failure state, polling stops immediately and returns the failure reason (when available from the API response). If the resource is still in a transitional state (`CREATING`, `UPDATING`, `DELETING`) after 60 attempts, the adapter returns a timeout error.
 

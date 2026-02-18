@@ -325,6 +325,131 @@ func (c *realAWSClient) waitForEvaluatorReady(ctx context.Context, id string) er
 	return fmt.Errorf("evaluator %q did not become active after %d attempts", id, maxPollAttempts)
 }
 
+// defaultSamplingPercentage is the default sampling percentage for online
+// evaluation configs when not specified in eval params.
+const defaultSamplingPercentage = 100.0
+
+// defaultLogGroupPrefix is the CloudWatch log group prefix for AgentCore traces.
+const defaultLogGroupPrefix = "/aws/bedrock/agentcore/"
+
+// CreateOnlineEvalConfig provisions an online evaluation config that wires
+// evaluators to agent runtime traces via CloudWatch logs.
+func (c *realAWSClient) CreateOnlineEvalConfig(
+	ctx context.Context, name string, cfg *Config,
+) (string, error) {
+	logGroup := resolveLogGroup(cfg)
+	packID := cfg.ResourceTags[TagKeyPackID]
+
+	evalRefs := buildEvaluatorReferences(cfg.EvalARNs)
+	if len(evalRefs) == 0 {
+		return "", fmt.Errorf("CreateOnlineEvalConfig %q: no evaluator ARNs available", name)
+	}
+
+	samplingPct := resolveSamplingPercentage(cfg)
+
+	input := &bedrockagentcorecontrol.CreateOnlineEvaluationConfigInput{
+		OnlineEvaluationConfigName: aws.String(name),
+		EvaluationExecutionRoleArn: aws.String(cfg.RuntimeRoleARN),
+		EnableOnCreate:             aws.Bool(true),
+		DataSourceConfig: &types.DataSourceConfigMemberCloudWatchLogs{
+			Value: types.CloudWatchLogsInputConfig{
+				LogGroupNames: []string{logGroup},
+				ServiceNames:  []string{packID},
+			},
+		},
+		Evaluators: evalRefs,
+		Rule: &types.Rule{
+			SamplingConfig: &types.SamplingConfig{
+				SamplingPercentage: aws.Float64(samplingPct),
+			},
+		},
+	}
+	if cfg.ResourceTags != nil {
+		input.Tags = cfg.ResourceTags
+	}
+
+	out, err := c.client.CreateOnlineEvaluationConfig(ctx, input)
+	if err != nil {
+		return "", fmt.Errorf("CreateOnlineEvaluationConfig %q: %w", name, err)
+	}
+
+	if err := c.waitForOnlineEvalConfigReady(
+		ctx, aws.ToString(out.OnlineEvaluationConfigId),
+	); err != nil {
+		return aws.ToString(out.OnlineEvaluationConfigArn),
+			fmt.Errorf("online eval config %q created but not active: %w", name, err)
+	}
+
+	return aws.ToString(out.OnlineEvaluationConfigArn), nil
+}
+
+// resolveLogGroup returns the CloudWatch log group for online eval config.
+func resolveLogGroup(cfg *Config) string {
+	if cfg.Observability != nil && cfg.Observability.CloudWatchLogGroup != "" {
+		return cfg.Observability.CloudWatchLogGroup
+	}
+	return defaultLogGroupPrefix + cfg.ResourceTags[TagKeyPackID]
+}
+
+// buildEvaluatorReferences converts evaluator ARNs into SDK EvaluatorReference values.
+func buildEvaluatorReferences(evalARNs map[string]string) []types.EvaluatorReference {
+	refs := make([]types.EvaluatorReference, 0, len(evalARNs))
+	for _, arn := range evalARNs {
+		evalID := extractResourceID(arn, "evaluator")
+		if evalID == "" {
+			continue
+		}
+		refs = append(refs, &types.EvaluatorReferenceMemberEvaluatorId{
+			Value: evalID,
+		})
+	}
+	return refs
+}
+
+// resolveSamplingPercentage extracts the sampling percentage from eval params,
+// defaulting to 100%.
+func resolveSamplingPercentage(cfg *Config) float64 {
+	for _, def := range cfg.EvalDefs {
+		if v, ok := def.Params["sample_percentage"]; ok {
+			if pct, ok := v.(float64); ok && pct > 0 {
+				return pct
+			}
+		}
+	}
+	return defaultSamplingPercentage
+}
+
+// waitForOnlineEvalConfigReady polls GetOnlineEvaluationConfig until ACTIVE
+// or a terminal failure state.
+func (c *realAWSClient) waitForOnlineEvalConfigReady(ctx context.Context, id string) error {
+	for i := 0; i < maxPollAttempts; i++ {
+		out, err := c.client.GetOnlineEvaluationConfig(ctx,
+			&bedrockagentcorecontrol.GetOnlineEvaluationConfigInput{
+				OnlineEvaluationConfigId: aws.String(id),
+			})
+		if err != nil {
+			return fmt.Errorf("polling online eval config %q: %w", id, err)
+		}
+		switch out.Status {
+		case types.OnlineEvaluationConfigStatusActive:
+			return nil
+		case types.OnlineEvaluationConfigStatusCreateFailed,
+			types.OnlineEvaluationConfigStatusUpdateFailed:
+			reason := ""
+			if out.FailureReason != nil {
+				reason = ": " + *out.FailureReason
+			}
+			return fmt.Errorf("online eval config %q entered status %s%s", id, out.Status, reason)
+		case types.OnlineEvaluationConfigStatusCreating,
+			types.OnlineEvaluationConfigStatusUpdating,
+			types.OnlineEvaluationConfigStatusDeleting:
+			// Transitional — keep polling.
+		}
+		time.Sleep(pollInterval)
+	}
+	return fmt.Errorf("online eval config %q did not become active after %d attempts", id, maxPollAttempts)
+}
+
 // buildAuthorizerConfig returns the SDK AuthorizerConfiguration for the
 // given config, or nil if no auth is configured (or IAM mode is used).
 func buildAuthorizerConfig(cfg *Config) types.AuthorizerConfiguration {
@@ -477,6 +602,8 @@ func (c *realAWSClient) DeleteResource(ctx context.Context, res ResourceState) e
 		return nil
 	case ResTypeEvaluator:
 		return c.deleteEvaluator(ctx, res)
+	case ResTypeOnlineEvalConfig:
+		return c.deleteOnlineEvalConfig(ctx, res)
 	case ResTypeCedarPolicy:
 		return c.deleteCedarPolicy(ctx, res)
 	default:
@@ -552,6 +679,21 @@ func (c *realAWSClient) deleteCedarPolicy(ctx context.Context, res ResourceState
 	return nil
 }
 
+func (c *realAWSClient) deleteOnlineEvalConfig(ctx context.Context, res ResourceState) error {
+	id := extractResourceID(res.ARN, "online-evaluation-config")
+	if id == "" {
+		id = res.Name
+	}
+	_, err := c.client.DeleteOnlineEvaluationConfig(ctx,
+		&bedrockagentcorecontrol.DeleteOnlineEvaluationConfigInput{
+			OnlineEvaluationConfigId: aws.String(id),
+		})
+	if err != nil && !isNotFound(err) {
+		return fmt.Errorf("DeleteOnlineEvaluationConfig %q: %w", res.Name, err)
+	}
+	return nil
+}
+
 func (c *realAWSClient) deleteEvaluator(ctx context.Context, res ResourceState) error {
 	id := extractResourceID(res.ARN, "evaluator")
 	if id == "" {
@@ -581,6 +723,8 @@ func (c *realAWSClient) CheckResource(ctx context.Context, res ResourceState) (s
 		return StatusHealthy, nil
 	case ResTypeEvaluator:
 		return c.checkEvaluator(ctx, res)
+	case ResTypeOnlineEvalConfig:
+		return c.checkOnlineEvalConfig(ctx, res)
 	case ResTypeCedarPolicy:
 		return c.checkCedarPolicy(ctx, res)
 	default:
@@ -663,6 +807,27 @@ func (c *realAWSClient) checkCedarPolicy(ctx context.Context, res ResourceState)
 		return StatusUnhealthy, fmt.Errorf("GetPolicyEngine %q: %w", res.Name, err)
 	}
 	if out.Status == types.PolicyEngineStatusActive {
+		return StatusHealthy, nil
+	}
+	return StatusUnhealthy, nil
+}
+
+func (c *realAWSClient) checkOnlineEvalConfig(ctx context.Context, res ResourceState) (string, error) {
+	id := extractResourceID(res.ARN, "online-evaluation-config")
+	if id == "" {
+		id = res.Name
+	}
+	out, err := c.client.GetOnlineEvaluationConfig(ctx,
+		&bedrockagentcorecontrol.GetOnlineEvaluationConfigInput{
+			OnlineEvaluationConfigId: aws.String(id),
+		})
+	if err != nil {
+		if isNotFound(err) {
+			return StatusMissing, nil
+		}
+		return StatusUnhealthy, fmt.Errorf("GetOnlineEvaluationConfig %q: %w", res.Name, err)
+	}
+	if out.Status == types.OnlineEvaluationConfigStatusActive {
 		return StatusHealthy, nil
 	}
 	return StatusUnhealthy, nil

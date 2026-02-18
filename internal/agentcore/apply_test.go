@@ -204,6 +204,13 @@ func (c *failingAWSClient) CreateEvaluator(ctx context.Context, name string, cfg
 	return c.simulatedAWSClient.CreateEvaluator(ctx, name, cfg)
 }
 
+func (c *failingAWSClient) CreateOnlineEvalConfig(ctx context.Context, name string, cfg *Config) (string, error) {
+	if c.failOn["online_eval_config"] {
+		return "", fmt.Errorf("simulated online eval config failure for %s", name)
+	}
+	return c.simulatedAWSClient.CreateOnlineEvalConfig(ctx, name, cfg)
+}
+
 func (c *failingAWSClient) CreateMemory(ctx context.Context, name string, cfg *Config) (string, error) {
 	if c.failOn["memory"] {
 		return "", fmt.Errorf("simulated memory creation failure for %s", name)
@@ -427,33 +434,46 @@ func TestApply_MultiAgentWithEvals(t *testing.T) {
 		}
 	}
 
-	// 2 runtimes + 2 a2a + 2 evaluators = 6 (no tools in this pack).
-	if len(resourceTypes) != 6 {
-		t.Fatalf("expected 6 resource events, got %d: %v", len(resourceTypes), resourceTypes)
+	// 2 runtimes + 2 a2a + 2 evaluators + 1 online_eval_config = 7 (no tools in this pack).
+	if len(resourceTypes) != 7 {
+		t.Fatalf("expected 7 resource events, got %d: %v", len(resourceTypes), resourceTypes)
 	}
 
-	// Evaluators should come last.
+	// Evaluators should come after a2a, online_eval_config after evaluators.
 	lastA2A := -1
 	firstEval := len(resourceTypes)
+	lastEval := -1
+	firstOEC := len(resourceTypes)
 	for i, rt := range resourceTypes {
 		if rt == "a2a_endpoint" && i > lastA2A {
 			lastA2A = i
 		}
-		if rt == "evaluator" && i < firstEval {
-			firstEval = i
+		if rt == "evaluator" {
+			if i < firstEval {
+				firstEval = i
+			}
+			if i > lastEval {
+				lastEval = i
+			}
+		}
+		if rt == "online_eval_config" && i < firstOEC {
+			firstOEC = i
 		}
 	}
 	if lastA2A >= firstEval {
 		t.Errorf("a2a_endpoint should come before evaluator: %v", resourceTypes)
 	}
+	if lastEval >= firstOEC {
+		t.Errorf("evaluator should come before online_eval_config: %v", resourceTypes)
+	}
 
-	// State should have all 6.
+	// State should have all 7.
 	var state AdapterState
 	if err := json.Unmarshal([]byte(stateStr), &state); err != nil {
 		t.Fatalf("failed to unmarshal state: %v", err)
 	}
-	if len(state.Resources) != 6 {
-		t.Errorf("expected 6 resources in state, got %d", len(state.Resources))
+	if len(state.Resources) != 7 {
+		t.Errorf("expected 7 resources in state, got %d", len(state.Resources))
 	}
 }
 
@@ -978,6 +998,79 @@ func TestApply_EvalFailure(t *testing.T) {
 		if r.Type == "evaluator" && r.Status != "failed" {
 			t.Errorf("evaluator %q status = %q, want failed", r.Name, r.Status)
 		}
+	}
+}
+
+func TestApply_NoEvals_NoOnlineEvalConfig(t *testing.T) {
+	provider := newSimulatedProvider()
+	req := &deploy.PlanRequest{
+		PackJSON:     singleAgentPack(),
+		DeployConfig: validConfig(),
+	}
+
+	events, _, err := collectEvents(t, provider, req)
+	if err != nil {
+		t.Fatalf("Apply returned error: %v", err)
+	}
+
+	for _, ev := range events {
+		if ev.Type == "resource" && ev.Resource != nil &&
+			ev.Resource.Type == ResTypeOnlineEvalConfig {
+			t.Error("should not have online_eval_config when no evals exist")
+		}
+	}
+}
+
+func TestApply_OnlineEvalConfigFailure_ContinuesApply(t *testing.T) {
+	sim := newSimulatedProvider()
+	provider := &Provider{
+		awsClientFunc: func(_ context.Context, cfg *Config) (awsClient, error) {
+			return &failingAWSClient{
+				simulatedAWSClient: *newSimulatedAWSClient(cfg.Region),
+				failOn:             map[string]bool{"online_eval_config": true},
+			}, nil
+		},
+		destroyerFunc: sim.destroyerFunc,
+		checkerFunc:   sim.checkerFunc,
+	}
+
+	req := &deploy.PlanRequest{
+		PackJSON:     multiAgentPackWithEvals(),
+		DeployConfig: validConfig(),
+	}
+
+	events, stateStr, err := collectEvents(t, provider, req)
+	if err == nil {
+		t.Fatal("expected error for online_eval_config failure")
+	}
+
+	// Evaluators should have succeeded; online_eval_config should have failed.
+	var evalCreated bool
+	for _, ev := range events {
+		if ev.Type == "resource" && ev.Resource != nil &&
+			ev.Resource.Type == ResTypeEvaluator && ev.Resource.Status == "created" {
+			evalCreated = true
+		}
+	}
+	if !evalCreated {
+		t.Error("expected evaluator resources to be created")
+	}
+
+	var state AdapterState
+	if err := json.Unmarshal([]byte(stateStr), &state); err != nil {
+		t.Fatalf("failed to unmarshal state: %v", err)
+	}
+	var oecFailed bool
+	for _, r := range state.Resources {
+		if r.Type == ResTypeOnlineEvalConfig {
+			if r.Status != "failed" {
+				t.Errorf("online_eval_config status = %q, want failed", r.Status)
+			}
+			oecFailed = true
+		}
+	}
+	if !oecFailed {
+		t.Error("expected online_eval_config resource with status=failed in state")
 	}
 }
 
@@ -1910,6 +2003,12 @@ func (c *trackingAWSClient) UpdateRuntime(
 	return c.simulatedAWSClient.UpdateRuntime(ctx, arn, name, cfg)
 }
 
+func (c *trackingAWSClient) CreateOnlineEvalConfig(
+	ctx context.Context, name string, cfg *Config,
+) (string, error) {
+	return c.simulatedAWSClient.CreateOnlineEvalConfig(ctx, name, cfg)
+}
+
 func (c *trackingAWSClient) CreatePolicyEngine(
 	ctx context.Context, name string, cfg *Config,
 ) (string, string, error) {
@@ -1952,6 +2051,11 @@ func (c *tagCapturingClient) CreateGatewayTool(_ context.Context, name string, c
 func (c *tagCapturingClient) CreateMemory(_ context.Context, name string, cfg *Config) (string, error) {
 	c.capturedTags = append(c.capturedTags, copyTags(cfg.ResourceTags))
 	return c.simulatedAWSClient.CreateMemory(nil, name, cfg)
+}
+
+func (c *tagCapturingClient) CreateOnlineEvalConfig(_ context.Context, name string, cfg *Config) (string, error) {
+	c.capturedTags = append(c.capturedTags, copyTags(cfg.ResourceTags))
+	return c.simulatedAWSClient.CreateOnlineEvalConfig(nil, name, cfg)
 }
 
 func (c *tagCapturingClient) CreatePolicyEngine(

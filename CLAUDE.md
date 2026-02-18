@@ -132,7 +132,7 @@ This is a **deploy adapter** that plugs into PromptKit's deploy framework via JS
 ### Interfaces
 
 ```
-awsClient           — Create resources (runtime, gateway, a2a, evaluator)
+awsClient           — Create resources (runtime, gateway, a2a, evaluator, online_eval_config)
 resourceDestroyer   — Delete resources (reverse dependency order)
 resourceChecker     — Health check resources (healthy/unhealthy/missing)
 ```
@@ -141,11 +141,13 @@ All three are implemented by `realAWSClient` for production and by simulated/fai
 
 ### Deploy Phases (Apply)
 
-1. **Tools** (0-25%): `CreateGatewayTool` for each pack tool (lazy parent gateway)
-2. **Runtimes** (25-50%): `CreateRuntime` per agent member (polls until READY)
-3. **A2A** (50-75%): `CreateA2AWiring` per agent (logical resource for now)
-4. **Evaluators** (75-100%): `CreateEvaluator` per eval (placeholder until SDK ships)
+1. **Tools** (0-17%): `CreateGatewayTool` for each pack tool (lazy parent gateway)
+2. **Policies** (17-33%): `CreatePolicyEngine` + `CreateCedarPolicy` per prompt with validators
+3. **Runtimes** (33-50%): `CreateRuntime` per agent member (polls until READY)
+4. **A2A** (50-67%): `CreateA2AWiring` per agent (logical resource)
+5. **Evaluators** (67-83%): `CreateEvaluator` per eval (`llm_as_judge` only)
+6. **Online Eval Config** (83-100%): `CreateOnlineEvaluationConfig` (wires evaluators to traces)
 
 ### Destroy Order (reverse)
 
-evaluator → a2a_endpoint → agent_runtime → tool_gateway
+online_eval_config → cedar_policy → evaluator → a2a_endpoint → agent_runtime → tool_gateway → memory

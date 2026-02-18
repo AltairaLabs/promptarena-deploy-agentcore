@@ -4,7 +4,7 @@ sidebar:
   order: 2
 ---
 
-The AgentCore adapter manages six resource types. Each resource has a constant name used in state serialization, a mapping to the PromptPack concept it represents, and defined create/update/delete/health-check behavior.
+The AgentCore adapter manages seven resource types. Each resource has a constant name used in state serialization, a mapping to the PromptPack concept it represents, and defined create/update/delete/health-check behavior.
 
 ## Resource type summary
 
@@ -16,6 +16,7 @@ The AgentCore adapter manages six resource types. Each resource has a constant n
 | `ResTypeAgentRuntime` | `agent_runtime` | Agent members (or pack ID) | Yes | Yes | Yes | Status READY |
 | `ResTypeA2AEndpoint` | `a2a_endpoint` | Multi-agent wiring | Yes | No | No-op | Always healthy |
 | `ResTypeEvaluator` | `evaluator` | Pack evals (`llm_as_judge` only) | Yes | No | Yes | Status ACTIVE |
+| `ResTypeOnlineEvalConfig` | `online_eval_config` | Wires evaluators to agent traces | Yes | No | Yes | Status ACTIVE |
 
 ## Resource status values
 
@@ -266,28 +267,68 @@ Not supported.
 
 ---
 
+## `online_eval_config`
+
+**Constant:** `ResTypeOnlineEvalConfig`
+**String value:** `"online_eval_config"`
+
+### Pack mapping
+
+One `online_eval_config` resource is created per pack when the pack has any `llm_as_judge` evals. The resource name is `{pack_id}_online_eval`. It wires the evaluators created in the previous phase to agent runtime traces via CloudWatch logs.
+
+### AWS API calls
+
+| Operation | API Call | Details |
+|-----------|----------|---------|
+| Create | `CreateOnlineEvaluationConfig` | Creates an online evaluation config referencing all evaluator IDs, a CloudWatch data source, and a sampling rule. Polls until status is `ACTIVE`. |
+| Delete | `DeleteOnlineEvaluationConfig` | Deletes the config by ID. Tolerates NotFound (already deleted). |
+
+The CloudWatch log group is resolved from `observability.cloudwatch_log_group` if configured, otherwise defaults to `/aws/bedrock/agentcore/{pack_id}`. The sampling percentage defaults to 100% but can be overridden via the `sample_percentage` eval param.
+
+### Health check
+
+Calls `GetOnlineEvaluationConfig` and checks that `Status` equals `ACTIVE`.
+
+| Result | Condition |
+|--------|-----------|
+| `healthy` | Status is `ACTIVE` |
+| `unhealthy` | Status is any other value, or API error |
+| `missing` | NotFound error |
+
+### Polling behavior
+
+After creation, the adapter polls `GetOnlineEvaluationConfig` every 5 seconds for up to 60 attempts (5 minutes). Terminal failure states (`CREATE_FAILED`, `UPDATE_FAILED`) abort polling immediately.
+
+### Update support
+
+Not supported.
+
+---
+
 ## Deploy phase ordering
 
-Resources are created during Apply in dependency order across five phases:
+Resources are created during Apply in dependency order across six phases:
 
 | Phase | Step Index | Resource Type | Progress Range |
 |-------|-----------|---------------|----------------|
 | Pre-step | -- | `memory` | 0% |
-| 1 | 0 | `tool_gateway` | 0--20% |
-| 2 | 1 | `cedar_policy` | 20--40% |
-| 3 | 2 | `agent_runtime` | 40--60% |
-| 4 | 3 | `a2a_endpoint` | 60--80% |
-| 5 | 4 | `evaluator` | 80--100% |
+| 1 | 0 | `tool_gateway` | 0--17% |
+| 2 | 1 | `cedar_policy` | 17--33% |
+| 3 | 2 | `agent_runtime` | 33--50% |
+| 4 | 3 | `a2a_endpoint` | 50--67% |
+| 5 | 4 | `evaluator` | 67--83% |
+| 6 | 5 | `online_eval_config` | 83--100% |
 
 ## Destroy ordering
 
 Resources are destroyed in reverse dependency order:
 
-1. `cedar_policy`
-2. `evaluator`
-3. `a2a_endpoint`
-4. `agent_runtime`
-5. `tool_gateway`
-6. `memory`
+1. `online_eval_config`
+2. `cedar_policy`
+3. `evaluator`
+4. `a2a_endpoint`
+5. `agent_runtime`
+6. `tool_gateway`
+7. `memory`
 
 Any resource types not in this list are destroyed last, after the ordered groups.
