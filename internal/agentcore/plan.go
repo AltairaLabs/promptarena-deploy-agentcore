@@ -88,6 +88,7 @@ func generateDesiredResources(pack *prompt.Pack, cfg *Config) []deploy.ResourceC
 
 	desired = append(desired, generateAgentResources(pack)...)
 	desired = append(desired, generateEvalResources(pack)...)
+	desired = append(desired, generateOnlineEvalConfigResources(pack)...)
 
 	return desired
 }
@@ -149,6 +150,23 @@ func generateEvalResources(pack *prompt.Pack) []deploy.ResourceChange {
 		})
 	}
 	return resources
+}
+
+// generateOnlineEvalConfigResources returns a single online_eval_config resource
+// if the pack has any llm_as_judge evals. The config wires evaluators to agent
+// runtime traces via CloudWatch.
+func generateOnlineEvalConfigResources(pack *prompt.Pack) []deploy.ResourceChange {
+	for _, ev := range pack.Evals {
+		if ev.Type == evalTypeLLMAsJudge {
+			return []deploy.ResourceChange{{
+				Type:   ResTypeOnlineEvalConfig,
+				Name:   pack.ID + "_online_eval",
+				Action: deploy.ActionCreate,
+				Detail: fmt.Sprintf("Create online evaluation config for %s", pack.ID),
+			}}
+		}
+	}
+	return nil
 }
 
 // diffResources compares desired resources against prior state and assigns

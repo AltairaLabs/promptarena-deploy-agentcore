@@ -174,9 +174,9 @@ func TestPlan_MultiAgent_WithToolsAndEvals(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// 2 agent_runtime + 2 a2a_endpoint + 1 gateway + 1 tool_gateway (tool) + 1 evaluator = 7.
-	if len(resp.Changes) != 7 {
-		t.Fatalf("expected 7 changes, got %d: %+v", len(resp.Changes), resp.Changes)
+	// 2 agent_runtime + 2 a2a_endpoint + 1 gateway + 1 tool_gateway (tool) + 1 evaluator + 1 online_eval_config = 8.
+	if len(resp.Changes) != 8 {
+		t.Fatalf("expected 8 changes, got %d: %+v", len(resp.Changes), resp.Changes)
 	}
 
 	typeCounts := map[string]int{}
@@ -188,6 +188,9 @@ func TestPlan_MultiAgent_WithToolsAndEvals(t *testing.T) {
 	}
 	if typeCounts["evaluator"] != 1 {
 		t.Errorf("expected 1 evaluator, got %d", typeCounts["evaluator"])
+	}
+	if typeCounts["online_eval_config"] != 1 {
+		t.Errorf("expected 1 online_eval_config, got %d", typeCounts["online_eval_config"])
 	}
 }
 

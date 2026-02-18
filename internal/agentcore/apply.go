@@ -14,17 +14,22 @@ import (
 	"github.com/AltairaLabs/PromptKit/runtime/prompt"
 )
 
+// numApplyPhases is the total number of apply phases for progress tracking.
+const numApplyPhases = 6
+
 // progressStepSize is the fraction of the overall progress bar each of the
-// five apply phases occupies (tools, policies, runtimes, a2a, evaluators).
-const progressStepSize = 0.20
+// six apply phases occupies (tools, policies, runtimes, a2a, evaluators,
+// online_eval_config).
+const progressStepSize = 1.0 / numApplyPhases
 
 // Apply phase step indices for progress tracking.
 const (
-	stepTools      = 0
-	stepPolicies   = 1
-	stepRuntimes   = 2
-	stepA2A        = 3
-	stepEvaluators = 4
+	stepTools         = 0
+	stepPolicies      = 1
+	stepRuntimes      = 2
+	stepA2A           = 3
+	stepEvaluators    = 4
+	stepOnlineEvalCfg = 5
 )
 
 // progressA2ADiscovery is the progress percentage for the A2A discovery step.
@@ -258,6 +263,18 @@ func (p *Provider) executeApplyPhases(
 	if len(evalNames) > 0 {
 		phase = applyPhase(ctx, ac.reporter, ac.client.CreateEvaluator, nil, ac.cfg,
 			evalNames, ResTypeEvaluator, stepEvaluators, ac.priorMap)
+		resources, applyErr, cbErr = mergePhase(resources, applyErr, phase)
+		if cbErr != nil {
+			return resources, cbErr
+		}
+	}
+
+	// Step 6 — Online Evaluation Config (wires evaluators to traces).
+	ac.cfg.EvalARNs = collectEvalARNs(resources)
+	if len(ac.cfg.EvalARNs) > 0 {
+		oecName := ac.pack.ID + "_online_eval"
+		phase = applyPhase(ctx, ac.reporter, ac.client.CreateOnlineEvalConfig, nil, ac.cfg,
+			[]string{oecName}, ResTypeOnlineEvalConfig, stepOnlineEvalCfg, ac.priorMap)
 		resources, applyErr, cbErr = mergePhase(resources, applyErr, phase)
 		if cbErr != nil {
 			return resources, cbErr
@@ -668,6 +685,18 @@ func buildEvalDefs(pack *prompt.Pack) map[string]evals.EvalDef {
 		defs[name] = ev
 	}
 	return defs
+}
+
+// collectEvalARNs gathers evaluator resource ARNs from the apply results.
+// Only resources with status "created" are included.
+func collectEvalARNs(resources []ResourceState) map[string]string {
+	arns := make(map[string]string)
+	for _, r := range resources {
+		if r.Type == ResTypeEvaluator && r.Status == ResStatusCreated && r.ARN != "" {
+			arns[r.Name] = r.ARN
+		}
+	}
+	return arns
 }
 
 // combineErrors joins two errors, preferring the first non-nil.

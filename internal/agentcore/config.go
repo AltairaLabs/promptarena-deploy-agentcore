@@ -37,6 +37,10 @@ type Config struct {
 	// EvalDefs is populated at apply-time from pack evals. It maps
 	// evaluator resource names to their definitions. NOT serialized.
 	EvalDefs map[string]evals.EvalDef `json:"-"`
+
+	// EvalARNs maps evaluator resource names to their ARNs, populated
+	// at apply-time after the evaluator phase. NOT serialized.
+	EvalARNs map[string]string `json:"-"`
 }
 
 // AgentOverride holds per-agent configuration overrides.

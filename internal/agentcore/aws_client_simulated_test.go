@@ -39,6 +39,10 @@ func (c *simulatedAWSClient) CreateEvaluator(_ context.Context, name string, _ *
 	return fmt.Sprintf("arn:aws:bedrock:%s:%s:evaluator/%s", c.region, c.accountID, name), nil
 }
 
+func (c *simulatedAWSClient) CreateOnlineEvalConfig(_ context.Context, name string, _ *Config) (string, error) {
+	return fmt.Sprintf("arn:aws:bedrock:%s:%s:online-evaluation-config/%s", c.region, c.accountID, name), nil
+}
+
 func (c *simulatedAWSClient) CreateMemory(_ context.Context, name string, _ *Config) (string, error) {
 	return fmt.Sprintf("arn:aws:bedrock:%s:%s:memory/%s", c.region, c.accountID, name), nil
 }
