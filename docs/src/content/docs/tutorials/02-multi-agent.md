@@ -446,9 +446,9 @@ A2A wiring resources represent the logical connections between agents. These dep
 
 ### Phase 6: Evaluators (80-100%)
 
-**Creates:** `evaluator` resources for each eval defined in the pack.
+**Creates:** `evaluator` resources for each `llm_as_judge` eval defined in the pack. Other eval types (regex, contains, etc.) are local-only and do not create AWS resources.
 
-Evaluators are created last because they may reference agent runtimes. If your pack defines evals with metrics, the adapter also injects `PROMPTPACK_METRICS_CONFIG` and `PROMPTPACK_DASHBOARD_CONFIG` environment variables into the runtimes.
+Evaluators are created last because they may reference agent runtimes. Each evaluator is provisioned via `CreateEvaluator` with LLM-as-a-Judge configuration (instructions, model, and rating scale from the eval's `params`), then polled until it reaches `ACTIVE` status. If your pack defines evals with metrics, the adapter also injects `PROMPTPACK_METRICS_CONFIG` and `PROMPTPACK_DASHBOARD_CONFIG` environment variables into the runtimes.
 
 ---
 

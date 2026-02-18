@@ -10,6 +10,7 @@ import (
 
 	"github.com/AltairaLabs/PromptKit/runtime/deploy"
 	"github.com/AltairaLabs/PromptKit/runtime/deploy/adaptersdk"
+	"github.com/AltairaLabs/PromptKit/runtime/evals"
 	"github.com/AltairaLabs/PromptKit/runtime/prompt"
 )
 
@@ -252,6 +253,7 @@ func (p *Provider) executeApplyPhases(
 	}
 
 	// Step 5 — Evaluators (no update support yet).
+	ac.cfg.EvalDefs = buildEvalDefs(ac.pack)
 	evalNames := evalResourceNames(ac.pack)
 	if len(evalNames) > 0 {
 		phase = applyPhase(ctx, ac.reporter, ac.client.CreateEvaluator, nil, ac.cfg,
@@ -568,10 +570,14 @@ func mergePhase(
 		phase.callbackErr
 }
 
-// evalResourceNames returns the list of evaluator names from the pack.
+// evalResourceNames returns the list of evaluator resource names from the pack,
+// filtered to only llm_as_judge type evals that create AWS resources.
 func evalResourceNames(pack *prompt.Pack) []string {
 	names := make([]string, 0, len(pack.Evals))
 	for i, ev := range pack.Evals {
+		if ev.Type != evalTypeLLMAsJudge {
+			continue
+		}
 		name := ev.ID
 		if name == "" {
 			name = fmt.Sprintf("eval_%d", i)
@@ -644,6 +650,24 @@ func createMemoryResource(
 	return &ResourceState{
 		Type: ResTypeMemory, Name: memName, ARN: arn, Status: "created",
 	}, nil
+}
+
+// buildEvalDefs builds the EvalDefs map from pack evals, keyed by
+// the same resource name that evalResourceNames generates. Only
+// llm_as_judge evals are included.
+func buildEvalDefs(pack *prompt.Pack) map[string]evals.EvalDef {
+	defs := make(map[string]evals.EvalDef)
+	for i, ev := range pack.Evals {
+		if ev.Type != evalTypeLLMAsJudge {
+			continue
+		}
+		name := ev.ID
+		if name == "" {
+			name = fmt.Sprintf("eval_%d", i)
+		}
+		defs[name] = ev
+	}
+	return defs
 }
 
 // combineErrors joins two errors, preferring the first non-nil.

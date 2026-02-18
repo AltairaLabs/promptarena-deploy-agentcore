@@ -6,6 +6,7 @@ import (
 	"log"
 	"time"
 
+	"github.com/AltairaLabs/PromptKit/runtime/evals"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awscfg "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockagentcorecontrol"
@@ -205,13 +206,123 @@ func (c *realAWSClient) CreateA2AWiring(
 	return fmt.Sprintf("arn:aws:bedrock:%s:a2a-endpoint/%s", c.cfg.Region, name), nil
 }
 
-// CreateEvaluator returns a placeholder ARN. The evaluator API is not yet
-// available in the SDK.
+// defaultEvalModel is the default Bedrock model ID used for LLM-as-a-Judge evaluators.
+const defaultEvalModel = "anthropic.claude-sonnet-4-20250514-v1:0"
+
+// defaultRatingScaleSize is the default number of levels in numerical rating scales.
+const defaultRatingScaleSize = 5
+
+// CreateEvaluator provisions an evaluator via the AWS API and polls until
+// it reaches ACTIVE status. The eval definition is looked up from cfg.EvalDefs.
 func (c *realAWSClient) CreateEvaluator(
-	_ context.Context, name string, _ *Config,
+	ctx context.Context, name string, cfg *Config,
 ) (string, error) {
-	log.Printf("agentcore: evaluator %q creation not yet supported by SDK; returning placeholder", name)
-	return fmt.Sprintf("arn:aws:bedrock:%s:evaluator/%s", c.cfg.Region, name), nil
+	evalDef, ok := cfg.EvalDefs[name]
+	if !ok {
+		return "", fmt.Errorf("CreateEvaluator %q: no eval definition found", name)
+	}
+
+	level := mapTriggerToLevel(evalDef.Trigger)
+	instructions := evalParamString(evalDef.Params, "instructions", "Evaluate the agent response quality.")
+	modelID := evalParamString(evalDef.Params, "model", defaultEvalModel)
+
+	input := &bedrockagentcorecontrol.CreateEvaluatorInput{
+		EvaluatorName: aws.String(name),
+		Level:         level,
+		EvaluatorConfig: &types.EvaluatorConfigMemberLlmAsAJudge{
+			Value: types.LlmAsAJudgeEvaluatorConfig{
+				Instructions: aws.String(instructions),
+				ModelConfig: &types.EvaluatorModelConfigMemberBedrockEvaluatorModelConfig{
+					Value: types.BedrockEvaluatorModelConfig{
+						ModelId: aws.String(modelID),
+					},
+				},
+				RatingScale: buildNumericalRatingScale(evalDef.Params),
+			},
+		},
+	}
+	if evalDef.Description != "" {
+		input.Description = aws.String(evalDef.Description)
+	}
+	if len(cfg.ResourceTags) > 0 {
+		input.Tags = cfg.ResourceTags
+	}
+
+	out, err := c.client.CreateEvaluator(ctx, input)
+	if err != nil {
+		return "", fmt.Errorf("CreateEvaluator %q: %w", name, err)
+	}
+
+	if err := c.waitForEvaluatorReady(ctx, aws.ToString(out.EvaluatorId)); err != nil {
+		return aws.ToString(out.EvaluatorArn),
+			fmt.Errorf("evaluator %q created but not active: %w", name, err)
+	}
+
+	return aws.ToString(out.EvaluatorArn), nil
+}
+
+// mapTriggerToLevel maps a PromptKit eval trigger to an SDK evaluator level.
+func mapTriggerToLevel(trigger evals.EvalTrigger) types.EvaluatorLevel {
+	switch trigger {
+	case evals.TriggerOnSessionComplete, evals.TriggerSampleSessions:
+		return types.EvaluatorLevelSession
+	case evals.TriggerEveryTurn, evals.TriggerSampleTurns:
+		return types.EvaluatorLevelTrace
+	}
+	return types.EvaluatorLevelTrace
+}
+
+// evalParamString extracts a string parameter with a default fallback.
+func evalParamString(params map[string]any, key, defaultVal string) string {
+	if v, ok := params[key]; ok {
+		if s, ok := v.(string); ok && s != "" {
+			return s
+		}
+	}
+	return defaultVal
+}
+
+// buildNumericalRatingScale builds a 1–N numerical rating scale from eval params.
+func buildNumericalRatingScale(params map[string]any) *types.RatingScaleMemberNumerical {
+	size := defaultRatingScaleSize
+	if v, ok := params["rating_scale_size"]; ok {
+		if n, ok := v.(float64); ok && n >= 2 {
+			size = int(n)
+		}
+	}
+	defs := make([]types.NumericalScaleDefinition, size)
+	for i := range size {
+		val := float64(i + 1)
+		defs[i] = types.NumericalScaleDefinition{
+			Value:      aws.Float64(val),
+			Label:      aws.String(fmt.Sprintf("Score %d", i+1)),
+			Definition: aws.String(fmt.Sprintf("Rating level %d of %d", i+1, size)),
+		}
+	}
+	return &types.RatingScaleMemberNumerical{Value: defs}
+}
+
+// waitForEvaluatorReady polls GetEvaluator until status is ACTIVE or a
+// terminal failure state.
+func (c *realAWSClient) waitForEvaluatorReady(ctx context.Context, id string) error {
+	for i := 0; i < maxPollAttempts; i++ {
+		out, err := c.client.GetEvaluator(ctx, &bedrockagentcorecontrol.GetEvaluatorInput{
+			EvaluatorId: aws.String(id),
+		})
+		if err != nil {
+			return fmt.Errorf("polling evaluator %q: %w", id, err)
+		}
+		switch out.Status {
+		case types.EvaluatorStatusActive:
+			return nil
+		case types.EvaluatorStatusCreateFailed, types.EvaluatorStatusUpdateFailed:
+			return fmt.Errorf("evaluator %q entered status %s", id, out.Status)
+		case types.EvaluatorStatusCreating, types.EvaluatorStatusUpdating, types.EvaluatorStatusDeleting:
+			// Transitional — keep polling.
+		}
+		time.Sleep(pollInterval)
+	}
+	return fmt.Errorf("evaluator %q did not become active after %d attempts", id, maxPollAttempts)
 }
 
 // buildAuthorizerConfig returns the SDK AuthorizerConfiguration for the
@@ -365,8 +476,7 @@ func (c *realAWSClient) DeleteResource(ctx context.Context, res ResourceState) e
 		log.Printf("agentcore: a2a_endpoint %q is logical; skipping delete", res.Name)
 		return nil
 	case ResTypeEvaluator:
-		log.Printf("agentcore: evaluator %q delete not yet supported; skipping", res.Name)
-		return nil
+		return c.deleteEvaluator(ctx, res)
 	case ResTypeCedarPolicy:
 		return c.deleteCedarPolicy(ctx, res)
 	default:
@@ -442,6 +552,20 @@ func (c *realAWSClient) deleteCedarPolicy(ctx context.Context, res ResourceState
 	return nil
 }
 
+func (c *realAWSClient) deleteEvaluator(ctx context.Context, res ResourceState) error {
+	id := extractResourceID(res.ARN, "evaluator")
+	if id == "" {
+		id = res.Name
+	}
+	_, err := c.client.DeleteEvaluator(ctx, &bedrockagentcorecontrol.DeleteEvaluatorInput{
+		EvaluatorId: aws.String(id),
+	})
+	if err != nil && !isNotFound(err) {
+		return fmt.Errorf("DeleteEvaluator %q: %w", res.Name, err)
+	}
+	return nil
+}
+
 // ---------- resourceChecker implementation ----------
 
 // CheckResource returns the health status of a single resource.
@@ -456,7 +580,7 @@ func (c *realAWSClient) CheckResource(ctx context.Context, res ResourceState) (s
 	case ResTypeA2AEndpoint:
 		return StatusHealthy, nil
 	case ResTypeEvaluator:
-		return StatusHealthy, nil
+		return c.checkEvaluator(ctx, res)
 	case ResTypeCedarPolicy:
 		return c.checkCedarPolicy(ctx, res)
 	default:
@@ -539,6 +663,26 @@ func (c *realAWSClient) checkCedarPolicy(ctx context.Context, res ResourceState)
 		return StatusUnhealthy, fmt.Errorf("GetPolicyEngine %q: %w", res.Name, err)
 	}
 	if out.Status == types.PolicyEngineStatusActive {
+		return StatusHealthy, nil
+	}
+	return StatusUnhealthy, nil
+}
+
+func (c *realAWSClient) checkEvaluator(ctx context.Context, res ResourceState) (string, error) {
+	id := extractResourceID(res.ARN, "evaluator")
+	if id == "" {
+		id = res.Name
+	}
+	out, err := c.client.GetEvaluator(ctx, &bedrockagentcorecontrol.GetEvaluatorInput{
+		EvaluatorId: aws.String(id),
+	})
+	if err != nil {
+		if isNotFound(err) {
+			return StatusMissing, nil
+		}
+		return StatusUnhealthy, fmt.Errorf("GetEvaluator %q: %w", res.Name, err)
+	}
+	if out.Status == types.EvaluatorStatusActive {
 		return StatusHealthy, nil
 	}
 	return StatusUnhealthy, nil

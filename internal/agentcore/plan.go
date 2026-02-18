@@ -130,10 +130,17 @@ func generateMultiAgentResources(pack *prompt.Pack) []deploy.ResourceChange {
 	return desired
 }
 
-// generateEvalResources returns evaluator resource changes.
+// evalTypeLLMAsJudge is the eval type that maps to the SDK's LLM-as-a-Judge
+// evaluator. Other eval types are local-only and don't create AWS resources.
+const evalTypeLLMAsJudge = "llm_as_judge"
+
+// generateEvalResources returns evaluator resource changes for llm_as_judge evals only.
 func generateEvalResources(pack *prompt.Pack) []deploy.ResourceChange {
 	var resources []deploy.ResourceChange
 	for _, ev := range pack.Evals {
+		if ev.Type != evalTypeLLMAsJudge {
+			continue
+		}
 		resources = append(resources, deploy.ResourceChange{
 			Type:   ResTypeEvaluator,
 			Name:   ev.ID + "_eval",

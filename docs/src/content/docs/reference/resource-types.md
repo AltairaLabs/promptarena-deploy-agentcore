@@ -15,7 +15,7 @@ The AgentCore adapter manages six resource types. Each resource has a constant n
 | `ResTypeCedarPolicy` | `cedar_policy` | Prompt validators / tool_policy | Yes | No | Yes | Engine ACTIVE |
 | `ResTypeAgentRuntime` | `agent_runtime` | Agent members (or pack ID) | Yes | Yes | Yes | Status READY |
 | `ResTypeA2AEndpoint` | `a2a_endpoint` | Multi-agent wiring | Yes | No | No-op | Always healthy |
-| `ResTypeEvaluator` | `evaluator` | Pack evals | Yes | No | No-op | Always healthy |
+| `ResTypeEvaluator` | `evaluator` | Pack evals (`llm_as_judge` only) | Yes | No | Yes | Status ACTIVE |
 
 ## Resource status values
 
@@ -227,20 +227,38 @@ Not supported.
 
 ### Pack mapping
 
-One `evaluator` resource is created per entry in `pack.Evals`. The resource name is the eval's `ID` field, or `eval_{index}` if the ID is empty.
+One `evaluator` resource is created per `llm_as_judge` eval in `pack.Evals`. Other eval types (regex, contains, etc.) are local-only and do not create AWS resources. The resource name is the eval's `ID` field, or `eval_{index}` if the ID is empty.
 
 ### AWS API calls
 
-This is a **placeholder resource**. The evaluator API is not yet available in the AWS SDK.
-
 | Operation | API Call | Details |
 |-----------|----------|---------|
-| Create | None | Returns a placeholder ARN: `arn:aws:bedrock:{region}:evaluator/{name}` |
-| Delete | No-op | Logged and skipped. |
+| Create | `CreateEvaluator` | Provisions an LLM-as-a-Judge evaluator with instructions, model config, and a numerical rating scale. Polls until status is `ACTIVE`. |
+| Delete | `DeleteEvaluator` | Deletes the evaluator by ID. Tolerates NotFound (already deleted). |
+
+The eval definition's `trigger` field maps to the SDK evaluator level: `every_turn` and `sample_turns` map to `TRACE`, while `on_session_complete` and `sample_sessions` map to `SESSION`.
+
+The `params` map supports the following keys:
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `instructions` | `"Evaluate the agent response quality."` | Evaluation instructions for the LLM judge. |
+| `model` | `anthropic.claude-sonnet-4-20250514-v1:0` | Bedrock model ID for evaluation. |
+| `rating_scale_size` | `5` | Number of levels in the numerical 1–N rating scale. |
 
 ### Health check
 
-Always returns `healthy`. No AWS API call is made.
+Calls `GetEvaluator` and checks that `Status` equals `ACTIVE`.
+
+| Result | Condition |
+|--------|-----------|
+| `healthy` | Status is `ACTIVE` |
+| `unhealthy` | Status is any other value, or API error |
+| `missing` | NotFound error |
+
+### Polling behavior
+
+After creation, the adapter polls `GetEvaluator` every 5 seconds for up to 60 attempts (5 minutes). Terminal failure states (`CREATE_FAILED`, `UPDATE_FAILED`) abort polling immediately.
 
 ### Update support
 

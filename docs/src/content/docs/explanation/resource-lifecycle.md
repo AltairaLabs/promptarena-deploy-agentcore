@@ -15,7 +15,7 @@ The AgentCore adapter manages six resource types across a multi-phase apply pipe
 | `cedar_policy` | Policy Engine + Cedar Policy | One engine and one policy per prompt with validators or tool_policy |
 | `agent_runtime` | AgentCore Runtime | One runtime per agent member (multi-agent) or one per pack (single-agent) |
 | `a2a_endpoint` | Logical resource | No AWS API call -- discovery is via env var injection |
-| `evaluator` | Placeholder | SDK not yet available; returns a synthetic ARN |
+| `evaluator` | Bedrock AgentCore Evaluator | LLM-as-a-Judge evaluator (only for `llm_as_judge` type evals) |
 
 ## Apply order
 
@@ -43,7 +43,7 @@ Step 5     Evaluators
 
 5. **A2A wiring after runtimes.** The A2A wiring resources are logical -- no separate AWS API call is made. They exist in state so that `Destroy` and `Status` can track the relationship. They are only created for multi-agent packs.
 
-6. **Evaluators last.** Evaluators have no dependencies on other resources and no other resource depends on them, so they run at the end. The evaluator API is not yet available in the SDK; the adapter returns a placeholder ARN (e.g. `arn:aws:bedrock:us-west-2:evaluator/eval-accuracy`).
+6. **Evaluators last.** Evaluators have no dependencies on other resources and no other resource depends on them, so they run at the end. Only `llm_as_judge` type evals create AWS resources via `CreateEvaluator`; other eval types (regex, contains, etc.) are local-only and are filtered out during plan and apply.
 
 ### Progress tracking
 
@@ -55,7 +55,7 @@ Destroy reverses the apply order. Resources are grouped by type and deleted in t
 
 ```
 1. cedar_policy    (policy + engine per prompt)
-2. evaluator       (placeholder -- skip in practice)
+2. evaluator       (delete via DeleteEvaluator)
 3. a2a_endpoint    (logical -- skip in practice)
 4. agent_runtime   (delete via DeleteAgentRuntime)
 5. tool_gateway    (delete via DeleteGateway)
@@ -70,29 +70,28 @@ Destroy continues on individual resource failures. A failed deletion is reported
 
 Only `agent_runtime` supports in-place updates. When the adapter detects a prior state entry for a runtime (same type and name), it calls `UpdateAgentRuntime` instead of `CreateAgentRuntime`. The update carries the same payload (role ARN, env vars, authorizer config) and polls until the runtime returns to READY status.
 
-All other resource types are create-only. If you change a tool gateway, policy, or evaluator configuration, you must destroy and redeploy. This is a limitation of the current AWS API surface -- most AgentCore control-plane resources do not expose update operations.
+All other resource types are create-only. If you change a tool gateway, policy, or evaluator configuration, you must destroy and redeploy.
 
 The adapter resolves create-vs-update per resource by looking up the resource key (`type + name`) in the prior state map. The prior state is the opaque JSON string returned by the previous `Apply` call and passed back through `PlanRequest.PriorState`.
 
-## Placeholder and logical resources
+## Logical resources
 
-Two resource types do not make real AWS API calls:
-
-- **Evaluators** return a synthetic ARN formatted as `arn:aws:bedrock:<region>:evaluator/<name>`. The adapter logs a message noting that evaluator creation is not yet supported by the SDK. When AWS ships the evaluator API, the adapter will replace the placeholder with a real `CreateEvaluator` call.
+One resource type does not make real AWS API calls:
 
 - **A2A endpoints** return a synthetic ARN formatted as `arn:aws:bedrock:<region>:a2a-endpoint/<name>`. The A2A wiring is expressed entirely through the `PROMPTPACK_AGENTS` env var injected on the entry agent runtime. No separate AWS resource is created for peer discovery.
 
-Both resource types appear in state so that `Status` can report on them (they always return `healthy`) and `Destroy` can track them (they are silently skipped during deletion).
+A2A endpoints appear in state so that `Status` can report on them (they always return `healthy`) and `Destroy` can track them (they are silently skipped during deletion).
 
 ## Polling behaviour
 
-Three resource types require polling after creation or update:
+Four resource types require polling after creation or update:
 
 | Resource | Status field | Ready state | Terminal failure states |
 |----------|-------------|-------------|------------------------|
 | Agent Runtime | `AgentRuntimeStatus` | `READY` | `CREATE_FAILED`, `UPDATE_FAILED` |
 | Gateway | `GatewayStatus` | `READY` | `FAILED` |
 | Policy Engine | `PolicyEngineStatus` | `ACTIVE` | Any state other than `CREATING` or `ACTIVE` |
+| Evaluator | `EvaluatorStatus` | `ACTIVE` | `CREATE_FAILED`, `UPDATE_FAILED` |
 
 Polling uses a fixed interval of **5 seconds** with a maximum of **60 attempts**, giving a timeout window of approximately **5 minutes**. If the resource enters a terminal failure state, polling stops immediately and returns the failure reason (when available from the API response). If the resource is still in a transitional state (`CREATING`, `UPDATING`, `DELETING`) after 60 attempts, the adapter returns a timeout error.
 
