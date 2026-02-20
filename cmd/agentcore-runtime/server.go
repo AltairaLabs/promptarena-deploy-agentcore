@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log/slog"
 	"net/http"
 
 	"github.com/AltairaLabs/PromptKit/runtime/a2a"
@@ -9,6 +10,8 @@ import (
 	"github.com/AltairaLabs/PromptKit/runtime/prompt/agentcard"
 	"github.com/AltairaLabs/PromptKit/runtime/statestore"
 	"github.com/AltairaLabs/PromptKit/sdk"
+
+	"github.com/AltairaLabs/promptarena-deploy-agentcore/internal/agentcore"
 )
 
 // resolveAgentName determines which agent/prompt to serve.
@@ -44,8 +47,7 @@ func buildSDKOptions(cfg *runtimeConfig) []sdk.Option {
 		opts = append(opts, sdk.WithBedrock(cfg.AWSRegion, "", ""))
 	}
 
-	// TODO(follow-up): replace with AgentCoreMemoryStore when data-plane SDK ships.
-	opts = append(opts, sdk.WithStateStore(statestore.NewMemoryStore()))
+	opts = append(opts, sdk.WithStateStore(buildStateStore(cfg)))
 
 	if len(cfg.AgentEndpoints) > 0 {
 		opts = append(opts, sdk.WithAgentEndpoints(&sdk.MapEndpointResolver{
@@ -54,6 +56,22 @@ func buildSDKOptions(cfg *runtimeConfig) []sdk.Option {
 	}
 
 	return opts
+}
+
+// buildStateStore creates the appropriate state store based on config.
+// If a memory ID and AWS region are configured, it uses the AgentCore
+// data-plane SDK. Otherwise it falls back to a volatile in-memory store.
+func buildStateStore(cfg *runtimeConfig) statestore.Store {
+	if cfg.MemoryID != "" && cfg.AWSRegion != "" {
+		dpClient, err := agentcore.NewDataPlaneClient(cfg.AWSRegion)
+		if err != nil {
+			slog.Warn("AgentCore memory init failed, using in-memory store",
+				"error", err)
+			return statestore.NewMemoryStore()
+		}
+		return agentcore.NewStateStore(cfg.MemoryID, dpClient)
+	}
+	return statestore.NewMemoryStore()
 }
 
 // buildAgentCard generates an A2A AgentCard for the named agent from the pack.

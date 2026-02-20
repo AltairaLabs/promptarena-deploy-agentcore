@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/AltairaLabs/PromptKit/runtime/prompt"
+	"github.com/AltairaLabs/PromptKit/runtime/statestore"
 )
 
 func TestResolveAgentName_EnvOverride(t *testing.T) {
@@ -149,6 +150,41 @@ func TestBuildAgentCard_Fallback(t *testing.T) {
 	}
 	if card.Version != "2.0.0" {
 		t.Errorf("card.Version = %q, want %q", card.Version, "2.0.0")
+	}
+}
+
+func TestBuildStateStore_WithoutMemoryID(t *testing.T) {
+	cfg := &runtimeConfig{}
+	store := buildStateStore(cfg)
+	if store == nil {
+		t.Fatal("expected non-nil store")
+	}
+	// Without memory ID, should fall back to in-memory store.
+	if _, ok := store.(*statestore.MemoryStore); !ok {
+		t.Errorf("expected *statestore.MemoryStore, got %T", store)
+	}
+}
+
+func TestBuildStateStore_MemoryIDWithoutRegion(t *testing.T) {
+	cfg := &runtimeConfig{MemoryID: "mem-123"}
+	store := buildStateStore(cfg)
+	if _, ok := store.(*statestore.MemoryStore); !ok {
+		t.Errorf("expected fallback to MemoryStore without region, got %T", store)
+	}
+}
+
+func TestBuildStateStore_WithMemoryIDAndRegion(t *testing.T) {
+	cfg := &runtimeConfig{
+		MemoryID:  "mem-123",
+		AWSRegion: "us-west-2",
+	}
+	store := buildStateStore(cfg)
+	if store == nil {
+		t.Fatal("expected non-nil store")
+	}
+	// With both set, should return AgentCore StateStore (not MemoryStore).
+	if _, ok := store.(*statestore.MemoryStore); ok {
+		t.Error("expected AgentCore StateStore, got MemoryStore")
 	}
 }
 
