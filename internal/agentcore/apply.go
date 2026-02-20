@@ -72,6 +72,11 @@ func (p *Provider) prepareApply(
 		return nil, fmt.Errorf("agentcore: failed to parse deploy config: %w", err)
 	}
 
+	cfg.ArenaConfig, err = parseArenaConfig(req.ArenaConfig)
+	if err != nil {
+		return nil, fmt.Errorf("agentcore: %w", err)
+	}
+
 	client, err := p.awsClientFunc(ctx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("agentcore: failed to create AWS client: %w", err)
@@ -146,6 +151,11 @@ func (p *Provider) applyDryRun(
 	cfg, err := parseConfig(req.DeployConfig)
 	if err != nil {
 		return "", fmt.Errorf("agentcore: failed to parse deploy config: %w", err)
+	}
+
+	cfg.ArenaConfig, err = parseArenaConfig(req.ArenaConfig)
+	if err != nil {
+		return "", fmt.Errorf("agentcore: %w", err)
 	}
 
 	reporter := adaptersdk.NewProgressReporter(callback)

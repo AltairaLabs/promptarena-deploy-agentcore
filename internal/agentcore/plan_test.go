@@ -3,6 +3,7 @@ package agentcore
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/AltairaLabs/PromptKit/runtime/deploy"
@@ -10,6 +11,9 @@ import (
 
 // validDeployConfig is a minimal valid AgentCore deploy config for tests.
 const validDeployConfig = `{"region":"us-west-2","runtime_role_arn":"arn:aws:iam::123456789012:role/test","container_image":"123456789012.dkr.ecr.us-west-2.amazonaws.com/promptkit-agentcore:latest"}`
+
+// validArenaConfigJSON is a minimal valid arena config for tests.
+const validArenaConfigJSON = `{"tool_specs":{}}`
 
 // singleAgentPackJSON returns a minimal single-agent pack JSON.
 func singleAgentPackJSON() string {
@@ -97,6 +101,7 @@ func TestPlan_FirstDeploy_SingleAgent(t *testing.T) {
 	resp, err := provider.Plan(context.Background(), &deploy.PlanRequest{
 		PackJSON:     singleAgentPackJSON(),
 		DeployConfig: validDeployConfig,
+		ArenaConfig:  validArenaConfigJSON,
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -127,6 +132,7 @@ func TestPlan_FirstDeploy_MultiAgent(t *testing.T) {
 	resp, err := provider.Plan(context.Background(), &deploy.PlanRequest{
 		PackJSON:     multiAgentPackJSON(),
 		DeployConfig: validDeployConfig,
+		ArenaConfig:  validArenaConfigJSON,
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -169,6 +175,7 @@ func TestPlan_MultiAgent_WithToolsAndEvals(t *testing.T) {
 	resp, err := provider.Plan(context.Background(), &deploy.PlanRequest{
 		PackJSON:     multiAgentPackWithToolsAndEvalsJSON(),
 		DeployConfig: validDeployConfig,
+		ArenaConfig:  validArenaConfigJSON,
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -210,6 +217,7 @@ func TestPlan_UpdateScenario(t *testing.T) {
 		PackJSON:     singleAgentPackJSON(),
 		DeployConfig: validDeployConfig,
 		PriorState:   string(priorJSON),
+		ArenaConfig:  validArenaConfigJSON,
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -254,6 +262,7 @@ func TestPlan_UpdateMixed(t *testing.T) {
 		PackJSON:     multiAgentPackJSON(),
 		DeployConfig: validDeployConfig,
 		PriorState:   string(priorJSON),
+		ArenaConfig:  validArenaConfigJSON,
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -297,6 +306,7 @@ func TestPlan_InvalidPackJSON(t *testing.T) {
 	_, err := provider.Plan(context.Background(), &deploy.PlanRequest{
 		PackJSON:     `{bad json}`,
 		DeployConfig: validDeployConfig,
+		ArenaConfig:  validArenaConfigJSON,
 	})
 	if err == nil {
 		t.Fatal("expected error for invalid pack JSON")
@@ -308,6 +318,7 @@ func TestPlan_InvalidConfig(t *testing.T) {
 	_, err := provider.Plan(context.Background(), &deploy.PlanRequest{
 		PackJSON:     singleAgentPackJSON(),
 		DeployConfig: `{"region":"","runtime_role_arn":""}`,
+		ArenaConfig:  validArenaConfigJSON,
 	})
 	if err == nil {
 		t.Fatal("expected error for invalid config")
@@ -320,6 +331,7 @@ func TestPlan_InvalidPriorState(t *testing.T) {
 		PackJSON:     singleAgentPackJSON(),
 		DeployConfig: validDeployConfig,
 		PriorState:   `{broken`,
+		ArenaConfig:  validArenaConfigJSON,
 	})
 	if err == nil {
 		t.Fatal("expected error for invalid prior state")
@@ -333,6 +345,7 @@ func TestPlan_SingleAgent_EmptyPackID(t *testing.T) {
 	resp, err := provider.Plan(context.Background(), &deploy.PlanRequest{
 		PackJSON:     packJSON,
 		DeployConfig: validDeployConfig,
+		ArenaConfig:  validArenaConfigJSON,
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -418,6 +431,7 @@ func TestPlan_WithMemory_IncludesMemoryResource(t *testing.T) {
 	resp, err := provider.Plan(context.Background(), &deploy.PlanRequest{
 		PackJSON:     singleAgentPackJSON(),
 		DeployConfig: memConfig,
+		ArenaConfig:  validArenaConfigJSON,
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -445,6 +459,7 @@ func TestPlan_WithoutMemory_NoMemoryResource(t *testing.T) {
 	resp, err := provider.Plan(context.Background(), &deploy.PlanRequest{
 		PackJSON:     singleAgentPackJSON(),
 		DeployConfig: validDeployConfig,
+		ArenaConfig:  validArenaConfigJSON,
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -478,6 +493,7 @@ func TestPlan_SingleAgent_WithTools_IncludesToolGateway(t *testing.T) {
 	resp, err := provider.Plan(context.Background(), &deploy.PlanRequest{
 		PackJSON:     packJSON,
 		DeployConfig: validDeployConfig,
+		ArenaConfig:  validArenaConfigJSON,
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -515,6 +531,7 @@ func TestPlan_WithValidators_NoPolicyResources(t *testing.T) {
 	resp, err := provider.Plan(context.Background(), &deploy.PlanRequest{
 		PackJSON:     packJSON,
 		DeployConfig: validDeployConfig,
+		ArenaConfig:  validArenaConfigJSON,
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -534,6 +551,7 @@ func TestPlan_NoValidators_NoPolicyResources(t *testing.T) {
 	resp, err := provider.Plan(context.Background(), &deploy.PlanRequest{
 		PackJSON:     singleAgentPackJSON(),
 		DeployConfig: validDeployConfig,
+		ArenaConfig:  validArenaConfigJSON,
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -550,5 +568,34 @@ func TestBuildSummary_NoChanges(t *testing.T) {
 	summary := buildSummary(nil)
 	if summary != "Plan: 0 to create, 0 to update, 0 to delete" {
 		t.Errorf("summary = %q", summary)
+	}
+}
+
+func TestPlan_MissingArenaConfig(t *testing.T) {
+	provider := newSimulatedProvider()
+	_, err := provider.Plan(context.Background(), &deploy.PlanRequest{
+		PackJSON:     singleAgentPackJSON(),
+		DeployConfig: validDeployConfig,
+	})
+	if err == nil {
+		t.Fatal("expected error for missing arena config")
+	}
+	if !strings.Contains(err.Error(), "arena_config is required") {
+		t.Errorf("error = %q, want 'arena_config is required'", err.Error())
+	}
+}
+
+func TestPlan_InvalidArenaConfig(t *testing.T) {
+	provider := newSimulatedProvider()
+	_, err := provider.Plan(context.Background(), &deploy.PlanRequest{
+		PackJSON:     singleAgentPackJSON(),
+		DeployConfig: validDeployConfig,
+		ArenaConfig:  `{bad json`,
+	})
+	if err == nil {
+		t.Fatal("expected error for invalid arena config JSON")
+	}
+	if !strings.Contains(err.Error(), "invalid arena_config JSON") {
+		t.Errorf("error = %q, want 'invalid arena_config JSON'", err.Error())
 	}
 }

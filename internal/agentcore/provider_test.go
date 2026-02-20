@@ -158,6 +158,7 @@ func TestPlanViaJSONRPC(t *testing.T) {
 	params := map[string]string{
 		"pack_json":     `{"id":"mypack","version":"v1.0.0"}`,
 		"deploy_config": `{"region":"us-west-2","runtime_role_arn":"arn:aws:iam::123456789012:role/test","container_image":"123456789012.dkr.ecr.us-west-2.amazonaws.com/promptkit-agentcore:latest"}`,
+		"arena_config":  `{"tool_specs":{}}`,
 	}
 	resp := callAdapter(t, jsonRPCRequest("plan", 5, params))
 
