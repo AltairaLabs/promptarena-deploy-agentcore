@@ -26,7 +26,7 @@ func collectEvents(t *testing.T, provider *Provider, req *deploy.PlanRequest) ([
 
 // validConfig returns a valid deploy config JSON string.
 func validConfig() string {
-	return `{"region":"us-west-2","runtime_role_arn":"arn:aws:iam::123456789012:role/test"}`
+	return `{"region":"us-west-2","runtime_role_arn":"arn:aws:iam::123456789012:role/test","container_image":"123456789012.dkr.ecr.us-west-2.amazonaws.com/promptkit-agentcore:latest"}`
 }
 
 // singleAgentPack returns a minimal single-agent pack JSON.
@@ -1089,7 +1089,7 @@ func priorStateWithRuntime(name, arn string) string {
 
 func TestApply_SingleAgent_Update(t *testing.T) {
 	provider := newSimulatedProvider()
-	priorARN := "arn:aws:bedrock:us-west-2:123456789012:agent-runtime/mypack"
+	priorARN := "arn:aws:bedrock-agentcore:us-west-2:123456789012:runtime/mypack"
 	req := &deploy.PlanRequest{
 		PackJSON:     singleAgentPack(),
 		DeployConfig: validConfig(),
@@ -1151,7 +1151,7 @@ func TestApply_MixedCreateAndUpdate(t *testing.T) {
 	provider := newSimulatedProvider()
 
 	// Prior state has only "coordinator" runtime — "worker" is new.
-	coordARN := "arn:aws:bedrock:us-west-2:123456789012:agent-runtime/coordinator"
+	coordARN := "arn:aws:bedrock-agentcore:us-west-2:123456789012:runtime/coordinator"
 	priorState := AdapterState{
 		PackID:  "multipack",
 		Version: "v1.0.0",
@@ -1232,7 +1232,7 @@ func TestApply_UpdateRuntime_Failure(t *testing.T) {
 		checkerFunc:   sim.checkerFunc,
 	}
 
-	priorARN := "arn:aws:bedrock:us-west-2:123456789012:agent-runtime/mypack"
+	priorARN := "arn:aws:bedrock-agentcore:us-west-2:123456789012:runtime/mypack"
 	req := &deploy.PlanRequest{
 		PackJSON:     singleAgentPack(),
 		DeployConfig: validConfig(),
@@ -1258,7 +1258,7 @@ func TestApply_UpdateRuntime_Failure(t *testing.T) {
 
 // validConfigWithMemory returns a deploy config with memory_store set.
 func validConfigWithMemory() string {
-	return `{"region":"us-west-2","runtime_role_arn":"arn:aws:iam::123456789012:role/test","memory_store":"session"}`
+	return `{"region":"us-west-2","runtime_role_arn":"arn:aws:iam::123456789012:role/test","container_image":"123456789012.dkr.ecr.us-west-2.amazonaws.com/promptkit-agentcore:latest","memory_store":"session"}`
 }
 
 func TestApply_WithMemory_CreatesMemoryResource(t *testing.T) {
@@ -1469,17 +1469,27 @@ func singleAgentPackWithValidators() string {
 }
 
 // singleAgentPackWithToolPolicy returns a pack with tool blocklist.
+// The blocklist tool must also be registered in the pack's tools map
+// because AWS Cedar requires actions to exist on the gateway.
 func singleAgentPackWithToolPolicy() string {
 	p := map[string]any{
 		"id":      "tppack",
 		"version": "v1.0.0",
 		"name":    "Tool Policy Pack",
+		"tools": map[string]any{
+			"dangerous_tool": map[string]any{
+				"name":        "dangerous_tool",
+				"description": "A dangerous tool",
+				"parameters":  map[string]any{"type": "object", "properties": map[string]any{}},
+			},
+		},
 		"prompts": map[string]any{
 			"chat": map[string]any{
 				"id":              "chat",
 				"name":            "Chat",
 				"system_template": "You help.",
 				"version":         "v1.0.0",
+				"tools":           []string{"dangerous_tool"},
 				"tool_policy": map[string]any{
 					"blocklist":               []string{"dangerous_tool"},
 					"max_rounds":              5,
@@ -1496,62 +1506,25 @@ func singleAgentPackWithToolPolicy() string {
 	return string(b)
 }
 
-func TestApply_WithValidators_CreatesPolicyResources(t *testing.T) {
+func TestApply_WithValidators_NoPolicyResources(t *testing.T) {
+	// Validators (banned_words, max_length, etc.) are runtime-only and should
+	// NOT produce Cedar policy resources. Only tool blocklist does.
 	provider := newSimulatedProvider()
 	req := &deploy.PlanRequest{
 		PackJSON:     singleAgentPackWithValidators(),
 		DeployConfig: validConfig(),
 	}
 
-	events, stateStr, err := collectEvents(t, provider, req)
+	events, _, err := collectEvents(t, provider, req)
 	if err != nil {
 		t.Fatalf("Apply returned error: %v", err)
 	}
 
-	// Should have cedar_policy + agent_runtime resource events.
-	var resourceTypes []string
 	for _, ev := range events {
-		if ev.Type == "resource" && ev.Resource != nil {
-			resourceTypes = append(resourceTypes, ev.Resource.Type)
+		if ev.Type == "resource" && ev.Resource != nil &&
+			ev.Resource.Type == ResTypeCedarPolicy {
+			t.Error("validators-only pack should not create cedar_policy resources")
 		}
-	}
-
-	if len(resourceTypes) != 2 {
-		t.Fatalf("expected 2 resource events (cedar_policy + runtime), got %d: %v",
-			len(resourceTypes), resourceTypes)
-	}
-
-	// Cedar policy should come before runtime.
-	if resourceTypes[0] != ResTypeCedarPolicy {
-		t.Errorf("first resource should be cedar_policy, got %s", resourceTypes[0])
-	}
-	if resourceTypes[1] != ResTypeAgentRuntime {
-		t.Errorf("second resource should be agent_runtime, got %s", resourceTypes[1])
-	}
-
-	// Verify state includes metadata for the policy.
-	var state AdapterState
-	if err := json.Unmarshal([]byte(stateStr), &state); err != nil {
-		t.Fatalf("failed to unmarshal state: %v", err)
-	}
-	var policyRes *ResourceState
-	for i, r := range state.Resources {
-		if r.Type == ResTypeCedarPolicy {
-			policyRes = &state.Resources[i]
-			break
-		}
-	}
-	if policyRes == nil {
-		t.Fatal("expected cedar_policy resource in state")
-	}
-	if policyRes.Metadata["policy_engine_id"] == "" {
-		t.Error("expected policy_engine_id in metadata")
-	}
-	if policyRes.Metadata["policy_id"] == "" {
-		t.Error("expected policy_id in metadata")
-	}
-	if policyRes.ARN == "" {
-		t.Error("expected ARN on cedar_policy resource")
 	}
 }
 
@@ -1612,8 +1585,9 @@ func TestApply_PolicyEngineFailure_ContinuesToRuntime(t *testing.T) {
 		checkerFunc:   sim.checkerFunc,
 	}
 
+	// Use a pack with a tool blocklist (not just validators) so Cedar is generated.
 	req := &deploy.PlanRequest{
-		PackJSON:     singleAgentPackWithValidators(),
+		PackJSON:     singleAgentPackWithToolPolicy(),
 		DeployConfig: validConfig(),
 	}
 
@@ -1667,7 +1641,7 @@ func TestApply_PolicyEngineFailure_ContinuesToRuntime(t *testing.T) {
 
 // validConfigDryRun returns a deploy config with dry_run enabled.
 func validConfigDryRun() string {
-	return `{"region":"us-west-2","runtime_role_arn":"arn:aws:iam::123456789012:role/test","dry_run":true}`
+	return `{"region":"us-west-2","runtime_role_arn":"arn:aws:iam::123456789012:role/test","container_image":"123456789012.dkr.ecr.us-west-2.amazonaws.com/promptkit-agentcore:latest","dry_run":true}`
 }
 
 func TestApply_DryRun_SingleAgent_NoAWSCalls(t *testing.T) {
@@ -1828,7 +1802,7 @@ func TestApply_DryRun_WithMemory_PlansMemoryResource(t *testing.T) {
 		},
 	}
 
-	cfg := `{"region":"us-west-2","runtime_role_arn":"arn:aws:iam::123456789012:role/test","dry_run":true,"memory_store":"session"}`
+	cfg := `{"region":"us-west-2","runtime_role_arn":"arn:aws:iam::123456789012:role/test","container_image":"123456789012.dkr.ecr.us-west-2.amazonaws.com/promptkit-agentcore:latest","dry_run":true,"memory_store":"session"}`
 	req := &deploy.PlanRequest{
 		PackJSON:     singleAgentPack(),
 		DeployConfig: cfg,
@@ -1957,7 +1931,7 @@ func TestApply_DryRunFalse_StillCallsAWS(t *testing.T) {
 	provider := newSimulatedProvider()
 	req := &deploy.PlanRequest{
 		PackJSON:     singleAgentPack(),
-		DeployConfig: `{"region":"us-west-2","runtime_role_arn":"arn:aws:iam::123456789012:role/test","dry_run":false}`,
+		DeployConfig: `{"region":"us-west-2","runtime_role_arn":"arn:aws:iam::123456789012:role/test","container_image":"123456789012.dkr.ecr.us-west-2.amazonaws.com/promptkit-agentcore:latest","dry_run":false}`,
 	}
 
 	events, stateStr, err := collectEvents(t, provider, req)
@@ -2028,6 +2002,7 @@ func validConfigWithTags() string {
 	return `{
 		"region":"us-west-2",
 		"runtime_role_arn":"arn:aws:iam::123456789012:role/test",
+		"container_image":"123456789012.dkr.ecr.us-west-2.amazonaws.com/promptkit-agentcore:latest",
 		"tags":{"env":"production","team":"platform"}
 	}`
 }
@@ -2215,6 +2190,7 @@ func TestApply_WithMemory_TagsAppliedToMemory(t *testing.T) {
 	cfgWithTags := `{
 		"region":"us-west-2",
 		"runtime_role_arn":"arn:aws:iam::123456789012:role/test",
+		"container_image":"123456789012.dkr.ecr.us-west-2.amazonaws.com/promptkit-agentcore:latest",
 		"memory_store":"session",
 		"tags":{"env":"staging"}
 	}`

@@ -51,6 +51,39 @@ func TestDiagnoseConfig_EmptyRegion(t *testing.T) {
 	}
 }
 
+func TestDiagnoseConfig_PlaceholderAccount(t *testing.T) {
+	cfg := &Config{
+		Region:         "us-west-2",
+		RuntimeRoleARN: "arn:aws:iam::123456789012:role/test",
+	}
+	warnings := DiagnoseConfig(cfg)
+	found := false
+	for _, w := range warnings {
+		if strings.Contains(w.Message, "placeholder account ID 123456789012") {
+			found = true
+			if !strings.Contains(w.Hint, "replace with your real AWS account ID") {
+				t.Errorf("expected hint about replacing account ID, got %q", w.Hint)
+			}
+		}
+	}
+	if !found {
+		t.Error("expected a warning about placeholder account ID 123456789012")
+	}
+}
+
+func TestDiagnoseConfig_NonPlaceholderAccount(t *testing.T) {
+	cfg := &Config{
+		Region:         "us-west-2",
+		RuntimeRoleARN: "arn:aws:iam::999888777666:role/test",
+	}
+	warnings := DiagnoseConfig(cfg)
+	for _, w := range warnings {
+		if strings.Contains(w.Message, "placeholder") {
+			t.Errorf("should not warn about placeholder for real account: %s", w.Message)
+		}
+	}
+}
+
 func TestDiagnoseConfig_IAMUser(t *testing.T) {
 	cfg := &Config{
 		Region:         "us-west-2",

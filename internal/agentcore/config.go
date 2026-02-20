@@ -9,9 +9,9 @@ import (
 	"github.com/AltairaLabs/PromptKit/runtime/evals"
 )
 
-// DefaultContainerImage is the PromptKit container image used when no
-// container_image is specified in the config or agent overrides.
-const DefaultContainerImage = "ghcr.io/altairalabs/promptkit-agentcore:latest"
+// DefaultContainerImage is empty — the user must provide an ECR URI.
+// AgentCore only supports images hosted in Amazon ECR.
+const DefaultContainerImage = ""
 
 // Config holds AWS Bedrock AgentCore-specific configuration.
 type Config struct {
@@ -41,6 +41,15 @@ type Config struct {
 	// EvalARNs maps evaluator resource names to their ARNs, populated
 	// at apply-time after the evaluator phase. NOT serialized.
 	EvalARNs map[string]string `json:"-"`
+
+	// BuiltinEvalIDs lists built-in evaluator IDs (e.g. "Builtin.Helpfulness")
+	// from the pack. These are passed directly to the online eval config
+	// without creating evaluator resources. NOT serialized.
+	BuiltinEvalIDs []string `json:"-"`
+
+	// GatewayARN is populated at apply-time after the tool gateway phase.
+	// Used by Cedar tool policies that need a specific gateway resource. NOT serialized.
+	GatewayARN string `json:"-"`
 }
 
 // AgentOverride holds per-agent configuration overrides.
@@ -91,6 +100,7 @@ type ObservabilityConfig struct {
 var (
 	regionRE  = regexp.MustCompile(`^[a-z]{2}-[a-z]+-\d+$`)
 	roleARNRE = regexp.MustCompile(`^arn:aws:iam::\d{12}:role/.+$`)
+	ecrURIRE  = regexp.MustCompile(`^\d{12}\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com/.+$`)
 )
 
 // validMemoryStores lists allowed values for MemoryStore.
@@ -128,9 +138,16 @@ func (c *Config) validate() []string {
 		errs = append(errs, fmt.Sprintf("memory_store %q must be \"session\" or \"persistent\"", c.MemoryStore))
 	}
 
+	if c.ContainerImage == "" {
+		errs = append(errs,
+			"container_image is required"+
+				" (must be an ECR URI, e.g. 123456789012.dkr.ecr.us-west-2.amazonaws.com/my-repo:latest)")
+	} else {
+		errs = append(errs, validateContainerImage(c.ContainerImage)...)
+	}
+
 	errs = append(errs, validateA2AAuth(c.A2AAuth)...)
 	errs = append(errs, validateTags(c.Tags)...)
-	errs = append(errs, validateContainerImage(c.ContainerImage)...)
 	for name, ov := range c.AgentOverrides {
 		for _, e := range validateContainerImage(ov.ContainerImage) {
 			errs = append(errs, fmt.Sprintf("agent_overrides[%s].%s", name, e))
@@ -172,20 +189,38 @@ func validateTags(tags map[string]string) []string {
 	return errs
 }
 
-// validateContainerImage checks that a container image reference is valid
-// if non-empty: must contain a "/" and no whitespace.
+// validateContainerImage checks that a container image reference is valid.
+// AgentCore requires ECR URIs in the format:
+// {account}.dkr.ecr.{region}.amazonaws.com/{repo}[:{tag}]
 func validateContainerImage(image string) []string {
 	if image == "" {
 		return nil
 	}
-	var errs []string
-	if !strings.Contains(image, "/") {
-		errs = append(errs, fmt.Sprintf("container_image %q must contain a \"/\"", image))
+	if !ecrURIRE.MatchString(image) {
+		return []string{fmt.Sprintf(
+			"container_image %q is not a valid ECR URI (expected {account}.dkr.ecr.{region}.amazonaws.com/{repo}:{tag})",
+			image,
+		)}
 	}
-	if strings.ContainsAny(image, " \t\n\r") {
-		errs = append(errs, fmt.Sprintf("container_image %q must not contain whitespace", image))
+	return nil
+}
+
+// minARNParts is the minimum number of colon-separated segments in a valid ARN
+// (arn:partition:service:region:account-id:resource).
+const minARNParts = 5
+
+// arnAccountIndex is the zero-based index of the account-id segment in an ARN.
+const arnAccountIndex = 4
+
+// extractAccountFromARN extracts the AWS account ID from an ARN string.
+// ARN format: arn:partition:service:region:account-id:resource
+// Returns an empty string if the ARN is malformed.
+func extractAccountFromARN(arn string) string {
+	parts := strings.Split(arn, ":")
+	if len(parts) < minARNParts {
+		return ""
 	}
-	return errs
+	return parts[arnAccountIndex]
 }
 
 // validateA2AAuth checks A2A auth configuration.

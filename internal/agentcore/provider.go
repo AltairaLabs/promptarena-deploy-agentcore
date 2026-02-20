@@ -2,6 +2,7 @@ package agentcore
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/AltairaLabs/PromptKit/runtime/deploy"
 )
@@ -160,4 +161,11 @@ func (p *Provider) ValidateConfig(
 		Valid:  validationErrorCount == 0,
 		Errors: errs,
 	}, nil
+}
+
+// Import imports an existing AWS resource into the adapter state.
+func (p *Provider) Import(
+	_ context.Context, _ *deploy.ImportRequest,
+) (*deploy.ImportResponse, error) {
+	return nil, fmt.Errorf("agentcore: import is not yet supported")
 }

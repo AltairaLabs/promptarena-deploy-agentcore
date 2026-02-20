@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/AltairaLabs/PromptKit/runtime/evals"
@@ -11,6 +12,8 @@ import (
 	awscfg "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockagentcorecontrol"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockagentcorecontrol/types"
+	"github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs"
+	"github.com/aws/aws-sdk-go-v2/service/sts"
 )
 
 // pollInterval is the delay between status checks when waiting for a
@@ -20,17 +23,27 @@ const pollInterval = 5 * time.Second
 // maxPollAttempts limits how long we wait for a resource to become ready.
 const maxPollAttempts = 60
 
+// listPageSize is the MaxResults value used when listing resources via
+// the AgentCore control-plane API.
+const listPageSize = 100
+
+// adoptedPlaceholder is used as a sentinel value when a resource already
+// exists and is adopted instead of created.
+const adoptedPlaceholder = "adopted"
+
 // realAWSClient implements awsClient, resourceDestroyer, and resourceChecker
 // using the real AWS Bedrock AgentCore control-plane SDK.
 type realAWSClient struct {
-	client *bedrockagentcorecontrol.Client
-	cfg    *Config
+	client     *bedrockagentcorecontrol.Client
+	logsClient *cloudwatchlogs.Client
+	cfg        *Config
 
 	// gatewayID caches the gateway identifier so that CreateGatewayTool can
 	// lazily create the parent gateway on the first tool and reuse it for
 	// subsequent targets.
-	gatewayID  string
-	gatewayARN string
+	gatewayID   string
+	gatewayARN  string
+	gatewayName string
 }
 
 // newRealAWSClient builds a realAWSClient from the Config.
@@ -39,8 +52,29 @@ func newRealAWSClient(ctx context.Context, cfg *Config) (*realAWSClient, error) 
 	if err != nil {
 		return nil, fmt.Errorf("load AWS config: %w", err)
 	}
+
+	// Pre-flight check: verify the caller's AWS account matches the account
+	// in the runtime_role_arn to catch misconfigurations before any Bedrock
+	// API calls are made.
+	arnAccount := extractAccountFromARN(cfg.RuntimeRoleARN)
+	if arnAccount != "" {
+		identity, err := sts.NewFromConfig(awsCfg).GetCallerIdentity(ctx, &sts.GetCallerIdentityInput{})
+		if err != nil {
+			return nil, fmt.Errorf("STS GetCallerIdentity: %w", err)
+		}
+		callerAccount := aws.ToString(identity.Account)
+		if callerAccount != arnAccount {
+			return nil, fmt.Errorf(
+				"AWS caller account %s does not match runtime_role_arn account %s"+
+					" — check your AWS credentials or update the role ARN",
+				callerAccount, arnAccount,
+			)
+		}
+	}
+
 	client := bedrockagentcorecontrol.NewFromConfig(awsCfg)
-	return &realAWSClient{client: client, cfg: cfg}, nil
+	logsClient := cloudwatchlogs.NewFromConfig(awsCfg)
+	return &realAWSClient{client: client, logsClient: logsClient, cfg: cfg}, nil
 }
 
 // newRealAWSClientFactory is the awsClientFactory used by NewProvider.
@@ -60,8 +94,102 @@ func newRealCheckerFactory(ctx context.Context, cfg *Config) (resourceChecker, e
 
 // ---------- awsClient implementation ----------
 
+// isConflictError returns true if the error indicates a 409 Conflict (resource
+// already exists).
+func isConflictError(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "ConflictException")
+}
+
+// findRuntimeByName lists runtimes and returns the ARN of one matching name.
+func (c *realAWSClient) findRuntimeByName(ctx context.Context, name string) (string, error) {
+	out, err := c.client.ListAgentRuntimes(ctx, &bedrockagentcorecontrol.ListAgentRuntimesInput{
+		MaxResults: aws.Int32(listPageSize),
+	})
+	if err != nil {
+		return "", err
+	}
+	for _, rt := range out.AgentRuntimes {
+		if aws.ToString(rt.AgentRuntimeName) == name {
+			return aws.ToString(rt.AgentRuntimeArn), nil
+		}
+	}
+	return "", fmt.Errorf("runtime %q not found", name)
+}
+
+// findGatewayByName lists gateways and returns the ID and ARN of one matching name.
+func (c *realAWSClient) findGatewayByName(ctx context.Context, name string) (id, arn string, err error) {
+	out, err := c.client.ListGateways(ctx, &bedrockagentcorecontrol.ListGatewaysInput{
+		MaxResults: aws.Int32(listPageSize),
+	})
+	if err != nil {
+		return "", "", err
+	}
+	for _, gw := range out.Items {
+		if aws.ToString(gw.Name) == name {
+			gwID := aws.ToString(gw.GatewayId)
+			// Get full details to retrieve ARN.
+			detail, getErr := c.client.GetGateway(ctx, &bedrockagentcorecontrol.GetGatewayInput{
+				GatewayIdentifier: aws.String(gwID),
+			})
+			if getErr != nil {
+				return gwID, "", getErr
+			}
+			return gwID, aws.ToString(detail.GatewayArn), nil
+		}
+	}
+	return "", "", fmt.Errorf("gateway %q not found", name)
+}
+
+// findEvaluatorByName lists evaluators and returns the ARN of one matching name.
+func (c *realAWSClient) findEvaluatorByName(ctx context.Context, name string) (string, error) {
+	out, err := c.client.ListEvaluators(ctx, &bedrockagentcorecontrol.ListEvaluatorsInput{
+		MaxResults: aws.Int32(listPageSize),
+	})
+	if err != nil {
+		return "", err
+	}
+	for _, ev := range out.Evaluators {
+		if aws.ToString(ev.EvaluatorName) == name {
+			return aws.ToString(ev.EvaluatorArn), nil
+		}
+	}
+	return "", fmt.Errorf("evaluator %q not found", name)
+}
+
+// findOnlineEvalConfigByName lists online eval configs and returns the ARN of one matching name.
+func (c *realAWSClient) findOnlineEvalConfigByName(ctx context.Context, name string) (string, error) {
+	out, err := c.client.ListOnlineEvaluationConfigs(ctx, &bedrockagentcorecontrol.ListOnlineEvaluationConfigsInput{
+		MaxResults: aws.Int32(listPageSize),
+	})
+	if err != nil {
+		return "", err
+	}
+	for _, cfg := range out.OnlineEvaluationConfigs {
+		if aws.ToString(cfg.OnlineEvaluationConfigName) == name {
+			return aws.ToString(cfg.OnlineEvaluationConfigArn), nil
+		}
+	}
+	return "", fmt.Errorf("online eval config %q not found", name)
+}
+
+// findPolicyEngineByName lists policy engines and returns the ARN and ID of one matching name.
+func (c *realAWSClient) findPolicyEngineByName(ctx context.Context, name string) (arn, engineID string, err error) {
+	out, err := c.client.ListPolicyEngines(ctx, &bedrockagentcorecontrol.ListPolicyEnginesInput{
+		MaxResults: aws.Int32(listPageSize),
+	})
+	if err != nil {
+		return "", "", err
+	}
+	for _, pe := range out.PolicyEngines {
+		if aws.ToString(pe.Name) == name {
+			return aws.ToString(pe.PolicyEngineArn), aws.ToString(pe.PolicyEngineId), nil
+		}
+	}
+	return "", "", fmt.Errorf("policy engine %q not found", name)
+}
+
 // CreateRuntime provisions an AgentCore runtime via the AWS API and polls
-// until it reaches READY status.
+// until it reaches READY status. On conflict (409), adopts the existing runtime.
 func (c *realAWSClient) CreateRuntime(
 	ctx context.Context, name string, cfg *Config,
 ) (string, error) {
@@ -89,6 +217,10 @@ func (c *realAWSClient) CreateRuntime(
 	}
 	out, err := c.client.CreateAgentRuntime(ctx, input)
 	if err != nil {
+		if isConflictError(err) {
+			log.Printf("agentcore: runtime %q already exists, adopting", name)
+			return c.findRuntimeByName(ctx, name)
+		}
 		return "", fmt.Errorf("CreateAgentRuntime %q: %w", name, err)
 	}
 
@@ -105,7 +237,7 @@ func (c *realAWSClient) CreateRuntime(
 func (c *realAWSClient) UpdateRuntime(
 	ctx context.Context, arn string, name string, cfg *Config,
 ) (string, error) {
-	id := extractResourceID(arn, "agent-runtime")
+	id := extractResourceID(arn, "runtime")
 	if id == "" {
 		return "", fmt.Errorf("UpdateAgentRuntime %q: could not extract ID from ARN %q", name, arn)
 	}
@@ -164,6 +296,10 @@ func (c *realAWSClient) CreateGatewayTool(
 		},
 	})
 	if err != nil {
+		if isConflictError(err) {
+			log.Printf("agentcore: gateway target %q already exists, adopting", name)
+			return c.gatewayARN, nil
+		}
 		return "", fmt.Errorf("CreateGatewayTarget %q: %w", name, err)
 	}
 
@@ -175,8 +311,9 @@ func (c *realAWSClient) CreateGatewayTool(
 func (c *realAWSClient) createParentGateway(
 	ctx context.Context, name string, cfg *Config,
 ) error {
+	gwName := name + "-gw"
 	gwInput := &bedrockagentcorecontrol.CreateGatewayInput{
-		Name:           aws.String(name + "_gw"),
+		Name:           aws.String(gwName),
 		RoleArn:        aws.String(cfg.RuntimeRoleARN),
 		ProtocolType:   types.GatewayProtocolTypeMcp,
 		AuthorizerType: types.AuthorizerTypeNone,
@@ -186,13 +323,57 @@ func (c *realAWSClient) createParentGateway(
 	}
 	gwOut, err := c.client.CreateGateway(ctx, gwInput)
 	if err != nil {
+		if isConflictError(err) {
+			log.Printf("agentcore: gateway %q already exists, adopting", gwName)
+			id, arn, findErr := c.findGatewayByName(ctx, gwName)
+			if findErr != nil {
+				return fmt.Errorf("CreateGateway for tool %q (adopt): %w", name, findErr)
+			}
+			c.gatewayID = id
+			c.gatewayARN = arn
+			c.gatewayName = gwName
+			return nil
+		}
 		return fmt.Errorf("CreateGateway for tool %q: %w", name, err)
 	}
 	c.gatewayID = aws.ToString(gwOut.GatewayId)
 	c.gatewayARN = aws.ToString(gwOut.GatewayArn)
+	c.gatewayName = gwName
 
 	if err := c.waitForGatewayReady(ctx, c.gatewayID); err != nil {
 		return fmt.Errorf("gateway for tool %q created but not ready: %w", name, err)
+	}
+	return nil
+}
+
+// AssociatePolicyEngine updates the gateway to reference a policy engine.
+// This must be called after both the gateway and policy engine exist so the
+// engine's Cedar schema includes the gateway's registered tools/actions.
+func (c *realAWSClient) AssociatePolicyEngine(
+	ctx context.Context, policyEngineARN string, cfg *Config,
+) error {
+	if c.gatewayID == "" {
+		return fmt.Errorf("no gateway to associate policy engine with")
+	}
+	_, err := c.client.UpdateGateway(ctx, &bedrockagentcorecontrol.UpdateGatewayInput{
+		GatewayIdentifier: aws.String(c.gatewayID),
+		Name:              aws.String(c.gatewayName),
+		RoleArn:           aws.String(cfg.RuntimeRoleARN),
+		ProtocolType:      types.GatewayProtocolTypeMcp,
+		AuthorizerType:    types.AuthorizerTypeNone,
+		PolicyEngineConfiguration: &types.GatewayPolicyEngineConfiguration{
+			Arn:  aws.String(policyEngineARN),
+			Mode: types.GatewayPolicyEngineModeEnforce,
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("UpdateGateway to associate policy engine: %w", err)
+	}
+	log.Printf("agentcore: associated policy engine with gateway %s", c.gatewayID)
+
+	// Wait for gateway to become ready after the update.
+	if err := c.waitForGatewayReady(ctx, c.gatewayID); err != nil {
+		return fmt.Errorf("gateway not ready after policy engine association: %w", err)
 	}
 	return nil
 }
@@ -224,6 +405,7 @@ func (c *realAWSClient) CreateEvaluator(
 
 	level := mapTriggerToLevel(evalDef.Trigger)
 	instructions := evalParamString(evalDef.Params, "instructions", "Evaluate the agent response quality.")
+	instructions = ensureEvalPlaceholders(instructions)
 	modelID := evalParamString(evalDef.Params, "model", defaultEvalModel)
 
 	input := &bedrockagentcorecontrol.CreateEvaluatorInput{
@@ -250,6 +432,10 @@ func (c *realAWSClient) CreateEvaluator(
 
 	out, err := c.client.CreateEvaluator(ctx, input)
 	if err != nil {
+		if isConflictError(err) {
+			log.Printf("agentcore: evaluator %q already exists, adopting", name)
+			return c.findEvaluatorByName(ctx, name)
+		}
 		return "", fmt.Errorf("CreateEvaluator %q: %w", name, err)
 	}
 
@@ -280,6 +466,18 @@ func evalParamString(params map[string]any, key, defaultVal string) string {
 		}
 	}
 	return defaultVal
+}
+
+// ensureEvalPlaceholders appends required AWS evaluator placeholders if none
+// are present. AWS requires at least one of {context} or {assistant_turn}
+// for TRACE-level evaluators.
+func ensureEvalPlaceholders(instructions string) string {
+	if strings.Contains(instructions, "{context}") ||
+		strings.Contains(instructions, "{assistant_turn}") ||
+		strings.Contains(instructions, "{user_input}") {
+		return instructions
+	}
+	return instructions + "\n\nContext: {context}\nAssistant response: {assistant_turn}"
 }
 
 // buildNumericalRatingScale builds a 1–N numerical rating scale from eval params.
@@ -329,8 +527,26 @@ func (c *realAWSClient) waitForEvaluatorReady(ctx context.Context, id string) er
 // evaluation configs when not specified in eval params.
 const defaultSamplingPercentage = 100.0
 
-// defaultLogGroupPrefix is the CloudWatch log group prefix for AgentCore traces.
-const defaultLogGroupPrefix = "/aws/bedrock/agentcore/"
+// defaultTraceLogGroup is the CloudWatch log group where AgentCore runtimes
+// emit OTEL traces via Transaction Search. Online eval configs read from this
+// group to evaluate agent interactions.
+const defaultTraceLogGroup = "aws/spans"
+
+// ensureLogGroup creates the CloudWatch log group if it does not already exist.
+func (c *realAWSClient) ensureLogGroup(ctx context.Context, logGroupName string) error {
+	_, err := c.logsClient.CreateLogGroup(ctx, &cloudwatchlogs.CreateLogGroupInput{
+		LogGroupName: aws.String(logGroupName),
+	})
+	if err != nil {
+		// Ignore ResourceAlreadyExistsException — the log group already exists.
+		if strings.Contains(err.Error(), "ResourceAlreadyExistsException") {
+			return nil
+		}
+		return fmt.Errorf("create log group %q: %w", logGroupName, err)
+	}
+	log.Printf("[agentcore] created CloudWatch log group %s", logGroupName)
+	return nil
+}
 
 // CreateOnlineEvalConfig provisions an online evaluation config that wires
 // evaluators to agent runtime traces via CloudWatch logs.
@@ -338,11 +554,23 @@ func (c *realAWSClient) CreateOnlineEvalConfig(
 	ctx context.Context, name string, cfg *Config,
 ) (string, error) {
 	logGroup := resolveLogGroup(cfg)
-	packID := cfg.ResourceTags[TagKeyPackID]
 
-	evalRefs := buildEvaluatorReferences(cfg.EvalARNs)
+	// Ensure the log group exists before referencing it. For the default
+	// "aws/spans" group, Transaction Search must be enabled — the group is
+	// AWS-managed and cannot be created manually.
+	if logGroup != defaultTraceLogGroup {
+		if err := c.ensureLogGroup(ctx, logGroup); err != nil {
+			return "", fmt.Errorf("CreateOnlineEvalConfig %q: %w", name, err)
+		}
+	}
+
+	// Service name follows AgentCore convention: <runtime-name>.DEFAULT
+	packID := cfg.ResourceTags[TagKeyPackID]
+	serviceName := packID + ".DEFAULT"
+
+	evalRefs := buildEvaluatorReferences(cfg.EvalARNs, cfg.BuiltinEvalIDs)
 	if len(evalRefs) == 0 {
-		return "", fmt.Errorf("CreateOnlineEvalConfig %q: no evaluator ARNs available", name)
+		return "", fmt.Errorf("CreateOnlineEvalConfig %q: no evaluator references available", name)
 	}
 
 	samplingPct := resolveSamplingPercentage(cfg)
@@ -354,7 +582,7 @@ func (c *realAWSClient) CreateOnlineEvalConfig(
 		DataSourceConfig: &types.DataSourceConfigMemberCloudWatchLogs{
 			Value: types.CloudWatchLogsInputConfig{
 				LogGroupNames: []string{logGroup},
-				ServiceNames:  []string{packID},
+				ServiceNames:  []string{serviceName},
 			},
 		},
 		Evaluators: evalRefs,
@@ -370,6 +598,10 @@ func (c *realAWSClient) CreateOnlineEvalConfig(
 
 	out, err := c.client.CreateOnlineEvaluationConfig(ctx, input)
 	if err != nil {
+		if isConflictError(err) {
+			log.Printf("agentcore: online eval config %q already exists, adopting", name)
+			return c.findOnlineEvalConfigByName(ctx, name)
+		}
 		return "", fmt.Errorf("CreateOnlineEvaluationConfig %q: %w", name, err)
 	}
 
@@ -384,16 +616,22 @@ func (c *realAWSClient) CreateOnlineEvalConfig(
 }
 
 // resolveLogGroup returns the CloudWatch log group for online eval config.
+// Defaults to "aws/spans" (the Transaction Search spans log group) which is
+// where OTEL-instrumented AgentCore runtimes write their traces.
 func resolveLogGroup(cfg *Config) string {
 	if cfg.Observability != nil && cfg.Observability.CloudWatchLogGroup != "" {
 		return cfg.Observability.CloudWatchLogGroup
 	}
-	return defaultLogGroupPrefix + cfg.ResourceTags[TagKeyPackID]
+	return defaultTraceLogGroup
 }
 
-// buildEvaluatorReferences converts evaluator ARNs into SDK EvaluatorReference values.
-func buildEvaluatorReferences(evalARNs map[string]string) []types.EvaluatorReference {
-	refs := make([]types.EvaluatorReference, 0, len(evalARNs))
+// buildEvaluatorReferences converts evaluator ARNs and built-in IDs into
+// SDK EvaluatorReference values. Built-in evaluators (e.g. "Builtin.Helpfulness")
+// are referenced directly by ID without needing CreateEvaluator.
+func buildEvaluatorReferences(evalARNs map[string]string, builtinIDs []string) []types.EvaluatorReference {
+	refs := make([]types.EvaluatorReference, 0, len(evalARNs)+len(builtinIDs))
+
+	// Custom evaluators — extract ID from ARN.
 	for _, arn := range evalARNs {
 		evalID := extractResourceID(arn, "evaluator")
 		if evalID == "" {
@@ -403,6 +641,14 @@ func buildEvaluatorReferences(evalARNs map[string]string) []types.EvaluatorRefer
 			Value: evalID,
 		})
 	}
+
+	// Built-in evaluators — use ID directly (e.g. "Builtin.Helpfulness").
+	for _, id := range builtinIDs {
+		refs = append(refs, &types.EvaluatorReferenceMemberEvaluatorId{
+			Value: id,
+		})
+	}
+
 	return refs
 }
 
@@ -533,6 +779,18 @@ func (c *realAWSClient) CreatePolicyEngine(
 		Name: aws.String(name),
 	})
 	if err != nil {
+		if isConflictError(err) {
+			log.Printf("agentcore: policy engine %q already exists, adopting and purging stale policies", name)
+			arn, id, findErr := c.findPolicyEngineByName(ctx, name)
+			if findErr != nil {
+				return "", "", findErr
+			}
+			// Purge stale policies so fresh ones can be created.
+			if purgeErr := c.purgeAllPolicies(ctx, id); purgeErr != nil {
+				return "", "", fmt.Errorf("purge stale policies on engine %q: %w", name, purgeErr)
+			}
+			return arn, id, nil
+		}
 		return "", "", fmt.Errorf("CreatePolicyEngine %q: %w", name, err)
 	}
 
@@ -559,6 +817,10 @@ func (c *realAWSClient) CreateCedarPolicy(
 		},
 	})
 	if err != nil {
+		if isConflictError(err) {
+			log.Printf("agentcore: cedar policy %q already exists on engine %q, adopting", name, engineID)
+			return adoptedPlaceholder, adoptedPlaceholder, nil
+		}
 		return "", "", fmt.Errorf("CreatePolicy %q on engine %q: %w", name, engineID, err)
 	}
 
@@ -612,7 +874,7 @@ func (c *realAWSClient) DeleteResource(ctx context.Context, res ResourceState) e
 }
 
 func (c *realAWSClient) deleteRuntime(ctx context.Context, res ResourceState) error {
-	id := extractResourceID(res.ARN, "agent-runtime")
+	id := extractResourceID(res.ARN, "runtime")
 	if id == "" {
 		id = res.Name
 	}
@@ -655,27 +917,51 @@ func (c *realAWSClient) deleteGateway(ctx context.Context, res ResourceState) er
 
 func (c *realAWSClient) deleteCedarPolicy(ctx context.Context, res ResourceState) error {
 	engineID := res.Metadata["policy_engine_id"]
-	policyID := res.Metadata["policy_id"]
+	if engineID == "" {
+		return nil
+	}
 
-	if policyID != "" && engineID != "" {
-		_, err := c.client.DeletePolicy(ctx, &bedrockagentcorecontrol.DeletePolicyInput{
+	// Delete ALL policies in the engine, not just the one stored in metadata.
+	if err := c.purgeAllPolicies(ctx, engineID); err != nil {
+		return err
+	}
+
+	_, err := c.client.DeletePolicyEngine(ctx, &bedrockagentcorecontrol.DeletePolicyEngineInput{
+		PolicyEngineId: aws.String(engineID),
+	})
+	if err != nil && !isNotFound(err) {
+		return fmt.Errorf("DeletePolicyEngine %q: %w", res.Name, err)
+	}
+
+	return nil
+}
+
+// purgeAllPolicies lists and deletes every policy within a policy engine.
+func (c *realAWSClient) purgeAllPolicies(ctx context.Context, engineID string) error {
+	out, err := c.client.ListPolicies(ctx, &bedrockagentcorecontrol.ListPoliciesInput{
+		PolicyEngineId: aws.String(engineID),
+		MaxResults:     aws.Int32(listPageSize),
+	})
+	if err != nil {
+		if isNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("ListPolicies on engine %q: %w", engineID, err)
+	}
+	for _, p := range out.Policies {
+		policyID := aws.ToString(p.PolicyId)
+		if policyID == "" {
+			continue
+		}
+		_, delErr := c.client.DeletePolicy(ctx, &bedrockagentcorecontrol.DeletePolicyInput{
 			PolicyEngineId: aws.String(engineID),
 			PolicyId:       aws.String(policyID),
 		})
-		if err != nil && !isNotFound(err) {
-			return fmt.Errorf("DeletePolicy %q: %w", res.Name, err)
+		if delErr != nil && !isNotFound(delErr) {
+			return fmt.Errorf("DeletePolicy %q on engine %q: %w", policyID, engineID, delErr)
 		}
+		log.Printf("agentcore: deleted policy %s from engine %s", policyID, engineID)
 	}
-
-	if engineID != "" {
-		_, err := c.client.DeletePolicyEngine(ctx, &bedrockagentcorecontrol.DeletePolicyEngineInput{
-			PolicyEngineId: aws.String(engineID),
-		})
-		if err != nil && !isNotFound(err) {
-			return fmt.Errorf("DeletePolicyEngine %q: %w", res.Name, err)
-		}
-	}
-
 	return nil
 }
 
@@ -753,7 +1039,7 @@ func (c *realAWSClient) checkMemory(ctx context.Context, res ResourceState) (str
 }
 
 func (c *realAWSClient) checkRuntime(ctx context.Context, res ResourceState) (string, error) {
-	id := extractResourceID(res.ARN, "agent-runtime")
+	id := extractResourceID(res.ARN, "runtime")
 	if id == "" {
 		id = res.Name
 	}

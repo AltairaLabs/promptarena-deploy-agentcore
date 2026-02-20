@@ -6,7 +6,7 @@ sidebar:
 
 Deploy a single-agent prompt pack to AWS Bedrock AgentCore, verify it is healthy, and tear it down cleanly.
 
-**Time:** ~15 minutes
+**Time:** ~25 minutes
 
 ## What You'll Build
 
@@ -14,6 +14,8 @@ A single AgentCore runtime running your compiled prompt pack in AWS. By the end,
 
 ## Learning Objectives
 
+- Create an IAM role with the correct trust policy for AgentCore
+- Push a container image to Amazon ECR
 - Configure the AgentCore deploy adapter in `arena.yaml`
 - Validate your configuration before deploying
 - Preview a deployment plan and understand the resource changes
@@ -26,19 +28,123 @@ A single AgentCore runtime running your compiled prompt pack in AWS. By the end,
 Before starting, make sure you have the following ready:
 
 1. **AWS account** with Bedrock AgentCore access enabled in your target region.
-2. **IAM role** for the AgentCore runtime. The role must have permissions to invoke Bedrock models. Note the full ARN (e.g., `arn:aws:iam::123456789012:role/AgentCoreRuntime`).
-3. **PromptKit CLI** installed and on your PATH. Verify with:
+2. **AWS CLI** configured with credentials that have permission to manage AgentCore resources.
+3. **Docker** installed and running (needed to push the container image to ECR).
+4. **PromptKit CLI** installed and on your PATH. Verify with:
    ```bash
    promptarena --version
    ```
-4. **Compiled pack** -- a `.pack.json` file produced by `packc compile`. For this tutorial, any single-agent pack will work. If you do not have one, compile the quickstart example:
+5. **Compiled pack** -- a `.pack.json` file produced by `packc compile`. For this tutorial, any single-agent pack will work. If you do not have one, compile the quickstart example:
    ```bash
    packc compile -o my-agent.pack.json
    ```
 
 ---
 
-## Step 1: Create the Deploy Configuration
+## Step 1: Create the IAM Role
+
+AgentCore runtimes need an IAM role to operate. The role's trust policy must allow the `bedrock-agentcore.amazonaws.com` service to assume it.
+
+Create the role (replace `YOUR_ACCOUNT_ID` and `YOUR_REGION` with your values):
+
+```bash
+aws iam create-role \
+  --role-name AgentCoreRuntime \
+  --assume-role-policy-document '{
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "AssumeRolePolicy",
+        "Effect": "Allow",
+        "Principal": {"Service": "bedrock-agentcore.amazonaws.com"},
+        "Action": "sts:AssumeRole",
+        "Condition": {
+          "StringEquals": {"aws:SourceAccount": "YOUR_ACCOUNT_ID"},
+          "ArnLike": {"aws:SourceArn": "arn:aws:bedrock-agentcore:YOUR_REGION:YOUR_ACCOUNT_ID:*"}
+        }
+      }
+    ]
+  }'
+```
+
+Attach the permissions the runtime needs:
+
+```bash
+# Bedrock model invocation
+aws iam attach-role-policy \
+  --role-name AgentCoreRuntime \
+  --policy-arn arn:aws:iam::aws:policy/AmazonBedrockFullAccess
+
+# ECR image pull (required to start the container)
+aws iam attach-role-policy \
+  --role-name AgentCoreRuntime \
+  --policy-arn arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
+
+# CloudWatch Logs (required for online eval configs and observability)
+aws iam attach-role-policy \
+  --role-name AgentCoreRuntime \
+  --policy-arn arn:aws:iam::aws:policy/CloudWatchLogsReadOnlyAccess
+```
+
+If your pack uses **Cedar policies** (tool blocklist), the gateway role also needs permission to read the policy engine. Add an inline policy:
+
+```bash
+aws iam put-role-policy \
+  --role-name AgentCoreRuntime \
+  --policy-name AgentCorePolicyEngineAccess \
+  --policy-document '{
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "PolicyEngineAccess",
+        "Effect": "Allow",
+        "Action": [
+          "bedrock-agentcore:GetPolicyEngine",
+          "bedrock-agentcore:ListPolicies"
+        ],
+        "Resource": "*"
+      }
+    ]
+  }'
+```
+
+Note the role ARN for the next step:
+
+```bash
+aws iam get-role --role-name AgentCoreRuntime --query "Role.Arn" --output text
+# e.g. arn:aws:iam::518192007936:role/AgentCoreRuntime
+```
+
+## Step 2: Push the Container Image to ECR
+
+AgentCore only runs container images hosted in Amazon ECR. You need to create an ECR repository and push your PromptKit runtime image to it.
+
+Create the ECR repository:
+
+```bash
+aws ecr create-repository \
+  --repository-name promptkit-agentcore \
+  --region us-west-2
+```
+
+Authenticate Docker with ECR, then tag and push the image:
+
+```bash
+# Login to ECR
+aws ecr get-login-password --region us-west-2 | \
+  docker login --username AWS --password-stdin YOUR_ACCOUNT_ID.dkr.ecr.us-west-2.amazonaws.com
+
+# Tag the local image (assumes you have promptkit-agentcore:local built)
+docker tag promptkit-agentcore:local \
+  YOUR_ACCOUNT_ID.dkr.ecr.us-west-2.amazonaws.com/promptkit-agentcore:latest
+
+# Push to ECR
+docker push YOUR_ACCOUNT_ID.dkr.ecr.us-west-2.amazonaws.com/promptkit-agentcore:latest
+```
+
+Note the full ECR URI for the next step (e.g., `518192007936.dkr.ecr.us-west-2.amazonaws.com/promptkit-agentcore:latest`).
+
+## Step 3: Create the Deploy Configuration
 
 Open your `config.arena.yaml` file and add a `deploy` section under `spec:`. If you do not have an arena config yet, create one:
 
@@ -58,15 +164,17 @@ spec:
     config:
       region: us-west-2
       runtime_role_arn: arn:aws:iam::123456789012:role/AgentCoreRuntime
+      container_image: 123456789012.dkr.ecr.us-west-2.amazonaws.com/promptkit-agentcore:latest
 ```
 
 Replace the values:
 - **`region`** -- the AWS region where AgentCore is available (e.g., `us-west-2`, `us-east-1`).
-- **`runtime_role_arn`** -- the full ARN of the IAM role your runtime will assume.
+- **`runtime_role_arn`** -- the full ARN of the IAM role created in Step 1.
+- **`container_image`** -- the ECR URI from Step 2.
 
-These two fields are the only required configuration. The adapter supports additional options (memory, observability, tags) covered in the [Configuration Reference](/reference/configuration/).
+These three fields are the required configuration. The adapter supports additional options (memory, observability, tags) covered in the [Configuration Reference](/reference/configuration/).
 
-## Step 2: Validate the Configuration
+## Step 4: Validate the Configuration
 
 Before deploying, confirm that the configuration is syntactically correct and the field values pass validation:
 
@@ -93,7 +201,7 @@ Configuration is invalid:
 
 Fix any reported issues before continuing.
 
-## Step 3: Preview the Deployment Plan
+## Step 5: Preview the Deployment Plan
 
 Run the plan command to see what resources the adapter will create -- without making any changes to AWS:
 
@@ -128,7 +236,7 @@ Plan: 3 to create, 0 to update, 0 to delete
 
 Review the plan and proceed when it looks correct.
 
-## Step 4: Deploy
+## Step 6: Deploy
 
 Apply the plan to create the resources in AWS:
 
@@ -151,7 +259,7 @@ Deploy complete. 1 resource created.
 
 The runtime creation includes a polling phase -- the adapter waits until the runtime transitions from `CREATING` to `READY` before reporting success. This typically takes 30-90 seconds.
 
-## Step 5: Verify Deployment Health
+## Step 7: Verify Deployment Health
 
 Confirm that the deployed resources are healthy:
 
@@ -176,7 +284,7 @@ Each resource is checked against the AWS API. Possible statuses are:
 
 If any resource is unhealthy or missing, the aggregate status changes to `degraded`.
 
-## Step 6: Destroy the Deployment
+## Step 8: Destroy the Deployment
 
 When you are done, tear down all resources:
 
@@ -206,7 +314,7 @@ AgentCore deployment status: not_deployed
 
 ## What You Learned
 
-- The `deploy.config` section in `arena.yaml` requires only `region` and `runtime_role_arn` for a basic deployment.
+- The `deploy.config` section in `arena.yaml` requires `region`, `runtime_role_arn`, and `container_image` for a basic deployment.
 - `promptarena deploy validate` catches configuration errors before you spend time on a real deployment.
 - `promptarena deploy plan` previews the exact resources that will be created, updated, or deleted.
 - `promptarena deploy` creates the resources and polls until they are ready.
@@ -225,6 +333,29 @@ region "uswest2" does not match expected format (e.g. us-west-2)
 
 The region must be a valid AWS region identifier in the format `xx-xxxx-N` (e.g., `us-west-2`, `eu-central-1`). Check the [AWS region list](https://docs.aws.amazon.com/general/latest/gr/bedrock.html) for regions that support Bedrock AgentCore.
 
+### Container Image Not Valid ECR URI
+
+```
+container_image "ghcr.io/org/image:latest" is not a valid ECR URI
+```
+
+AgentCore only supports container images hosted in Amazon ECR. The image URI must match the format `{account}.dkr.ecr.{region}.amazonaws.com/{repo}:{tag}`. See Step 2 for instructions on creating an ECR repository and pushing your image.
+
+### Role Validation Failed
+
+```
+ValidationException: Role validation failed for 'arn:aws:iam::...:role/AgentCoreRuntime'.
+Please verify that the role exists and its trust policy allows assumption by this service
+```
+
+The runtime role's trust policy must allow `bedrock-agentcore.amazonaws.com` to assume it (not `bedrock.amazonaws.com`). Verify the trust policy:
+
+```bash
+aws iam get-role --role-name AgentCoreRuntime --query "Role.AssumeRolePolicyDocument"
+```
+
+The `Principal.Service` must be `bedrock-agentcore.amazonaws.com`. See Step 1 for the correct trust policy.
+
 ### Missing IAM Permissions
 
 ```
@@ -236,6 +367,14 @@ The AWS credentials used by the CLI (not the runtime role) need permission to ma
 
 The **runtime role** (`runtime_role_arn`) is a separate concern -- it is the role the runtime assumes when it runs. It needs `bedrock:InvokeModel` and related permissions.
 
+### Account Mismatch
+
+```
+AWS caller account 111111111111 does not match runtime_role_arn account 222222222222
+```
+
+The AWS credentials you are using belong to a different account than the one in your `runtime_role_arn`. Either update the role ARN to use your account ID, or switch to credentials for the correct account.
+
 ### Runtime Stuck in CREATING
 
 ```
@@ -246,7 +385,7 @@ The adapter polls for up to 5 minutes waiting for the runtime to become `READY`.
 
 1. Check the AWS Console under Bedrock > AgentCore to see the runtime's actual status.
 2. Look for error details in the runtime's event log.
-3. Common causes: the runtime role ARN is invalid, the role lacks a trust policy for `bedrock.amazonaws.com`, or the region does not have AgentCore capacity.
+3. Common causes: the runtime role ARN is invalid, the role lacks a trust policy for `bedrock-agentcore.amazonaws.com`, or the region does not have AgentCore capacity.
 4. After fixing the issue, run `promptarena deploy` again -- the adapter will detect the existing resource and attempt an update rather than creating a duplicate.
 
 ### Role ARN Validation Error

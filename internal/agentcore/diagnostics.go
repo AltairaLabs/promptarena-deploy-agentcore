@@ -64,6 +64,13 @@ func diagnoseRoleARN(cfg *Config) []DiagnosticWarning {
 		return nil // validate() will catch this
 	}
 	var warnings []DiagnosticWarning
+	if extractAccountFromARN(cfg.RuntimeRoleARN) == "123456789012" {
+		warnings = append(warnings, DiagnosticWarning{
+			Category: ErrCategoryConfiguration,
+			Message:  "runtime_role_arn uses the placeholder account ID 123456789012",
+			Hint:     "replace with your real AWS account ID",
+		})
+	}
 	if strings.Contains(cfg.RuntimeRoleARN, ":user/") {
 		warnings = append(warnings, DiagnosticWarning{
 			Category: ErrCategoryPermission,

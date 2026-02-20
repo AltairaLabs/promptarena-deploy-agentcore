@@ -9,7 +9,7 @@ import (
 )
 
 // validDeployConfig is a minimal valid AgentCore deploy config for tests.
-const validDeployConfig = `{"region":"us-west-2","runtime_role_arn":"arn:aws:iam::123456789012:role/test"}`
+const validDeployConfig = `{"region":"us-west-2","runtime_role_arn":"arn:aws:iam::123456789012:role/test","container_image":"123456789012.dkr.ecr.us-west-2.amazonaws.com/promptkit-agentcore:latest"}`
 
 // singleAgentPackJSON returns a minimal single-agent pack JSON.
 func singleAgentPackJSON() string {
@@ -414,7 +414,7 @@ func TestDiffResources_MixedWithMultipleDeletes(t *testing.T) {
 
 func TestPlan_WithMemory_IncludesMemoryResource(t *testing.T) {
 	provider := newSimulatedProvider()
-	memConfig := `{"region":"us-west-2","runtime_role_arn":"arn:aws:iam::123456789012:role/test","memory_store":"session"}`
+	memConfig := `{"region":"us-west-2","runtime_role_arn":"arn:aws:iam::123456789012:role/test","container_image":"123456789012.dkr.ecr.us-west-2.amazonaws.com/promptkit-agentcore:latest","memory_store":"session"}`
 	resp, err := provider.Plan(context.Background(), &deploy.PlanRequest{
 		PackJSON:     singleAgentPackJSON(),
 		DeployConfig: memConfig,
@@ -457,7 +457,51 @@ func TestPlan_WithoutMemory_NoMemoryResource(t *testing.T) {
 	}
 }
 
-func TestPlan_WithValidators_IncludesPolicyResources(t *testing.T) {
+func TestPlan_SingleAgent_WithTools_IncludesToolGateway(t *testing.T) {
+	provider := newSimulatedProvider()
+	packJSON := `{
+		"id": "toolpack", "version": "v1.0.0",
+		"tools": {
+			"search": {
+				"name": "search",
+				"description": "Search the web",
+				"parameters": {"type": "object", "properties": {"query": {"type": "string"}}}
+			}
+		},
+		"prompts": {
+			"assistant": {
+				"id": "assistant", "system_template": "hello",
+				"tools": ["search"]
+			}
+		}
+	}`
+	resp, err := provider.Plan(context.Background(), &deploy.PlanRequest{
+		PackJSON:     packJSON,
+		DeployConfig: validDeployConfig,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Should have agent_runtime + tool_gateway = 2 changes.
+	if len(resp.Changes) != 2 {
+		t.Fatalf("expected 2 changes, got %d: %+v", len(resp.Changes), resp.Changes)
+	}
+
+	typeCounts := map[string]int{}
+	for _, c := range resp.Changes {
+		typeCounts[c.Type]++
+	}
+	if typeCounts[ResTypeAgentRuntime] != 1 {
+		t.Errorf("expected 1 agent_runtime, got %d", typeCounts[ResTypeAgentRuntime])
+	}
+	if typeCounts[ResTypeToolGateway] != 1 {
+		t.Errorf("expected 1 tool_gateway, got %d", typeCounts[ResTypeToolGateway])
+	}
+}
+
+func TestPlan_WithValidators_NoPolicyResources(t *testing.T) {
+	// Validators are runtime-only and should NOT produce Cedar policy resources.
 	provider := newSimulatedProvider()
 	packJSON := `{
 		"id": "valpack", "version": "v1.0.0",
@@ -476,20 +520,12 @@ func TestPlan_WithValidators_IncludesPolicyResources(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Should have cedar_policy + agent_runtime = 2 changes.
-	if len(resp.Changes) != 2 {
-		t.Fatalf("expected 2 changes, got %d: %+v", len(resp.Changes), resp.Changes)
+	// Should have only agent_runtime = 1 change. No cedar_policy.
+	if len(resp.Changes) != 1 {
+		t.Fatalf("expected 1 change (agent_runtime only), got %d: %+v", len(resp.Changes), resp.Changes)
 	}
-
-	typeCounts := map[string]int{}
-	for _, c := range resp.Changes {
-		typeCounts[c.Type]++
-	}
-	if typeCounts[ResTypeCedarPolicy] != 1 {
-		t.Errorf("expected 1 cedar_policy, got %d", typeCounts[ResTypeCedarPolicy])
-	}
-	if typeCounts[ResTypeAgentRuntime] != 1 {
-		t.Errorf("expected 1 agent_runtime, got %d", typeCounts[ResTypeAgentRuntime])
+	if resp.Changes[0].Type != ResTypeAgentRuntime {
+		t.Errorf("expected agent_runtime, got %s", resp.Changes[0].Type)
 	}
 }
 

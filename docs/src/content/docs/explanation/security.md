@@ -27,49 +27,56 @@ The same role is used for:
 - `CreateAgentRuntime` and `UpdateAgentRuntime` (the `RoleArn` field)
 - `CreateGateway` (the gateway execution role)
 - `CreateMemory` (the `MemoryExecutionRoleArn` field)
+- `CreateOnlineEvalConfig` (needs CloudWatch Logs access for eval metric delivery)
 - A2A authentication in IAM mode (injected as `PROMPTPACK_A2A_AUTH_ROLE`)
+
+The role must have CloudWatch Logs permissions (`CloudWatchLogsReadOnlyAccess` or equivalent) when the pack includes evals. Online eval configs write metrics to CloudWatch, and creation will fail if the role cannot access log groups.
+
+When the pack uses Cedar policies (tool blocklist), the role also needs `bedrock-agentcore:GetPolicyEngine` and `bedrock-agentcore:ListPolicies` permissions. The gateway calls `GetPolicyEngine` when the policy engine is associated with it, and policy creation will fail if the role cannot read the engine.
 
 This single-role design simplifies configuration but means the role must have permissions for all resource types the pack uses. A future enhancement may support separate roles per resource type.
 
 ## Cedar policies
 
-The adapter auto-generates [Cedar](https://www.cedarpolicy.com/) policy statements from two sources in the pack manifest: **validators** on individual prompts and **tool_policy** rules.
+The adapter auto-generates [Cedar](https://www.cedarpolicy.com/) policy statements from the `tool_policy.blocklist` field in the pack manifest. Cedar policies control **which tools can be invoked** at the gateway level.
+
+### What produces Cedar vs. what is runtime-only
+
+| Feature | Enforcement | Notes |
+|---------|-------------|-------|
+| `tool_policy.blocklist` | **Cedar** (gateway-level) | Forbid blocks prevent tool invocation |
+| `tool_policy.max_rounds` | Runtime (PromptKit middleware) | Not supported by AgentCore Cedar schema |
+| `tool_policy.max_tool_calls_per_turn` | Runtime (PromptKit middleware) | Not supported by AgentCore Cedar schema |
+| Validators (`banned_words`, `max_length`, etc.) | Runtime (PromptKit middleware) | AgentCore Cedar only supports `context.input.*` attributes, not output validation |
 
 ### How policies are created
 
-For each prompt that has validators or a `tool_policy`, the adapter:
+For each prompt that has a `tool_policy.blocklist`, the adapter:
 
 1. Creates a **policy engine** via `CreatePolicyEngine` and polls until it reaches `ACTIVE` status.
-2. Generates a Cedar statement by combining all rules for that prompt.
-3. Creates a **Cedar policy** within the engine via `CreatePolicy`.
-4. Collects the policy engine ARN and injects it as `PROMPTPACK_POLICY_ENGINE_ARN` into the runtime environment, so runtimes enforce the policies at invocation time.
+2. **Associates the policy engine with the gateway** via `UpdateGateway`, passing the engine ARN in the `PolicyEngineConfiguration` field. This is required so the engine's Cedar schema includes the gateway's registered tool actions. The gateway role must have `bedrock-agentcore:GetPolicyEngine` permission.
+3. Filters the blocklist to tools that are registered on the gateway. Unregistered tools are skipped with a warning (they cannot be invoked anyway).
+4. Generates one Cedar `forbid` block per blocked tool using the AgentCore action format.
+5. Creates a **Cedar policy** within the engine via `CreatePolicy` (one policy per blocked tool).
+6. Collects the policy engine ARN and injects it as `PROMPTPACK_POLICY_ENGINE_ARN` into the runtime environment.
 
-### Validator-to-Cedar mapping
+### Cedar format
 
-| Validator type | Cedar rule | Example |
-|----------------|-----------|---------|
-| `banned_words` | One `forbid` block per word, matching `context.output like "*word*"` | Blocks responses containing specific terms |
-| `max_length` | `forbid` when `context.output_length > N` | Limits response length to N characters |
-| `regex_match` | `forbid` when `!context.output.matches("pattern")` | Requires output to match a regex pattern |
-| `json_schema` | Comment-only placeholder | Cedar has no native JSON Schema support; enforced at runtime |
+Blocked tools produce Cedar in the AgentCore action format:
 
-### Tool policy-to-Cedar mapping
+```cedar
+forbid (
+  principal,
+  action == AgentCore::Action::"ToolName__ToolName",
+  resource == AgentCore::Gateway::"arn:aws:bedrock-agentcore:us-west-2:123456789012:gateway/my-gw"
+);
+```
 
-| Tool policy field | Cedar rule |
-|-------------------|-----------|
-| `blocklist` | `forbid` with `action == Action::"invoke_tool"` when `resource.tool_name == "blocked_tool"` |
-| `max_rounds` | `forbid` with `action == Action::"tool_loop_continue"` when `context.round_count > N` |
-| `max_tool_calls_per_turn` | `forbid` with `action == Action::"invoke_tool"` when `context.tool_calls_this_turn > N` |
-
-### Observe-only mode
-
-Each validator in the pack manifest has an optional `failOnViolation` field. When set to `false`, the generated Cedar rule is prefixed with a `// observe-only` comment annotation. This signals the runtime to log the violation without blocking the response. When `failOnViolation` is `true` (or not set), the rule is enforced -- a matching request is denied.
-
-This distinction lets you roll out new guardrails gradually: start in observe-only mode to measure how often the rule would fire, then switch to enforcement once you are confident in the policy.
+The action name follows the convention `AgentCore::Action::"<tool>__<operation>"` from the gateway's auto-generated Cedar schema. The resource **must** be constrained to a specific gateway ARN -- AWS rejects wildcard or type-only resource constraints for action-scoped policies. This also means only tools registered on the gateway can be blocked via Cedar; the adapter filters the blocklist accordingly.
 
 ### Policy lifecycle
 
-Policies are created during Step 2 of the apply pipeline (after tool gateways, before runtimes). They are the **first** resources destroyed during teardown -- the adapter deletes the Cedar policy within the engine, then deletes the engine itself. This ordering prevents runtimes from referencing a deleted policy engine during the brief window between policy deletion and runtime deletion.
+Policies are created during Step 2 of the apply pipeline (after tool gateways, before runtimes). During teardown, the adapter lists and deletes **all** policies within the engine via `ListPolicies`, then deletes the engine itself. This ensures clean teardown even when the number of policies changes between deploys.
 
 ## A2A authentication
 
