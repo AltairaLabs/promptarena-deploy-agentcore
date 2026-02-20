@@ -316,7 +316,7 @@ func applyMemoryPreStep(
 	ctx context.Context, ac *applyContext,
 	resources []ResourceState, applyErr error,
 ) ([]ResourceState, error) {
-	if ac.cfg.MemoryStore == "" {
+	if !ac.cfg.HasMemory() {
 		return resources, applyErr
 	}
 	memRes, memErr := createMemoryResource(ctx, ac.reporter, ac.client, ac.cfg, ac.pack)

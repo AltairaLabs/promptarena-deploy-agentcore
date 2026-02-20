@@ -705,29 +705,37 @@ func buildAuthorizerConfig(cfg *Config) types.AuthorizerConfiguration {
 	}
 }
 
-// memoryExpiryDays is the default event expiry duration for memory resources.
-const memoryExpiryDays = 30
+// defaultMemoryExpiryDays is the default event expiry duration for memory
+// resources when not specified in config.
+const defaultMemoryExpiryDays = 30
 
-// memoryStrategySession is the strategy name for session (episodic) memory.
-const memoryStrategySession = "session_memory"
-
-// memoryStrategyPersistent is the strategy name for persistent (semantic) memory.
-const memoryStrategyPersistent = "persistent_memory"
+// SDK strategy name constants passed to the AWS API.
+const (
+	sdkStrategyNameEpisodic       = "episodic_memory"
+	sdkStrategyNameSemantic       = "semantic_memory"
+	sdkStrategyNameSummary        = "summary_memory"
+	sdkStrategyNameUserPreference = "user_preference_memory"
+)
 
 // CreateMemory provisions a memory resource via the AWS API.
 func (c *realAWSClient) CreateMemory(
 	ctx context.Context, name string, cfg *Config,
 ) (string, error) {
+	expiryDays := resolveExpiryDays(cfg.Memory.EventExpiryDays)
 	input := &bedrockagentcorecontrol.CreateMemoryInput{
 		Name:                aws.String(name),
-		EventExpiryDuration: aws.Int32(memoryExpiryDays),
+		EventExpiryDuration: aws.Int32(expiryDays),
 	}
 
 	if cfg.RuntimeRoleARN != "" {
 		input.MemoryExecutionRoleArn = aws.String(cfg.RuntimeRoleARN)
 	}
 
-	input.MemoryStrategies = memoryStrategies(cfg.MemoryStore)
+	if cfg.Memory.EncryptionKeyARN != "" {
+		input.ClientToken = aws.String(cfg.Memory.EncryptionKeyARN)
+	}
+
+	input.MemoryStrategies = memoryStrategies(cfg.Memory.Strategies)
 	if len(cfg.ResourceTags) > 0 {
 		input.Tags = cfg.ResourceTags
 	}
@@ -740,23 +748,51 @@ func (c *realAWSClient) CreateMemory(
 	return aws.ToString(out.Memory.Arn), nil
 }
 
-// memoryStrategies returns the SDK strategy inputs for the given store type.
-func memoryStrategies(storeType string) []types.MemoryStrategyInput {
-	switch storeType {
-	case "session":
-		return []types.MemoryStrategyInput{
-			&types.MemoryStrategyInputMemberEpisodicMemoryStrategy{
-				Value: types.EpisodicMemoryStrategyInput{
-					Name: aws.String(memoryStrategySession),
-				},
+// resolveExpiryDays returns the configured expiry or the default.
+func resolveExpiryDays(configured int32) int32 {
+	if configured > 0 {
+		return configured
+	}
+	return defaultMemoryExpiryDays
+}
+
+// memoryStrategies returns the SDK strategy inputs for the given
+// canonical strategy names.
+func memoryStrategies(strategies []string) []types.MemoryStrategyInput {
+	result := make([]types.MemoryStrategyInput, 0, len(strategies))
+	for _, s := range strategies {
+		if si := buildStrategyInput(s); si != nil {
+			result = append(result, si)
+		}
+	}
+	return result
+}
+
+// buildStrategyInput maps a canonical strategy name to its SDK type.
+func buildStrategyInput(strategy string) types.MemoryStrategyInput {
+	switch strategy {
+	case StrategyEpisodic:
+		return &types.MemoryStrategyInputMemberEpisodicMemoryStrategy{
+			Value: types.EpisodicMemoryStrategyInput{
+				Name: aws.String(sdkStrategyNameEpisodic),
 			},
 		}
-	case "persistent":
-		return []types.MemoryStrategyInput{
-			&types.MemoryStrategyInputMemberSemanticMemoryStrategy{
-				Value: types.SemanticMemoryStrategyInput{
-					Name: aws.String(memoryStrategyPersistent),
-				},
+	case StrategySemantic:
+		return &types.MemoryStrategyInputMemberSemanticMemoryStrategy{
+			Value: types.SemanticMemoryStrategyInput{
+				Name: aws.String(sdkStrategyNameSemantic),
+			},
+		}
+	case StrategySummary:
+		return &types.MemoryStrategyInputMemberSummaryMemoryStrategy{
+			Value: types.SummaryMemoryStrategyInput{
+				Name: aws.String(sdkStrategyNameSummary),
+			},
+		}
+	case StrategyUserPreference:
+		return &types.MemoryStrategyInputMemberUserPreferenceMemoryStrategy{
+			Value: types.UserPreferenceMemoryStrategyInput{
+				Name: aws.String(sdkStrategyNameUserPreference),
 			},
 		}
 	default:
