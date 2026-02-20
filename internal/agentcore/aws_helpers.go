@@ -13,8 +13,8 @@ func isNotFound(err error) bool {
 }
 
 // extractResourceID attempts to extract the resource ID from an ARN.
-// For example, given "arn:aws:bedrock:us-west-2:123:agent-runtime/abc123"
-// and prefix "agent-runtime", it returns "abc123".
+// For example, given "arn:aws:bedrock-agentcore:us-west-2:123:runtime/abc123"
+// and prefix "runtime", it returns "abc123".
 func extractResourceID(arn, prefix string) string {
 	search := prefix + "/"
 	for i := 0; i <= len(arn)-len(search); i++ {

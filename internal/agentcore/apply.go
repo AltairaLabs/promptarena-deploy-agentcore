@@ -224,6 +224,9 @@ func (p *Provider) executeApplyPhases(
 		return resources, cbErr
 	}
 
+	// Capture gateway ARN for Cedar tool policies that need a specific resource.
+	ac.cfg.GatewayARN = findGatewayARN(resources)
+
 	// Step 2 — Cedar Policies (policy engine + policy per prompt with validators/tool_policy).
 	policyRes, policyErr, policyCbErr := applyPoliciesPhase(ctx, ac)
 	resources = append(resources, policyRes...)
@@ -257,12 +260,24 @@ func (p *Provider) executeApplyPhases(
 		}
 	}
 
+	// Steps 5–6 — Evaluators and Online Evaluation Config.
+	return applyEvalPhases(ctx, ac, resources, applyErr)
+}
+
+// applyEvalPhases deploys evaluators and wires them to traces via an online
+// evaluation config. Extracted from executeApplyPhases to reduce cognitive
+// complexity.
+func applyEvalPhases(
+	ctx context.Context, ac *applyContext,
+	resources []ResourceState, applyErr error,
+) ([]ResourceState, error) {
 	// Step 5 — Evaluators (no update support yet).
 	ac.cfg.EvalDefs = buildEvalDefs(ac.pack)
 	evalNames := evalResourceNames(ac.pack)
 	if len(evalNames) > 0 {
-		phase = applyPhase(ctx, ac.reporter, ac.client.CreateEvaluator, nil, ac.cfg,
+		phase := applyPhase(ctx, ac.reporter, ac.client.CreateEvaluator, nil, ac.cfg,
 			evalNames, ResTypeEvaluator, stepEvaluators, ac.priorMap)
+		var cbErr error
 		resources, applyErr, cbErr = mergePhase(resources, applyErr, phase)
 		if cbErr != nil {
 			return resources, cbErr
@@ -271,10 +286,12 @@ func (p *Provider) executeApplyPhases(
 
 	// Step 6 — Online Evaluation Config (wires evaluators to traces).
 	ac.cfg.EvalARNs = collectEvalARNs(resources)
-	if len(ac.cfg.EvalARNs) > 0 {
+	ac.cfg.BuiltinEvalIDs = collectBuiltinEvalIDs(ac.pack)
+	if len(ac.cfg.EvalARNs) > 0 || len(ac.cfg.BuiltinEvalIDs) > 0 {
 		oecName := ac.pack.ID + "_online_eval"
-		phase = applyPhase(ctx, ac.reporter, ac.client.CreateOnlineEvalConfig, nil, ac.cfg,
+		phase := applyPhase(ctx, ac.reporter, ac.client.CreateOnlineEvalConfig, nil, ac.cfg,
 			[]string{oecName}, ResTypeOnlineEvalConfig, stepOnlineEvalCfg, ac.priorMap)
+		var cbErr error
 		resources, applyErr, cbErr = mergePhase(resources, applyErr, phase)
 		if cbErr != nil {
 			return resources, cbErr
@@ -353,15 +370,21 @@ func applyPoliciesPhase(
 	return resources, applyErr, nil
 }
 
-// createPolicyForPrompt creates a policy engine and a Cedar policy for a
-// single prompt. Returns the resource state on success.
+// createPolicyForPrompt creates a policy engine and one Cedar policy per
+// forbid block for a single prompt. AWS CreatePolicy accepts only a single
+// policy statement, so multiple rules are created as separate policies on
+// the same engine. Returns the resource state on success.
 func createPolicyForPrompt(
 	ctx context.Context, ac *applyContext,
 	promptName, engineName string,
 ) (*ResourceState, error) {
 	p := ac.pack.Prompts[promptName]
-	statement := generateCedarStatement(p.Validators, p.ToolPolicy)
-	if statement == "" {
+	registeredTools := make(map[string]bool, len(ac.pack.Tools))
+	for name := range ac.pack.Tools {
+		registeredTools[name] = true
+	}
+	statements := generateCedarStatements(p.Validators, p.ToolPolicy, ac.cfg.GatewayARN, registeredTools)
+	if len(statements) == 0 {
 		return nil, fmt.Errorf("no Cedar rules generated for prompt %s", promptName)
 	}
 
@@ -370,23 +393,35 @@ func createPolicyForPrompt(
 		return nil, fmt.Errorf("policy engine: %w", err)
 	}
 
-	policyName := promptName + "_policy"
-	policyARN, policyID, err := ac.client.CreateCedarPolicy(
-		ctx, engineID, policyName, statement, ac.cfg,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("cedar policy: %w", err)
+	// Associate the policy engine with the gateway so the Cedar schema
+	// includes the gateway's registered tool actions.
+	if err := ac.client.AssociatePolicyEngine(ctx, engineARN, ac.cfg); err != nil {
+		return nil, fmt.Errorf("associate policy engine with gateway: %w", err)
+	}
+
+	var lastPolicyARN, lastPolicyID string
+	for i, stmt := range statements {
+		policyName := fmt.Sprintf("%s_policy_%d", promptName, i)
+		arn, id, err := ac.client.CreateCedarPolicy(
+			ctx, engineID, policyName, stmt, ac.cfg,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("cedar policy: %w", err)
+		}
+		lastPolicyARN = arn
+		lastPolicyID = id
 	}
 
 	return &ResourceState{
 		Type:   ResTypeCedarPolicy,
 		Name:   promptName,
-		ARN:    policyARN,
+		ARN:    lastPolicyARN,
 		Status: ResStatusCreated,
 		Metadata: map[string]string{
 			"policy_engine_id":  engineID,
 			"policy_engine_arn": engineARN,
-			"policy_id":         policyID,
+			"policy_id":         lastPolicyID,
+			"policy_count":      fmt.Sprintf("%d", len(statements)),
 		},
 	}, nil
 }
@@ -697,6 +732,30 @@ func collectEvalARNs(resources []ResourceState) map[string]string {
 		}
 	}
 	return arns
+}
+
+// collectBuiltinEvalIDs extracts built-in evaluator IDs from the pack.
+// Built-in evaluators (e.g. "Builtin.Helpfulness") don't need CreateEvaluator —
+// they're referenced directly by ID in the online eval config.
+func collectBuiltinEvalIDs(pack *prompt.Pack) []string {
+	var ids []string
+	for _, ev := range pack.Evals {
+		if ev.Type == evalTypeBuiltin && ev.ID != "" {
+			ids = append(ids, ev.ID)
+		}
+	}
+	return ids
+}
+
+// findGatewayARN returns the ARN of the first successfully created tool_gateway
+// resource. Used to inject a specific resource reference into Cedar tool policies.
+func findGatewayARN(resources []ResourceState) string {
+	for _, r := range resources {
+		if r.Type == ResTypeToolGateway && r.ARN != "" {
+			return r.ARN
+		}
+	}
+	return ""
 }
 
 // combineErrors joins two errors, preferring the first non-nil.

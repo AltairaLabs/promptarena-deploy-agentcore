@@ -93,8 +93,8 @@ func generateDesiredResources(pack *prompt.Pack, cfg *Config) []deploy.ResourceC
 	return desired
 }
 
-// generateAgentResources returns agent_runtime (and tool_gateway for multi-agent)
-// resource changes for the pack.
+// generateAgentResources returns agent_runtime and tool_gateway resource changes
+// for the pack. Tool gateways are created for any pack that defines tools.
 func generateAgentResources(pack *prompt.Pack) []deploy.ResourceChange {
 	if adaptersdk.IsMultiAgent(pack) {
 		return generateMultiAgentResources(pack)
@@ -104,12 +104,26 @@ func generateAgentResources(pack *prompt.Pack) []deploy.ResourceChange {
 	if name == "" {
 		name = "default"
 	}
-	return []deploy.ResourceChange{{
+	desired := []deploy.ResourceChange{{
 		Type:   ResTypeAgentRuntime,
 		Name:   name,
 		Action: deploy.ActionCreate,
 		Detail: fmt.Sprintf("Create AgentCore runtime for %s", name),
 	}}
+
+	if len(pack.Tools) > 0 {
+		toolNames := sortedKeys(pack.Tools)
+		for _, tn := range toolNames {
+			desired = append(desired, deploy.ResourceChange{
+				Type:   ResTypeToolGateway,
+				Name:   tn + "-tool-gw",
+				Action: deploy.ActionCreate,
+				Detail: fmt.Sprintf("Create tool gateway for %s", tn),
+			})
+		}
+	}
+
+	return desired
 }
 
 // generateMultiAgentResources returns SDK-generated resources plus tool_gateways.
@@ -121,7 +135,7 @@ func generateMultiAgentResources(pack *prompt.Pack) []deploy.ResourceChange {
 		for _, name := range toolNames {
 			desired = append(desired, deploy.ResourceChange{
 				Type:   ResTypeToolGateway,
-				Name:   name + "_tool_gw",
+				Name:   name + "-tool-gw",
 				Action: deploy.ActionCreate,
 				Detail: fmt.Sprintf("Create tool gateway for %s", name),
 			})
@@ -134,6 +148,11 @@ func generateMultiAgentResources(pack *prompt.Pack) []deploy.ResourceChange {
 // evalTypeLLMAsJudge is the eval type that maps to the SDK's LLM-as-a-Judge
 // evaluator. Other eval types are local-only and don't create AWS resources.
 const evalTypeLLMAsJudge = "llm_as_judge"
+
+// evalTypeBuiltin references a pre-existing AWS-managed evaluator (e.g.
+// Builtin.Helpfulness). No CreateEvaluator call is needed — the ID is
+// passed directly to the online eval config.
+const evalTypeBuiltin = "builtin"
 
 // generateEvalResources returns evaluator resource changes for llm_as_judge evals only.
 func generateEvalResources(pack *prompt.Pack) []deploy.ResourceChange {
@@ -153,11 +172,11 @@ func generateEvalResources(pack *prompt.Pack) []deploy.ResourceChange {
 }
 
 // generateOnlineEvalConfigResources returns a single online_eval_config resource
-// if the pack has any llm_as_judge evals. The config wires evaluators to agent
-// runtime traces via CloudWatch.
+// if the pack has any llm_as_judge or builtin evals. The config wires evaluators
+// to agent runtime traces via CloudWatch.
 func generateOnlineEvalConfigResources(pack *prompt.Pack) []deploy.ResourceChange {
 	for _, ev := range pack.Evals {
-		if ev.Type == evalTypeLLMAsJudge {
+		if ev.Type == evalTypeLLMAsJudge || ev.Type == evalTypeBuiltin {
 			return []deploy.ResourceChange{{
 				Type:   ResTypeOnlineEvalConfig,
 				Name:   pack.ID + "_online_eval",
@@ -244,6 +263,8 @@ func buildSummary(changes []deploy.ResourceChange) string {
 			del++
 		case deploy.ActionNoChange:
 			// counted but not shown
+		case deploy.ActionDrift:
+			// drift detected but not tallied separately
 		}
 	}
 	return fmt.Sprintf("Plan: %d to create, %d to update, %d to delete", create, update, del)

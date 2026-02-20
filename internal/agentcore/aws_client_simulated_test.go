@@ -20,7 +20,7 @@ func newSimulatedAWSClient(region string) *simulatedAWSClient {
 }
 
 func (c *simulatedAWSClient) CreateRuntime(_ context.Context, name string, _ *Config) (string, error) {
-	return fmt.Sprintf("arn:aws:bedrock:%s:%s:agent-runtime/%s", c.region, c.accountID, name), nil
+	return fmt.Sprintf("arn:aws:bedrock-agentcore:%s:%s:runtime/%s", c.region, c.accountID, name), nil
 }
 
 func (c *simulatedAWSClient) UpdateRuntime(_ context.Context, arn string, _ string, _ *Config) (string, error) {
@@ -53,6 +53,12 @@ func (c *simulatedAWSClient) CreatePolicyEngine(
 	arn := fmt.Sprintf("arn:aws:bedrock:%s:%s:policy-engine/%s", c.region, c.accountID, name)
 	engineID := "pe-" + name
 	return arn, engineID, nil
+}
+
+func (c *simulatedAWSClient) AssociatePolicyEngine(
+	_ context.Context, _ string, _ *Config,
+) error {
+	return nil
 }
 
 func (c *simulatedAWSClient) CreateCedarPolicy(

@@ -11,7 +11,7 @@ The AgentCore adapter accepts a JSON configuration object via the `deploy_config
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
 | `region` | string | Yes | -- | AWS region for the AgentCore deployment. Must match `^[a-z]{2}-[a-z]+-\d+$` (e.g. `us-west-2`). |
-| `runtime_role_arn` | string | Yes | -- | IAM role ARN assumed by the AgentCore runtime. Must match `^arn:aws:iam::\d{12}:role/.+$`. |
+| `runtime_role_arn` | string | Yes | -- | IAM role ARN assumed by the AgentCore runtime. Must match `^arn:aws:iam::\d{12}:role/.+$`. The role needs `AmazonBedrockFullAccess`, `AmazonEC2ContainerRegistryReadOnly`, and `CloudWatchLogsReadOnlyAccess` (required when the pack includes evals). |
 | `memory_store` | string | No | -- | Memory store type. Allowed values: `"session"`, `"persistent"`. |
 | `dry_run` | boolean | No | `false` | When `true`, Apply simulates resource creation without calling AWS APIs. Resources are emitted with status `"planned"`. |
 | `tags` | map[string]string | No | -- | User-defined tags applied to all created AWS resources. Maximum 50 tags. Keys max 128 characters, values max 256 characters. |

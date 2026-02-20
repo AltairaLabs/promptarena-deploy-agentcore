@@ -45,7 +45,7 @@ func sampleState() *AdapterState {
 		DeployedAt: "2026-02-16T00:00:00Z",
 		Resources: []ResourceState{
 			{Type: "tool_gateway", Name: "tg-1", ARN: "arn:aws:bedrock:us-west-2:123456789012:tool-gateway/tg-1"},
-			{Type: "agent_runtime", Name: "rt-1", ARN: "arn:aws:bedrock:us-west-2:123456789012:agent-runtime/rt-1"},
+			{Type: "agent_runtime", Name: "rt-1", ARN: "arn:aws:bedrock-agentcore:us-west-2:123456789012:runtime/rt-1"},
 			{Type: "a2a_endpoint", Name: "a2a-1", ARN: "arn:aws:bedrock:us-west-2:123456789012:a2a/a2a-1"},
 			{Type: "evaluator", Name: "ev-1", ARN: "arn:aws:bedrock:us-west-2:123456789012:evaluator/ev-1"},
 		},
@@ -63,7 +63,7 @@ func mustJSON(t *testing.T, v any) string {
 
 // validDestroyConfig returns a valid config for destroy/status tests.
 func validDestroyConfig() string {
-	return `{"region":"us-west-2","runtime_role_arn":"arn:aws:iam::123456789012:role/test"}`
+	return `{"region":"us-west-2","runtime_role_arn":"arn:aws:iam::123456789012:role/test","container_image":"123456789012.dkr.ecr.us-west-2.amazonaws.com/promptkit-agentcore:latest"}`
 }
 
 // ---------- Destroy tests ----------

@@ -4,6 +4,8 @@ import (
 	"testing"
 )
 
+const testECRImage = "123456789012.dkr.ecr.us-west-2.amazonaws.com/promptkit-agentcore:latest"
+
 func TestParseConfig(t *testing.T) {
 	t.Run("valid minimal config", func(t *testing.T) {
 		cfg, err := parseConfig(`{"region":"us-west-2","runtime_role_arn":"arn:aws:iam::123456789012:role/test"}`)
@@ -60,19 +62,21 @@ func TestValidate(t *testing.T) {
 			cfg: Config{
 				Region:         "us-west-2",
 				RuntimeRoleARN: "arn:aws:iam::123456789012:role/test",
+				ContainerImage: testECRImage,
 			},
 			wantErrs: 0,
 		},
 		{
 			name:     "missing everything",
 			cfg:      Config{},
-			wantErrs: 2,
+			wantErrs: 3, // region, runtime_role_arn, container_image
 		},
 		{
 			name: "bad region format",
 			cfg: Config{
 				Region:         "invalid",
 				RuntimeRoleARN: "arn:aws:iam::123456789012:role/test",
+				ContainerImage: testECRImage,
 			},
 			wantErrs: 1,
 		},
@@ -81,6 +85,7 @@ func TestValidate(t *testing.T) {
 			cfg: Config{
 				Region:         "us-east-1",
 				RuntimeRoleARN: "not-an-arn",
+				ContainerImage: testECRImage,
 			},
 			wantErrs: 1,
 		},
@@ -89,6 +94,7 @@ func TestValidate(t *testing.T) {
 			cfg: Config{
 				Region:         "us-west-2",
 				RuntimeRoleARN: "arn:aws:iam::123456789012:role/test",
+				ContainerImage: testECRImage,
 				MemoryStore:    "invalid",
 			},
 			wantErrs: 1,
@@ -98,9 +104,18 @@ func TestValidate(t *testing.T) {
 			cfg: Config{
 				Region:         "ap-southeast-1",
 				RuntimeRoleARN: "arn:aws:iam::111222333444:role/agent",
+				ContainerImage: testECRImage,
 				MemoryStore:    "persistent",
 			},
 			wantErrs: 0,
+		},
+		{
+			name: "missing container_image",
+			cfg: Config{
+				Region:         "us-west-2",
+				RuntimeRoleARN: "arn:aws:iam::123456789012:role/test",
+			},
+			wantErrs: 1,
 		},
 	}
 
@@ -118,6 +133,7 @@ func TestValidateA2AAuth(t *testing.T) {
 	base := Config{
 		Region:         "us-west-2",
 		RuntimeRoleARN: "arn:aws:iam::123456789012:role/test",
+		ContainerImage: testECRImage,
 	}
 
 	tests := []struct {
@@ -328,6 +344,7 @@ func TestValidate_WithValidTags(t *testing.T) {
 	cfg := Config{
 		Region:         "us-west-2",
 		RuntimeRoleARN: "arn:aws:iam::123456789012:role/test",
+		ContainerImage: testECRImage,
 		Tags:           map[string]string{"env": "prod"},
 	}
 	errs := cfg.validate()
@@ -340,6 +357,7 @@ func TestValidate_WithInvalidTags(t *testing.T) {
 	cfg := Config{
 		Region:         "us-west-2",
 		RuntimeRoleARN: "arn:aws:iam::123456789012:role/test",
+		ContainerImage: testECRImage,
 		Tags:           map[string]string{"": "no-key"},
 	}
 	errs := cfg.validate()
@@ -425,6 +443,43 @@ func TestContainerImageForAgent(t *testing.T) {
 	}
 }
 
+func TestExtractAccountFromARN(t *testing.T) {
+	tests := []struct {
+		name string
+		arn  string
+		want string
+	}{
+		{
+			name: "valid role ARN",
+			arn:  "arn:aws:iam::123456789012:role/my-role",
+			want: "123456789012",
+		},
+		{
+			name: "valid ARN different account",
+			arn:  "arn:aws:iam::999888777666:role/agent",
+			want: "999888777666",
+		},
+		{
+			name: "malformed ARN too few parts",
+			arn:  "arn:aws:iam",
+			want: "",
+		},
+		{
+			name: "empty string",
+			arn:  "",
+			want: "",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := extractAccountFromARN(tt.arn)
+			if got != tt.want {
+				t.Errorf("extractAccountFromARN(%q) = %q, want %q", tt.arn, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestValidateContainerImage(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -432,11 +487,12 @@ func TestValidateContainerImage(t *testing.T) {
 		wantErrs int
 	}{
 		{name: "empty is valid", image: "", wantErrs: 0},
-		{name: "valid image", image: "ghcr.io/org/image:latest", wantErrs: 0},
+		{name: "valid ECR image", image: "123456789012.dkr.ecr.us-west-2.amazonaws.com/my-repo:latest", wantErrs: 0},
+		{name: "valid ECR no tag", image: "123456789012.dkr.ecr.eu-west-1.amazonaws.com/repo", wantErrs: 0},
+		{name: "ghcr not allowed", image: "ghcr.io/org/image:latest", wantErrs: 1},
+		{name: "docker hub not allowed", image: "docker.io/library/nginx:latest", wantErrs: 1},
 		{name: "no slash", image: "justanimage", wantErrs: 1},
-		{name: "whitespace", image: "my-registry.io/image name", wantErrs: 1},
-		{name: "tab", image: "my-registry.io/image\tname", wantErrs: 1},
-		{name: "no slash and whitespace", image: "bad image", wantErrs: 2},
+		{name: "whitespace", image: "bad image", wantErrs: 1},
 	}
 
 	for _, tt := range tests {
@@ -453,11 +509,11 @@ func TestValidate_ContainerImageIntegration(t *testing.T) {
 	cfg := Config{
 		Region:         "us-west-2",
 		RuntimeRoleARN: "arn:aws:iam::123456789012:role/test",
-		ContainerImage: "badimage",
+		ContainerImage: "ghcr.io/org/badimage:latest",
 	}
 	errs := cfg.validate()
 	if len(errs) != 1 {
-		t.Errorf("expected 1 error for bad container_image, got %d: %v", len(errs), errs)
+		t.Errorf("expected 1 error for non-ECR container_image, got %d: %v", len(errs), errs)
 	}
 }
 
@@ -465,6 +521,7 @@ func TestValidate_AgentOverrideContainerImage(t *testing.T) {
 	cfg := Config{
 		Region:         "us-west-2",
 		RuntimeRoleARN: "arn:aws:iam::123456789012:role/test",
+		ContainerImage: testECRImage,
 		AgentOverrides: map[string]*AgentOverride{
 			"worker": {ContainerImage: "noslash"},
 		},
