@@ -42,8 +42,8 @@ func buildRuntimeEnvVars(cfg *Config) map[string]string {
 		}
 	}
 
-	if cfg.MemoryStore != "" {
-		env[EnvMemoryStore] = cfg.MemoryStore
+	if cfg.HasMemory() {
+		env[EnvMemoryStore] = cfg.MemoryStrategiesCSV()
 	}
 
 	if cfg.A2AAuth != nil && cfg.A2AAuth.Mode != "" {

@@ -17,7 +17,7 @@ const DefaultContainerImage = ""
 type Config struct {
 	Region         string                    `json:"region"`
 	RuntimeRoleARN string                    `json:"runtime_role_arn"`
-	MemoryStore    string                    `json:"memory_store,omitempty"`
+	Memory         MemoryConfig              `json:"memory_store,omitempty"`
 	ContainerImage string                    `json:"container_image,omitempty"`
 	Tags           map[string]string         `json:"tags,omitempty"`
 	DryRun         bool                      `json:"dry_run,omitempty"`
@@ -76,6 +76,148 @@ func (c *Config) containerImageForAgent(name string) string {
 	return DefaultContainerImage
 }
 
+// Valid memory strategy names.
+const (
+	StrategyEpisodic       = "episodic"
+	StrategySemantic       = "semantic"
+	StrategySummary        = "summary"
+	StrategyUserPreference = "user_preference"
+)
+
+// Legacy alias mappings for backward compatibility.
+var legacyStrategyAliases = map[string]string{
+	"session":    StrategyEpisodic,
+	"persistent": StrategySemantic,
+}
+
+// validStrategies lists the canonical strategy names.
+var validStrategies = map[string]bool{
+	StrategyEpisodic:       true,
+	StrategySemantic:       true,
+	StrategySummary:        true,
+	StrategyUserPreference: true,
+}
+
+// Memory event expiry range constants.
+const (
+	minEventExpiryDays = 3
+	maxEventExpiryDays = 365
+)
+
+// arnRE matches an AWS ARN prefix.
+var arnRE = regexp.MustCompile(`^arn:aws:[a-z0-9-]+:[a-z0-9-]*:\d{12}:.+$`)
+
+// MemoryConfig holds memory configuration for the deployment.
+type MemoryConfig struct {
+	Strategies       []string `json:"strategies"`
+	EventExpiryDays  int32    `json:"event_expiry_days,omitempty"`
+	EncryptionKeyARN string   `json:"encryption_key_arn,omitempty"`
+}
+
+// HasMemory returns true if any memory strategies are configured.
+func (c *Config) HasMemory() bool {
+	return len(c.Memory.Strategies) > 0
+}
+
+// MemoryStrategiesCSV returns the configured strategies as a
+// comma-separated string, suitable for environment variable injection.
+func (c *Config) MemoryStrategiesCSV() string {
+	return strings.Join(c.Memory.Strategies, ",")
+}
+
+// UnmarshalJSON implements custom JSON unmarshalling for Config to handle
+// the polymorphic memory_store field (string, array, or object).
+func (c *Config) UnmarshalJSON(data []byte) error {
+	type configAlias Config
+	type rawConfig struct {
+		configAlias
+		RawMemory json.RawMessage `json:"memory_store,omitempty"`
+	}
+
+	var raw rawConfig
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+
+	*c = Config(raw.configAlias)
+
+	if len(raw.RawMemory) == 0 || string(raw.RawMemory) == "null" {
+		return nil
+	}
+
+	mem, err := parseMemoryField(raw.RawMemory)
+	if err != nil {
+		return fmt.Errorf("memory_store: %w", err)
+	}
+	c.Memory = mem
+	return nil
+}
+
+// parseMemoryField handles the three forms of memory_store.
+func parseMemoryField(data json.RawMessage) (MemoryConfig, error) {
+	var s string
+	if err := json.Unmarshal(data, &s); err == nil {
+		return parseMemoryString(s)
+	}
+
+	var arr []string
+	if err := json.Unmarshal(data, &arr); err == nil {
+		normalized, nErr := normalizeStrategies(arr)
+		if nErr != nil {
+			return MemoryConfig{}, nErr
+		}
+		return MemoryConfig{Strategies: normalized}, nil
+	}
+
+	var mc MemoryConfig
+	if err := json.Unmarshal(data, &mc); err != nil {
+		return MemoryConfig{}, fmt.Errorf("must be a string, array, or object")
+	}
+	normalized, err := normalizeStrategies(mc.Strategies)
+	if err != nil {
+		return MemoryConfig{}, err
+	}
+	mc.Strategies = normalized
+	return mc, nil
+}
+
+// parseMemoryString converts a strategy string into a MemoryConfig.
+func parseMemoryString(s string) (MemoryConfig, error) {
+	if s == "" {
+		return MemoryConfig{}, nil
+	}
+	canonical := resolveAlias(s)
+	if !validStrategies[canonical] {
+		return MemoryConfig{}, fmt.Errorf("invalid strategy %q", s)
+	}
+	return MemoryConfig{Strategies: []string{canonical}}, nil
+}
+
+// normalizeStrategies resolves aliases and deduplicates strategies.
+func normalizeStrategies(strategies []string) ([]string, error) {
+	seen := make(map[string]bool, len(strategies))
+	result := make([]string, 0, len(strategies))
+	for _, s := range strategies {
+		canonical := resolveAlias(s)
+		if !validStrategies[canonical] {
+			return nil, fmt.Errorf("invalid strategy %q", s)
+		}
+		if !seen[canonical] {
+			seen[canonical] = true
+			result = append(result, canonical)
+		}
+	}
+	return result, nil
+}
+
+// resolveAlias maps a legacy alias to its canonical name.
+func resolveAlias(s string) string {
+	if canonical, ok := legacyStrategyAliases[s]; ok {
+		return canonical
+	}
+	return s
+}
+
 // A2AAuthConfig holds A2A authentication settings.
 type A2AAuthConfig struct {
 	Mode         string   `json:"mode"`                       // "iam" or "jwt"
@@ -107,12 +249,6 @@ var (
 	ecrURIRE  = regexp.MustCompile(`^\d{12}\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com/.+$`)
 )
 
-// validMemoryStores lists allowed values for MemoryStore.
-var validMemoryStores = map[string]bool{
-	"session":    true,
-	"persistent": true,
-}
-
 // parseConfig unmarshals JSON config into Config.
 func parseConfig(raw string) (*Config, error) {
 	var cfg Config
@@ -138,9 +274,7 @@ func (c *Config) validate() []string {
 		errs = append(errs, fmt.Sprintf("runtime_role_arn %q is not a valid IAM role ARN", c.RuntimeRoleARN))
 	}
 
-	if c.MemoryStore != "" && !validMemoryStores[c.MemoryStore] {
-		errs = append(errs, fmt.Sprintf("memory_store %q must be \"session\" or \"persistent\"", c.MemoryStore))
-	}
+	errs = append(errs, validateMemory(&c.Memory)...)
 
 	if c.ContainerImage == "" {
 		errs = append(errs,
@@ -207,6 +341,31 @@ func validateContainerImage(image string) []string {
 		)}
 	}
 	return nil
+}
+
+// validateMemory checks the memory configuration for errors.
+func validateMemory(m *MemoryConfig) []string {
+	if len(m.Strategies) == 0 {
+		return nil
+	}
+	var errs []string
+	for _, s := range m.Strategies {
+		if !validStrategies[s] {
+			errs = append(errs, fmt.Sprintf("memory_store: invalid strategy %q", s))
+		}
+	}
+	if m.EventExpiryDays != 0 {
+		if m.EventExpiryDays < minEventExpiryDays || m.EventExpiryDays > maxEventExpiryDays {
+			errs = append(errs, fmt.Sprintf(
+				"memory_store: event_expiry_days %d must be between %d and %d",
+				m.EventExpiryDays, minEventExpiryDays, maxEventExpiryDays))
+		}
+	}
+	if m.EncryptionKeyARN != "" && !arnRE.MatchString(m.EncryptionKeyARN) {
+		errs = append(errs, fmt.Sprintf(
+			"memory_store: encryption_key_arn %q is not a valid ARN", m.EncryptionKeyARN))
+	}
+	return errs
 }
 
 // minARNParts is the minimum number of colon-separated segments in a valid ARN

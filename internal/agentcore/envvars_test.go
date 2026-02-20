@@ -71,29 +71,29 @@ func TestBuildRuntimeEnvVars(t *testing.T) {
 			},
 		},
 		{
-			name: "memory store session",
+			name: "memory episodic strategy",
 			cfg: &Config{
-				MemoryStore: "session",
+				Memory: MemoryConfig{Strategies: []string{"episodic"}},
 			},
 			want: map[string]string{
-				EnvMemoryStore: "session",
+				EnvMemoryStore: "episodic",
 				EnvPackFile:    defaultPackPath,
 			},
 		},
 		{
-			name: "memory store persistent",
+			name: "memory semantic strategy",
 			cfg: &Config{
-				MemoryStore: "persistent",
+				Memory: MemoryConfig{Strategies: []string{"semantic"}},
 			},
 			want: map[string]string{
-				EnvMemoryStore: "persistent",
+				EnvMemoryStore: "semantic",
 				EnvPackFile:    defaultPackPath,
 			},
 		},
 		{
 			name: "combined observability and memory",
 			cfg: &Config{
-				MemoryStore: "session",
+				Memory: MemoryConfig{Strategies: []string{"episodic"}},
 				Observability: &ObservabilityConfig{
 					CloudWatchLogGroup: "/aws/logs",
 					TracingEnabled:     true,
@@ -102,7 +102,7 @@ func TestBuildRuntimeEnvVars(t *testing.T) {
 			want: map[string]string{
 				EnvLogGroup:       "/aws/logs",
 				EnvTracingEnabled: "true",
-				EnvMemoryStore:    "session",
+				EnvMemoryStore:    "episodic",
 				EnvPackFile:       defaultPackPath,
 			},
 		},
@@ -427,7 +427,7 @@ func TestRuntimeEnvVarsForAgent(t *testing.T) {
 		cfg := &Config{
 			RuntimeEnvVars: map[string]string{
 				EnvPackFile:    defaultPackPath,
-				EnvMemoryStore: "session",
+				EnvMemoryStore: "episodic",
 			},
 		}
 
@@ -439,8 +439,8 @@ func TestRuntimeEnvVarsForAgent(t *testing.T) {
 		if env[EnvPackFile] != defaultPackPath {
 			t.Errorf("PROMPTPACK_FILE = %q, want %q", env[EnvPackFile], defaultPackPath)
 		}
-		if env[EnvMemoryStore] != "session" {
-			t.Errorf("PROMPTPACK_MEMORY_STORE = %q, want %q", env[EnvMemoryStore], "session")
+		if env[EnvMemoryStore] != "episodic" {
+			t.Errorf("PROMPTPACK_MEMORY_STORE = %q, want %q", env[EnvMemoryStore], "episodic")
 		}
 	})
 

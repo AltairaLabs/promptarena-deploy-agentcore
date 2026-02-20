@@ -24,9 +24,20 @@ const configSchema = `{
       "description": "IAM role ARN for the AgentCore runtime"
     },
     "memory_store": {
-      "type": "string",
-      "enum": ["session", "persistent"],
-      "description": "Memory store type for the agent"
+      "oneOf": [
+        {"type": "string"},
+        {"type": "array", "items": {"type": "string"}},
+        {
+          "type": "object",
+          "properties": {
+            "strategies": {"type": "array", "items": {"type": "string"}},
+            "event_expiry_days": {"type": "integer", "minimum": 3, "maximum": 365},
+            "encryption_key_arn": {"type": "string"}
+          },
+          "required": ["strategies"]
+        }
+      ],
+      "description": "Memory config: string, array, or object with strategies"
     },
     "tools": {
       "type": "object",

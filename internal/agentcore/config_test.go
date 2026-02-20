@@ -39,8 +39,8 @@ func TestParseConfig(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if cfg.MemoryStore != "session" {
-			t.Errorf("memory_store = %q, want session", cfg.MemoryStore)
+		if !cfg.HasMemory() {
+			t.Error("expected memory to be configured")
 		}
 		if cfg.Tools == nil || !cfg.Tools.CodeInterpreter {
 			t.Error("expected tools.code_interpreter = true")
@@ -95,7 +95,7 @@ func TestValidate(t *testing.T) {
 				Region:         "us-west-2",
 				RuntimeRoleARN: "arn:aws:iam::123456789012:role/test",
 				ContainerImage: testECRImage,
-				MemoryStore:    "invalid",
+				Memory:         MemoryConfig{Strategies: []string{"invalid"}},
 			},
 			wantErrs: 1,
 		},
@@ -105,7 +105,7 @@ func TestValidate(t *testing.T) {
 				Region:         "ap-southeast-1",
 				RuntimeRoleARN: "arn:aws:iam::111222333444:role/agent",
 				ContainerImage: testECRImage,
-				MemoryStore:    "persistent",
+				Memory:         MemoryConfig{Strategies: []string{"semantic"}},
 			},
 			wantErrs: 0,
 		},
@@ -557,5 +557,350 @@ func TestParseConfig_ContainerImageAndOverrides(t *testing.T) {
 	if cfg.AgentOverrides["worker"].ContainerImage != "my-registry.io/worker:v2" {
 		t.Errorf("agent_overrides[worker].container_image = %q, want my-registry.io/worker:v2",
 			cfg.AgentOverrides["worker"].ContainerImage)
+	}
+}
+
+// --- Memory config expansion tests ---
+
+func TestParseConfig_MemoryStore_StringForm(t *testing.T) {
+	tests := []struct {
+		name       string
+		memVal     string
+		wantStrats []string
+		wantErr    bool
+	}{
+		{"episodic", "episodic", []string{"episodic"}, false},
+		{"semantic", "semantic", []string{"semantic"}, false},
+		{"summary", "summary", []string{"summary"}, false},
+		{"user_preference", "user_preference", []string{"user_preference"}, false},
+		{"alias session", "session", []string{"episodic"}, false},
+		{"alias persistent", "persistent", []string{"semantic"}, false},
+		{"invalid strategy", "bogus", nil, true},
+		{"empty string", "", nil, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			raw := `{"region":"us-west-2",` +
+				`"runtime_role_arn":"arn:aws:iam::123456789012:role/t",` +
+				`"memory_store":"` + tt.memVal + `"}`
+			cfg, err := parseConfig(raw)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(cfg.Memory.Strategies) != len(tt.wantStrats) {
+				t.Fatalf("strategies = %v, want %v",
+					cfg.Memory.Strategies, tt.wantStrats)
+			}
+			for i, s := range tt.wantStrats {
+				if cfg.Memory.Strategies[i] != s {
+					t.Errorf("strategy[%d] = %q, want %q",
+						i, cfg.Memory.Strategies[i], s)
+				}
+			}
+		})
+	}
+}
+
+func TestParseConfig_MemoryStore_ArrayForm(t *testing.T) {
+	raw := `{
+		"region":"us-west-2",
+		"runtime_role_arn":"arn:aws:iam::123456789012:role/t",
+		"memory_store":["episodic","semantic","summary"]
+	}`
+	cfg, err := parseConfig(raw)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := []string{"episodic", "semantic", "summary"}
+	if len(cfg.Memory.Strategies) != len(want) {
+		t.Fatalf("strategies = %v, want %v", cfg.Memory.Strategies, want)
+	}
+	for i, s := range want {
+		if cfg.Memory.Strategies[i] != s {
+			t.Errorf("strategy[%d] = %q, want %q",
+				i, cfg.Memory.Strategies[i], s)
+		}
+	}
+}
+
+func TestParseConfig_MemoryStore_ArrayWithAliases(t *testing.T) {
+	raw := `{
+		"region":"us-west-2",
+		"runtime_role_arn":"arn:aws:iam::123456789012:role/t",
+		"memory_store":["session","persistent"]
+	}`
+	cfg, err := parseConfig(raw)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := []string{"episodic", "semantic"}
+	if len(cfg.Memory.Strategies) != len(want) {
+		t.Fatalf("strategies = %v, want %v", cfg.Memory.Strategies, want)
+	}
+	for i, s := range want {
+		if cfg.Memory.Strategies[i] != s {
+			t.Errorf("strategy[%d] = %q, want %q",
+				i, cfg.Memory.Strategies[i], s)
+		}
+	}
+}
+
+func TestParseConfig_MemoryStore_ArrayDeduplicates(t *testing.T) {
+	raw := `{
+		"region":"us-west-2",
+		"runtime_role_arn":"arn:aws:iam::123456789012:role/t",
+		"memory_store":["session","episodic"]
+	}`
+	cfg, err := parseConfig(raw)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(cfg.Memory.Strategies) != 1 {
+		t.Fatalf("expected 1 strategy after dedup, got %v",
+			cfg.Memory.Strategies)
+	}
+	if cfg.Memory.Strategies[0] != "episodic" {
+		t.Errorf("strategy = %q, want episodic", cfg.Memory.Strategies[0])
+	}
+}
+
+func TestParseConfig_MemoryStore_ObjectForm(t *testing.T) {
+	raw := `{
+		"region":"us-west-2",
+		"runtime_role_arn":"arn:aws:iam::123456789012:role/t",
+		"memory_store":{
+			"strategies":["episodic","semantic"],
+			"event_expiry_days":90,
+			"encryption_key_arn":"arn:aws:kms:us-west-2:123456789012:key/abc"
+		}
+	}`
+	cfg, err := parseConfig(raw)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(cfg.Memory.Strategies) != 2 {
+		t.Fatalf("strategies = %v, want [episodic semantic]",
+			cfg.Memory.Strategies)
+	}
+	if cfg.Memory.EventExpiryDays != 90 {
+		t.Errorf("event_expiry_days = %d, want 90",
+			cfg.Memory.EventExpiryDays)
+	}
+	if cfg.Memory.EncryptionKeyARN !=
+		"arn:aws:kms:us-west-2:123456789012:key/abc" {
+		t.Errorf("encryption_key_arn = %q", cfg.Memory.EncryptionKeyARN)
+	}
+}
+
+func TestParseConfig_MemoryStore_ObjectWithAliases(t *testing.T) {
+	raw := `{
+		"region":"us-west-2",
+		"runtime_role_arn":"arn:aws:iam::123456789012:role/t",
+		"memory_store":{"strategies":["session","persistent"]}
+	}`
+	cfg, err := parseConfig(raw)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := []string{"episodic", "semantic"}
+	if len(cfg.Memory.Strategies) != len(want) {
+		t.Fatalf("strategies = %v, want %v", cfg.Memory.Strategies, want)
+	}
+}
+
+func TestParseConfig_MemoryStore_InvalidInArray(t *testing.T) {
+	raw := `{
+		"region":"us-west-2",
+		"runtime_role_arn":"arn:aws:iam::123456789012:role/t",
+		"memory_store":["episodic","bogus"]
+	}`
+	_, err := parseConfig(raw)
+	if err == nil {
+		t.Fatal("expected error for invalid strategy in array")
+	}
+}
+
+func TestHasMemory(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  Config
+		want bool
+	}{
+		{"no memory", Config{}, false},
+		{"empty strategies", Config{Memory: MemoryConfig{}}, false},
+		{
+			"with strategies",
+			Config{Memory: MemoryConfig{Strategies: []string{"episodic"}}},
+			true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.cfg.HasMemory(); got != tt.want {
+				t.Errorf("HasMemory() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestMemoryStrategiesCSV(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  Config
+		want string
+	}{
+		{"empty", Config{}, ""},
+		{
+			"single",
+			Config{Memory: MemoryConfig{Strategies: []string{"episodic"}}},
+			"episodic",
+		},
+		{
+			"multiple",
+			Config{
+				Memory: MemoryConfig{
+					Strategies: []string{"episodic", "semantic", "summary"},
+				},
+			},
+			"episodic,semantic,summary",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.cfg.MemoryStrategiesCSV(); got != tt.want {
+				t.Errorf("MemoryStrategiesCSV() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestValidateMemory_ExpiryRange(t *testing.T) {
+	tests := []struct {
+		name     string
+		mem      MemoryConfig
+		wantErrs int
+	}{
+		{
+			"valid expiry",
+			MemoryConfig{Strategies: []string{"episodic"}, EventExpiryDays: 30},
+			0,
+		},
+		{
+			"min boundary",
+			MemoryConfig{Strategies: []string{"episodic"}, EventExpiryDays: 3},
+			0,
+		},
+		{
+			"max boundary",
+			MemoryConfig{Strategies: []string{"episodic"}, EventExpiryDays: 365},
+			0,
+		},
+		{
+			"below min",
+			MemoryConfig{Strategies: []string{"episodic"}, EventExpiryDays: 2},
+			1,
+		},
+		{
+			"above max",
+			MemoryConfig{Strategies: []string{"episodic"}, EventExpiryDays: 366},
+			1,
+		},
+		{
+			"zero is valid (means default)",
+			MemoryConfig{Strategies: []string{"episodic"}, EventExpiryDays: 0},
+			0,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			errs := validateMemory(&tt.mem)
+			if len(errs) != tt.wantErrs {
+				t.Errorf("got %d errors %v, want %d",
+					len(errs), errs, tt.wantErrs)
+			}
+		})
+	}
+}
+
+func TestValidateMemory_EncryptionKeyARN(t *testing.T) {
+	tests := []struct {
+		name     string
+		arn      string
+		wantErrs int
+	}{
+		{"empty is valid", "", 0},
+		{
+			"valid KMS ARN",
+			"arn:aws:kms:us-west-2:123456789012:key/abc-123",
+			0,
+		},
+		{"invalid ARN", "not-an-arn", 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mem := MemoryConfig{
+				Strategies:       []string{"episodic"},
+				EncryptionKeyARN: tt.arn,
+			}
+			errs := validateMemory(&mem)
+			if len(errs) != tt.wantErrs {
+				t.Errorf("got %d errors %v, want %d",
+					len(errs), errs, tt.wantErrs)
+			}
+		})
+	}
+}
+
+func TestValidateMemory_NoStrategies(t *testing.T) {
+	mem := MemoryConfig{}
+	errs := validateMemory(&mem)
+	if len(errs) != 0 {
+		t.Errorf("expected 0 errors for empty strategies, got %d: %v",
+			len(errs), errs)
+	}
+}
+
+func TestResolveAlias(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"session", "episodic"},
+		{"persistent", "semantic"},
+		{"episodic", "episodic"},
+		{"semantic", "semantic"},
+		{"summary", "summary"},
+		{"user_preference", "user_preference"},
+		{"unknown", "unknown"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			if got := resolveAlias(tt.input); got != tt.want {
+				t.Errorf("resolveAlias(%q) = %q, want %q",
+					tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseConfig_MemoryStore_NullOmitted(t *testing.T) {
+	raw := `{
+		"region":"us-west-2",
+		"runtime_role_arn":"arn:aws:iam::123456789012:role/t",
+		"memory_store":null
+	}`
+	cfg, err := parseConfig(raw)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.HasMemory() {
+		t.Error("expected no memory when memory_store is null")
 	}
 }

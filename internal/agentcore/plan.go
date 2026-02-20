@@ -72,13 +72,13 @@ func generateDesiredResources(pack *prompt.Pack, cfg *Config) []deploy.ResourceC
 	var desired []deploy.ResourceChange
 
 	// Memory resource (before tools/runtimes).
-	if cfg.MemoryStore != "" {
+	if cfg.HasMemory() {
 		memName := pack.ID + "_memory"
 		desired = append(desired, deploy.ResourceChange{
 			Type:   ResTypeMemory,
 			Name:   memName,
 			Action: deploy.ActionCreate,
-			Detail: fmt.Sprintf("Create memory store (%s) for %s", cfg.MemoryStore, pack.ID),
+			Detail: fmt.Sprintf("Create memory store (%s) for %s", cfg.MemoryStrategiesCSV(), pack.ID),
 		})
 	}
 
