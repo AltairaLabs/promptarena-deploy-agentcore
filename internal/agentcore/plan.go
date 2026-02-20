@@ -28,7 +28,13 @@ func (p *Provider) Plan(_ context.Context, req *deploy.PlanRequest) (*deploy.Pla
 		return nil, fmt.Errorf("agentcore: config validation failed: %s", errs[0])
 	}
 
-	// 3. Parse prior state (if any).
+	// 3. Parse the arena config.
+	cfg.ArenaConfig, err = parseArenaConfig(req.ArenaConfig)
+	if err != nil {
+		return nil, fmt.Errorf("agentcore: %w", err)
+	}
+
+	// 4. Parse prior state (if any).
 	var prior *AdapterState
 	if req.PriorState != "" {
 		prior = &AdapterState{}
@@ -37,13 +43,13 @@ func (p *Provider) Plan(_ context.Context, req *deploy.PlanRequest) (*deploy.Pla
 		}
 	}
 
-	// 4. Generate desired resources.
+	// 5. Generate desired resources.
 	desired := generateDesiredResources(pack, cfg)
 
-	// 5. Diff against prior state.
+	// 6. Diff against prior state.
 	changes := diffResources(desired, prior)
 
-	// 6. Build summary.
+	// 7. Build summary.
 	summary := buildSummary(changes)
 
 	return &deploy.PlanResponse{

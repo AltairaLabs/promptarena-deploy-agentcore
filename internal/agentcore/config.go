@@ -50,6 +50,10 @@ type Config struct {
 	// GatewayARN is populated at apply-time after the tool gateway phase.
 	// Used by Cedar tool policies that need a specific gateway resource. NOT serialized.
 	GatewayARN string `json:"-"`
+
+	// ArenaConfig is the parsed arena configuration, populated from
+	// PlanRequest.ArenaConfig. NOT part of the deploy config JSON.
+	ArenaConfig *ArenaConfig `json:"-"`
 }
 
 // AgentOverride holds per-agent configuration overrides.

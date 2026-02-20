@@ -243,6 +243,7 @@ func TestApply_SingleAgent_StreamsCorrectEvents(t *testing.T) {
 	req := &deploy.PlanRequest{
 		PackJSON:     singleAgentPack(),
 		DeployConfig: validConfig(),
+		ArenaConfig:  validArenaConfigJSON,
 	}
 
 	events, stateStr, err := collectEvents(t, provider, req)
@@ -301,6 +302,7 @@ func TestApply_SingleAgentWithTools(t *testing.T) {
 	req := &deploy.PlanRequest{
 		PackJSON:     singleAgentPackWithTools(),
 		DeployConfig: validConfig(),
+		ArenaConfig:  validArenaConfigJSON,
 	}
 
 	events, stateStr, err := collectEvents(t, provider, req)
@@ -342,6 +344,7 @@ func TestApply_MultiAgent_DependencyOrder(t *testing.T) {
 	req := &deploy.PlanRequest{
 		PackJSON:     multiAgentPack(),
 		DeployConfig: validConfig(),
+		ArenaConfig:  validArenaConfigJSON,
 	}
 
 	events, stateStr, err := collectEvents(t, provider, req)
@@ -419,6 +422,7 @@ func TestApply_MultiAgentWithEvals(t *testing.T) {
 	req := &deploy.PlanRequest{
 		PackJSON:     multiAgentPackWithEvals(),
 		DeployConfig: validConfig(),
+		ArenaConfig:  validArenaConfigJSON,
 	}
 
 	events, stateStr, err := collectEvents(t, provider, req)
@@ -482,6 +486,7 @@ func TestApply_StateContainsAllResourceInfo(t *testing.T) {
 	req := &deploy.PlanRequest{
 		PackJSON:     multiAgentPack(),
 		DeployConfig: validConfig(),
+		ArenaConfig:  validArenaConfigJSON,
 	}
 
 	_, stateStr, err := collectEvents(t, provider, req)
@@ -541,6 +546,7 @@ func TestApply_PartialFailure_ReturnsStateForSuccessfulResources(t *testing.T) {
 	req := &deploy.PlanRequest{
 		PackJSON:     multiAgentPack(),
 		DeployConfig: validConfig(),
+		ArenaConfig:  validArenaConfigJSON,
 	}
 
 	events, stateStr, err := collectEvents(t, provider, req)
@@ -600,6 +606,7 @@ func TestApply_ProgressMessages(t *testing.T) {
 	req := &deploy.PlanRequest{
 		PackJSON:     multiAgentPack(),
 		DeployConfig: validConfig(),
+		ArenaConfig:  validArenaConfigJSON,
 	}
 
 	events, _, err := collectEvents(t, provider, req)
@@ -652,6 +659,7 @@ func TestApply_BadPackJSON(t *testing.T) {
 	req := &deploy.PlanRequest{
 		PackJSON:     `{not valid}`,
 		DeployConfig: validConfig(),
+		ArenaConfig:  validArenaConfigJSON,
 	}
 
 	_, _, err := collectEvents(t, provider, req)
@@ -668,6 +676,7 @@ func TestApply_BadDeployConfig(t *testing.T) {
 	req := &deploy.PlanRequest{
 		PackJSON:     singleAgentPack(),
 		DeployConfig: `{not valid}`,
+		ArenaConfig:  validArenaConfigJSON,
 	}
 
 	_, _, err := collectEvents(t, provider, req)
@@ -697,6 +706,7 @@ func TestApply_EmptyPack_CreatesRuntimeOnly(t *testing.T) {
 	req := &deploy.PlanRequest{
 		PackJSON:     string(packJSON),
 		DeployConfig: validConfig(),
+		ArenaConfig:  validArenaConfigJSON,
 	}
 
 	events, stateStr, err := collectEvents(t, provider, req)
@@ -737,6 +747,7 @@ func TestApply_AWSClientFactoryError(t *testing.T) {
 	req := &deploy.PlanRequest{
 		PackJSON:     singleAgentPack(),
 		DeployConfig: validConfig(),
+		ArenaConfig:  validArenaConfigJSON,
 	}
 
 	_, _, err := collectEvents(t, provider, req)
@@ -764,6 +775,7 @@ func TestApply_ToolFailure_ContinuesToRuntime(t *testing.T) {
 	req := &deploy.PlanRequest{
 		PackJSON:     singleAgentPackWithTools(),
 		DeployConfig: validConfig(),
+		ArenaConfig:  validArenaConfigJSON,
 	}
 
 	events, stateStr, err := collectEvents(t, provider, req)
@@ -821,6 +833,7 @@ func TestApply_RuntimeFailure(t *testing.T) {
 	req := &deploy.PlanRequest{
 		PackJSON:     singleAgentPack(),
 		DeployConfig: validConfig(),
+		ArenaConfig:  validArenaConfigJSON,
 	}
 
 	_, stateStr, err := collectEvents(t, provider, req)
@@ -845,6 +858,7 @@ func TestApply_CallbackError_AbortsEarly(t *testing.T) {
 	req := &deploy.PlanRequest{
 		PackJSON:     singleAgentPack(),
 		DeployConfig: validConfig(),
+		ArenaConfig:  validArenaConfigJSON,
 	}
 
 	callCount := 0
@@ -898,6 +912,7 @@ func TestApply_EvalWithEmptyID(t *testing.T) {
 	req := &deploy.PlanRequest{
 		PackJSON:     string(packJSON),
 		DeployConfig: validConfig(),
+		ArenaConfig:  validArenaConfigJSON,
 	}
 
 	events, _, err := collectEvents(t, provider, req)
@@ -952,6 +967,7 @@ func TestApply_NonLLMEvals_Skipped(t *testing.T) {
 	req := &deploy.PlanRequest{
 		PackJSON:     string(packJSON),
 		DeployConfig: validConfig(),
+		ArenaConfig:  validArenaConfigJSON,
 	}
 
 	events, _, err := collectEvents(t, provider, req)
@@ -982,6 +998,7 @@ func TestApply_EvalFailure(t *testing.T) {
 	req := &deploy.PlanRequest{
 		PackJSON:     multiAgentPackWithEvals(),
 		DeployConfig: validConfig(),
+		ArenaConfig:  validArenaConfigJSON,
 	}
 
 	_, stateStr, err := collectEvents(t, provider, req)
@@ -1006,6 +1023,7 @@ func TestApply_NoEvals_NoOnlineEvalConfig(t *testing.T) {
 	req := &deploy.PlanRequest{
 		PackJSON:     singleAgentPack(),
 		DeployConfig: validConfig(),
+		ArenaConfig:  validArenaConfigJSON,
 	}
 
 	events, _, err := collectEvents(t, provider, req)
@@ -1037,6 +1055,7 @@ func TestApply_OnlineEvalConfigFailure_ContinuesApply(t *testing.T) {
 	req := &deploy.PlanRequest{
 		PackJSON:     multiAgentPackWithEvals(),
 		DeployConfig: validConfig(),
+		ArenaConfig:  validArenaConfigJSON,
 	}
 
 	events, stateStr, err := collectEvents(t, provider, req)
@@ -1094,6 +1113,7 @@ func TestApply_SingleAgent_Update(t *testing.T) {
 		PackJSON:     singleAgentPack(),
 		DeployConfig: validConfig(),
 		PriorState:   priorStateWithRuntime("mypack", priorARN),
+		ArenaConfig:  validArenaConfigJSON,
 	}
 
 	events, stateStr, err := collectEvents(t, provider, req)
@@ -1166,6 +1186,7 @@ func TestApply_MixedCreateAndUpdate(t *testing.T) {
 		PackJSON:     multiAgentPack(),
 		DeployConfig: validConfig(),
 		PriorState:   string(priorJSON),
+		ArenaConfig:  validArenaConfigJSON,
 	}
 
 	events, stateStr, err := collectEvents(t, provider, req)
@@ -1237,6 +1258,7 @@ func TestApply_UpdateRuntime_Failure(t *testing.T) {
 		PackJSON:     singleAgentPack(),
 		DeployConfig: validConfig(),
 		PriorState:   priorStateWithRuntime("mypack", priorARN),
+		ArenaConfig:  validArenaConfigJSON,
 	}
 
 	_, stateStr, err := collectEvents(t, provider, req)
@@ -1266,6 +1288,7 @@ func TestApply_WithMemory_CreatesMemoryResource(t *testing.T) {
 	req := &deploy.PlanRequest{
 		PackJSON:     singleAgentPack(),
 		DeployConfig: validConfigWithMemory(),
+		ArenaConfig:  validArenaConfigJSON,
 	}
 
 	events, stateStr, err := collectEvents(t, provider, req)
@@ -1341,6 +1364,7 @@ func TestApply_WithMemory_Failure(t *testing.T) {
 	req := &deploy.PlanRequest{
 		PackJSON:     singleAgentPack(),
 		DeployConfig: validConfigWithMemory(),
+		ArenaConfig:  validArenaConfigJSON,
 	}
 
 	_, stateStr, err := collectEvents(t, provider, req)
@@ -1376,6 +1400,7 @@ func TestApply_WithoutMemory_NoMemoryResource(t *testing.T) {
 	req := &deploy.PlanRequest{
 		PackJSON:     singleAgentPack(),
 		DeployConfig: validConfig(),
+		ArenaConfig:  validArenaConfigJSON,
 	}
 
 	events, _, err := collectEvents(t, provider, req)
@@ -1412,6 +1437,7 @@ func TestApply_MultiAgent_EntryAgentGetsEndpoints(t *testing.T) {
 	req := &deploy.PlanRequest{
 		PackJSON:     multiAgentPack(),
 		DeployConfig: validConfig(),
+		ArenaConfig:  validArenaConfigJSON,
 	}
 
 	events, _, err := collectEvents(t, provider, req)
@@ -1513,6 +1539,7 @@ func TestApply_WithValidators_NoPolicyResources(t *testing.T) {
 	req := &deploy.PlanRequest{
 		PackJSON:     singleAgentPackWithValidators(),
 		DeployConfig: validConfig(),
+		ArenaConfig:  validArenaConfigJSON,
 	}
 
 	events, _, err := collectEvents(t, provider, req)
@@ -1533,6 +1560,7 @@ func TestApply_WithToolPolicy_CreatesPolicyResources(t *testing.T) {
 	req := &deploy.PlanRequest{
 		PackJSON:     singleAgentPackWithToolPolicy(),
 		DeployConfig: validConfig(),
+		ArenaConfig:  validArenaConfigJSON,
 	}
 
 	events, _, err := collectEvents(t, provider, req)
@@ -1557,6 +1585,7 @@ func TestApply_NoValidators_NoPolicyResources(t *testing.T) {
 	req := &deploy.PlanRequest{
 		PackJSON:     singleAgentPack(),
 		DeployConfig: validConfig(),
+		ArenaConfig:  validArenaConfigJSON,
 	}
 
 	events, _, err := collectEvents(t, provider, req)
@@ -1589,6 +1618,7 @@ func TestApply_PolicyEngineFailure_ContinuesToRuntime(t *testing.T) {
 	req := &deploy.PlanRequest{
 		PackJSON:     singleAgentPackWithToolPolicy(),
 		DeployConfig: validConfig(),
+		ArenaConfig:  validArenaConfigJSON,
 	}
 
 	events, stateStr, err := collectEvents(t, provider, req)
@@ -1655,6 +1685,7 @@ func TestApply_DryRun_SingleAgent_NoAWSCalls(t *testing.T) {
 	req := &deploy.PlanRequest{
 		PackJSON:     singleAgentPack(),
 		DeployConfig: validConfigDryRun(),
+		ArenaConfig:  validArenaConfigJSON,
 	}
 
 	events, stateStr, err := collectEvents(t, provider, req)
@@ -1711,6 +1742,7 @@ func TestApply_DryRun_WithTools_PlansAllResources(t *testing.T) {
 	req := &deploy.PlanRequest{
 		PackJSON:     singleAgentPackWithTools(),
 		DeployConfig: validConfigDryRun(),
+		ArenaConfig:  validArenaConfigJSON,
 	}
 
 	events, stateStr, err := collectEvents(t, provider, req)
@@ -1753,6 +1785,7 @@ func TestApply_DryRun_MultiAgent_PlansAllResources(t *testing.T) {
 	req := &deploy.PlanRequest{
 		PackJSON:     multiAgentPack(),
 		DeployConfig: validConfigDryRun(),
+		ArenaConfig:  validArenaConfigJSON,
 	}
 
 	events, stateStr, err := collectEvents(t, provider, req)
@@ -1806,6 +1839,7 @@ func TestApply_DryRun_WithMemory_PlansMemoryResource(t *testing.T) {
 	req := &deploy.PlanRequest{
 		PackJSON:     singleAgentPack(),
 		DeployConfig: cfg,
+		ArenaConfig:  validArenaConfigJSON,
 	}
 
 	events, stateStr, err := collectEvents(t, provider, req)
@@ -1855,6 +1889,7 @@ func TestApply_DryRun_EmitsProgressEvents(t *testing.T) {
 	req := &deploy.PlanRequest{
 		PackJSON:     singleAgentPack(),
 		DeployConfig: validConfigDryRun(),
+		ArenaConfig:  validArenaConfigJSON,
 	}
 
 	events, _, err := collectEvents(t, provider, req)
@@ -1886,6 +1921,7 @@ func TestApply_DryRun_BadPackJSON(t *testing.T) {
 	req := &deploy.PlanRequest{
 		PackJSON:     `{not valid}`,
 		DeployConfig: validConfigDryRun(),
+		ArenaConfig:  validArenaConfigJSON,
 	}
 
 	_, _, err := collectEvents(t, provider, req)
@@ -1907,6 +1943,7 @@ func TestApply_DryRun_CallbackError_AbortsEarly(t *testing.T) {
 	req := &deploy.PlanRequest{
 		PackJSON:     singleAgentPack(),
 		DeployConfig: validConfigDryRun(),
+		ArenaConfig:  validArenaConfigJSON,
 	}
 
 	callCount := 0
@@ -1932,6 +1969,7 @@ func TestApply_DryRunFalse_StillCallsAWS(t *testing.T) {
 	req := &deploy.PlanRequest{
 		PackJSON:     singleAgentPack(),
 		DeployConfig: `{"region":"us-west-2","runtime_role_arn":"arn:aws:iam::123456789012:role/test","container_image":"123456789012.dkr.ecr.us-west-2.amazonaws.com/promptkit-agentcore:latest","dry_run":false}`,
+		ArenaConfig:  validArenaConfigJSON,
 	}
 
 	events, stateStr, err := collectEvents(t, provider, req)
@@ -2072,6 +2110,7 @@ func TestApply_SingleAgent_ResourceTagsIncludePackMetadata(t *testing.T) {
 	req := &deploy.PlanRequest{
 		PackJSON:     singleAgentPack(),
 		DeployConfig: validConfig(),
+		ArenaConfig:  validArenaConfigJSON,
 	}
 
 	_, _, err := collectEvents(t, provider, req)
@@ -2109,6 +2148,7 @@ func TestApply_SingleAgent_ResourceTagsIncludeUserTags(t *testing.T) {
 	req := &deploy.PlanRequest{
 		PackJSON:     singleAgentPack(),
 		DeployConfig: validConfigWithTags(),
+		ArenaConfig:  validArenaConfigJSON,
 	}
 
 	_, _, err := collectEvents(t, provider, req)
@@ -2150,6 +2190,7 @@ func TestApply_WithTools_TagsAppliedToGateway(t *testing.T) {
 	req := &deploy.PlanRequest{
 		PackJSON:     singleAgentPackWithTools(),
 		DeployConfig: validConfigWithTags(),
+		ArenaConfig:  validArenaConfigJSON,
 	}
 
 	_, _, err := collectEvents(t, provider, req)
@@ -2198,6 +2239,7 @@ func TestApply_WithMemory_TagsAppliedToMemory(t *testing.T) {
 	req := &deploy.PlanRequest{
 		PackJSON:     singleAgentPack(),
 		DeployConfig: cfgWithTags,
+		ArenaConfig:  validArenaConfigJSON,
 	}
 
 	_, _, err := collectEvents(t, provider, req)
@@ -2234,6 +2276,7 @@ func TestApply_NoTags_ResourceTagsHaveDefaultsOnly(t *testing.T) {
 	req := &deploy.PlanRequest{
 		PackJSON:     singleAgentPack(),
 		DeployConfig: validConfig(),
+		ArenaConfig:  validArenaConfigJSON,
 	}
 
 	_, _, err := collectEvents(t, provider, req)
@@ -2255,5 +2298,59 @@ func TestApply_NoTags_ResourceTagsHaveDefaultsOnly(t *testing.T) {
 	}
 	if tags[TagKeyVersion] != "v1.0.0" {
 		t.Errorf("version = %q, want v1.0.0", tags[TagKeyVersion])
+	}
+}
+
+func TestApply_MissingArenaConfig(t *testing.T) {
+	provider := newSimulatedProvider()
+	req := &deploy.PlanRequest{
+		PackJSON:     singleAgentPack(),
+		DeployConfig: validConfig(),
+	}
+
+	_, _, err := collectEvents(t, provider, req)
+	if err == nil {
+		t.Fatal("expected error for missing arena config")
+	}
+	if !strings.Contains(err.Error(), "arena_config is required") {
+		t.Errorf("error = %q, want 'arena_config is required'", err.Error())
+	}
+}
+
+func TestApply_InvalidArenaConfig(t *testing.T) {
+	provider := newSimulatedProvider()
+	req := &deploy.PlanRequest{
+		PackJSON:     singleAgentPack(),
+		DeployConfig: validConfig(),
+		ArenaConfig:  `{bad json`,
+	}
+
+	_, _, err := collectEvents(t, provider, req)
+	if err == nil {
+		t.Fatal("expected error for invalid arena config JSON")
+	}
+	if !strings.Contains(err.Error(), "invalid arena_config JSON") {
+		t.Errorf("error = %q, want 'invalid arena_config JSON'", err.Error())
+	}
+}
+
+func TestApply_DryRun_MissingArenaConfig(t *testing.T) {
+	provider := &Provider{
+		awsClientFunc: func(_ context.Context, _ *Config) (awsClient, error) {
+			panic("dry-run should not create AWS client")
+		},
+	}
+
+	req := &deploy.PlanRequest{
+		PackJSON:     singleAgentPack(),
+		DeployConfig: validConfigDryRun(),
+	}
+
+	_, _, err := collectEvents(t, provider, req)
+	if err == nil {
+		t.Fatal("expected error for missing arena config in dry-run")
+	}
+	if !strings.Contains(err.Error(), "arena_config is required") {
+		t.Errorf("error = %q, want 'arena_config is required'", err.Error())
 	}
 }
