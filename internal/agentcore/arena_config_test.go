@@ -112,15 +112,6 @@ func TestParseArenaConfig_WithMCPServers(t *testing.T) {
 	}
 }
 
-// toolSpecForName returns the tool spec with the given name, or nil if
-// not found. Defined in test file until production code needs it.
-func (a *ArenaConfig) toolSpecForName(name string) *ArenaToolSpec {
-	if a == nil || a.ToolSpecs == nil {
-		return nil
-	}
-	return a.ToolSpecs[name]
-}
-
 func TestArenaConfig_ToolSpecForName(t *testing.T) {
 	cfg := &ArenaConfig{
 		ToolSpecs: map[string]*ArenaToolSpec{

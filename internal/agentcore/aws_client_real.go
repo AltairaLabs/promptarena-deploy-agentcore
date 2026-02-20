@@ -285,15 +285,9 @@ func (c *realAWSClient) CreateGatewayTool(
 	}
 
 	targetOut, err := c.client.CreateGatewayTarget(ctx, &bedrockagentcorecontrol.CreateGatewayTargetInput{
-		GatewayIdentifier: aws.String(c.gatewayID),
-		Name:              aws.String(name),
-		TargetConfiguration: &types.TargetConfigurationMemberMcp{
-			Value: &types.McpTargetConfigurationMemberMcpServer{
-				Value: types.McpServerTargetConfiguration{
-					Endpoint: aws.String(fmt.Sprintf("https://%s.mcp.local", name)),
-				},
-			},
-		},
+		GatewayIdentifier:   aws.String(c.gatewayID),
+		Name:                aws.String(name),
+		TargetConfiguration: buildTargetConfig(name, cfg),
 	})
 	if err != nil {
 		if isConflictError(err) {

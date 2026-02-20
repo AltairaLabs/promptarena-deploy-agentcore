@@ -34,6 +34,15 @@ type ArenaMCPServer struct {
 	Args    []string `json:"args,omitempty"`
 }
 
+// toolSpecForName returns the tool spec with the given name, or nil if
+// not found.
+func (a *ArenaConfig) toolSpecForName(name string) *ArenaToolSpec {
+	if a == nil || a.ToolSpecs == nil {
+		return nil
+	}
+	return a.ToolSpecs[name]
+}
+
 // parseArenaConfig deserializes the arena config JSON string.
 func parseArenaConfig(raw string) (*ArenaConfig, error) {
 	if raw == "" {
