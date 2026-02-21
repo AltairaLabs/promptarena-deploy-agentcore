@@ -34,11 +34,15 @@ func integrationConfig(t *testing.T) *Config {
 	return &Config{
 		Region:         region,
 		RuntimeRoleARN: roleARN,
+		ContainerImage: os.Getenv("AGENTCORE_TEST_CONTAINER_IMAGE"),
 	}
 }
 
 func TestIntegration_CreateAndDeleteRuntime(t *testing.T) {
 	cfg := integrationConfig(t)
+	if cfg.ContainerImage == "" {
+		t.Skip("AGENTCORE_TEST_CONTAINER_IMAGE must be set")
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 
@@ -47,7 +51,7 @@ func TestIntegration_CreateAndDeleteRuntime(t *testing.T) {
 		t.Fatalf("failed to create real client: %v", err)
 	}
 
-	name := "promptkit-integration-test"
+	name := "promptkitIntegTest"
 	arn, err := client.CreateRuntime(ctx, name, cfg)
 	if err != nil {
 		t.Fatalf("CreateRuntime failed: %v", err)
@@ -94,7 +98,7 @@ func TestIntegration_CreateAndDeleteGateway(t *testing.T) {
 		t.Fatalf("failed to create real client: %v", err)
 	}
 
-	name := "promptkit_integ_tool"
+	name := "promptkitIntegTool"
 	arn, err := client.CreateGatewayTool(ctx, name, cfg)
 	if err != nil {
 		t.Fatalf("CreateGatewayTool failed: %v", err)
