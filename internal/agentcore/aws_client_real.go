@@ -721,7 +721,9 @@ const (
 	sdkStrategyNameUserPreference = "user_preference_memory"
 )
 
-// CreateMemory provisions a memory resource via the AWS API.
+// CreateMemory provisions a memory resource via the AWS API and polls until
+// it reaches ACTIVE status. If a memory with the same name already exists,
+// it is adopted.
 func (c *realAWSClient) CreateMemory(
 	ctx context.Context, name string, cfg *Config,
 ) (string, error) {
@@ -736,7 +738,7 @@ func (c *realAWSClient) CreateMemory(
 	}
 
 	if cfg.Memory.EncryptionKeyARN != "" {
-		input.ClientToken = aws.String(cfg.Memory.EncryptionKeyARN)
+		input.EncryptionKeyArn = aws.String(cfg.Memory.EncryptionKeyARN)
 	}
 
 	input.MemoryStrategies = memoryStrategies(cfg.Memory.Strategies)
@@ -744,12 +746,94 @@ func (c *realAWSClient) CreateMemory(
 		input.Tags = cfg.ResourceTags
 	}
 
-	out, err := c.client.CreateMemory(ctx, input)
-	if err != nil {
-		return "", fmt.Errorf("CreateMemory %q: %w", name, err)
-	}
+	return c.createMemoryWithRetry(ctx, name, input)
+}
 
-	return aws.ToString(out.Memory.Arn), nil
+// createMemoryWithRetry attempts to create a memory, handling the case where
+// a memory with the same name already exists. If the existing memory is being
+// deleted, it waits for deletion to complete and retries.
+func (c *realAWSClient) createMemoryWithRetry(
+	ctx context.Context, name string, input *bedrockagentcorecontrol.CreateMemoryInput,
+) (string, error) {
+	for range maxPollAttempts {
+		out, err := c.client.CreateMemory(ctx, input)
+		if err == nil {
+			memoryID := aws.ToString(out.Memory.Id)
+			if pollErr := c.waitForMemoryActive(ctx, memoryID); pollErr != nil {
+				return aws.ToString(out.Memory.Arn),
+					fmt.Errorf("memory %q created but not active: %w", name, pollErr)
+			}
+			return aws.ToString(out.Memory.Arn), nil
+		}
+		if !isMemoryAlreadyExists(err) {
+			return "", fmt.Errorf("CreateMemory %q: %w", name, err)
+		}
+		// Memory already exists — try to adopt it.
+		arn, findErr := c.findMemoryByName(ctx, name)
+		if findErr == nil {
+			log.Printf("agentcore: memory %q already exists, adopting", name)
+			return arn, nil
+		}
+		// Not found means the old memory is still deleting. Wait and retry.
+		log.Printf("agentcore: memory %q exists but is deleting, waiting to retry", name)
+		time.Sleep(pollInterval)
+	}
+	return "", fmt.Errorf("memory %q: timed out waiting for previous deletion", name)
+}
+
+// isMemoryAlreadyExists checks for the "already exists" validation error
+// returned by CreateMemory (unlike other resources that return ConflictException).
+func isMemoryAlreadyExists(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "already exists")
+}
+
+// findMemoryByName lists memories and returns the ARN of one matching name,
+// waiting for it to reach ACTIVE status.
+func (c *realAWSClient) findMemoryByName(ctx context.Context, name string) (string, error) {
+	out, err := c.client.ListMemories(ctx, &bedrockagentcorecontrol.ListMemoriesInput{
+		MaxResults: aws.Int32(listPageSize),
+	})
+	if err != nil {
+		return "", err
+	}
+	for _, m := range out.Memories {
+		id := aws.ToString(m.Id)
+		// Memory IDs include the name as a prefix (e.g. "myname-AbCdEfGh").
+		// Skip memories that are being deleted — they can't be adopted.
+		if strings.HasPrefix(id, name) && m.Status != types.MemoryStatusDeleting {
+			if err := c.waitForMemoryActive(ctx, id); err != nil {
+				return aws.ToString(m.Arn), err
+			}
+			return aws.ToString(m.Arn), nil
+		}
+	}
+	return "", fmt.Errorf("memory %q not found", name)
+}
+
+// waitForMemoryActive polls GetMemory until the status is ACTIVE or a
+// terminal failure state.
+func (c *realAWSClient) waitForMemoryActive(ctx context.Context, id string) error {
+	for range maxPollAttempts {
+		out, err := c.client.GetMemory(ctx, &bedrockagentcorecontrol.GetMemoryInput{
+			MemoryId: aws.String(id),
+		})
+		if err != nil {
+			return fmt.Errorf("polling memory %q: %w", id, err)
+		}
+		if out.Memory == nil {
+			return fmt.Errorf("memory %q: nil response", id)
+		}
+		switch out.Memory.Status {
+		case types.MemoryStatusActive:
+			return nil
+		case types.MemoryStatusFailed:
+			return fmt.Errorf("memory %q entered status FAILED", id)
+		case types.MemoryStatusCreating, types.MemoryStatusDeleting:
+			// Transitional — keep polling.
+		}
+		time.Sleep(pollInterval)
+	}
+	return fmt.Errorf("memory %q did not become active after %d attempts", id, maxPollAttempts)
 }
 
 // resolveExpiryDays returns the configured expiry or the default.
@@ -926,6 +1010,15 @@ func (c *realAWSClient) deleteMemory(ctx context.Context, res ResourceState) err
 	if id == "" {
 		id = res.Name
 	}
+
+	// Wait for memory to reach a non-transitional state before deleting.
+	if err := c.waitForMemoryActive(ctx, id); err != nil {
+		// If memory is in FAILED state or not found, proceed with deletion anyway.
+		if isNotFound(err) {
+			return nil
+		}
+	}
+
 	_, err := c.client.DeleteMemory(ctx, &bedrockagentcorecontrol.DeleteMemoryInput{
 		MemoryId: aws.String(id),
 	})
@@ -940,11 +1033,92 @@ func (c *realAWSClient) deleteGateway(ctx context.Context, res ResourceState) er
 	if id == "" {
 		id = res.Name
 	}
+
+	// Delete all targets before the gateway — AWS rejects gateway deletion
+	// while targets are still associated.
+	if err := c.purgeAllGatewayTargets(ctx, id); err != nil {
+		return fmt.Errorf("purge targets before DeleteGateway %q: %w", res.Name, err)
+	}
+
 	_, err := c.client.DeleteGateway(ctx, &bedrockagentcorecontrol.DeleteGatewayInput{
 		GatewayIdentifier: aws.String(id),
 	})
 	if err != nil && !isNotFound(err) {
 		return fmt.Errorf("DeleteGateway %q: %w", res.Name, err)
+	}
+	return nil
+}
+
+// purgeAllGatewayTargets lists and deletes every target within a gateway,
+// then waits for all deletions to complete before returning.
+func (c *realAWSClient) purgeAllGatewayTargets(ctx context.Context, gatewayID string) error {
+	var nextToken *string
+	for {
+		out, err := c.client.ListGatewayTargets(ctx, &bedrockagentcorecontrol.ListGatewayTargetsInput{
+			GatewayIdentifier: aws.String(gatewayID),
+			MaxResults:        aws.Int32(listPageSize),
+			NextToken:         nextToken,
+		})
+		if err != nil {
+			if isNotFound(err) {
+				return nil
+			}
+			return fmt.Errorf("ListGatewayTargets on gateway %q: %w", gatewayID, err)
+		}
+		if err := c.deleteGatewayTargetBatch(ctx, gatewayID, out.Items); err != nil {
+			return err
+		}
+		if out.NextToken == nil {
+			break
+		}
+		nextToken = out.NextToken
+	}
+
+	// Target deletion is async — wait until all targets are fully removed
+	// before returning, so the caller can safely delete the gateway.
+	return c.waitForGatewayTargetsDrained(ctx, gatewayID)
+}
+
+// waitForGatewayTargetsDrained polls ListGatewayTargets until no targets
+// remain (all DELETING targets have been fully removed).
+func (c *realAWSClient) waitForGatewayTargetsDrained(ctx context.Context, gatewayID string) error {
+	for range maxPollAttempts {
+		out, err := c.client.ListGatewayTargets(ctx, &bedrockagentcorecontrol.ListGatewayTargetsInput{
+			GatewayIdentifier: aws.String(gatewayID),
+			MaxResults:        aws.Int32(listPageSize),
+		})
+		if err != nil {
+			if isNotFound(err) {
+				return nil
+			}
+			return fmt.Errorf("polling gateway targets on %q: %w", gatewayID, err)
+		}
+		if len(out.Items) == 0 {
+			return nil
+		}
+		log.Printf("agentcore: waiting for %d gateway target(s) to be deleted on %s", len(out.Items), gatewayID)
+		time.Sleep(pollInterval)
+	}
+	return fmt.Errorf("gateway %q still has targets after %d poll attempts", gatewayID, maxPollAttempts)
+}
+
+// deleteGatewayTargetBatch deletes a batch of gateway targets.
+func (c *realAWSClient) deleteGatewayTargetBatch(
+	ctx context.Context, gatewayID string, targets []types.TargetSummary,
+) error {
+	for _, t := range targets {
+		targetID := aws.ToString(t.TargetId)
+		if targetID == "" {
+			continue
+		}
+		_, err := c.client.DeleteGatewayTarget(ctx, &bedrockagentcorecontrol.DeleteGatewayTargetInput{
+			GatewayIdentifier: aws.String(gatewayID),
+			TargetId:          aws.String(targetID),
+		})
+		if err != nil && !isNotFound(err) {
+			return fmt.Errorf("DeleteGatewayTarget %q on gateway %q: %w", targetID, gatewayID, err)
+		}
+		log.Printf("agentcore: deleted gateway target %s from gateway %s", targetID, gatewayID)
 	}
 	return nil
 }
@@ -960,39 +1134,79 @@ func (c *realAWSClient) deleteCedarPolicy(ctx context.Context, res ResourceState
 		return err
 	}
 
-	_, err := c.client.DeletePolicyEngine(ctx, &bedrockagentcorecontrol.DeletePolicyEngineInput{
-		PolicyEngineId: aws.String(engineID),
-	})
-	if err != nil && !isNotFound(err) {
-		return fmt.Errorf("DeletePolicyEngine %q: %w", res.Name, err)
-	}
+	// Retry deletion — gateway association auto-generates policies that are
+	// invisible to ListPolicies but block engine deletion. These are cleaned
+	// up asynchronously after the gateway is deleted.
+	return c.deletePolicyEngineWithRetry(ctx, engineID, res.Name)
+}
 
+// policyEngineDeleteRetries is the number of retry attempts for deleting a
+// policy engine when auto-generated policies are still being cleaned up.
+const policyEngineDeleteRetries = 12
+
+// deletePolicyEngineWithRetry attempts to delete a policy engine, retrying
+// on ConflictException (auto-generated policies still being removed).
+func (c *realAWSClient) deletePolicyEngineWithRetry(
+	ctx context.Context, engineID, name string,
+) error {
+	for range policyEngineDeleteRetries {
+		_, err := c.client.DeletePolicyEngine(ctx, &bedrockagentcorecontrol.DeletePolicyEngineInput{
+			PolicyEngineId: aws.String(engineID),
+		})
+		if err == nil || isNotFound(err) {
+			return nil
+		}
+		if !isConflictError(err) {
+			return fmt.Errorf("DeletePolicyEngine %q: %w", name, err)
+		}
+		log.Printf("agentcore: policy engine %q still has policies being cleaned up, retrying", engineID)
+		time.Sleep(pollInterval)
+	}
+	return fmt.Errorf("DeletePolicyEngine %q: still has policies after %d retries", name, policyEngineDeleteRetries)
+}
+
+// purgeAllPolicies lists and deletes every policy within a policy engine,
+// paginating through all results.
+func (c *realAWSClient) purgeAllPolicies(ctx context.Context, engineID string) error {
+	var nextToken *string
+	for {
+		out, err := c.client.ListPolicies(ctx, &bedrockagentcorecontrol.ListPoliciesInput{
+			PolicyEngineId: aws.String(engineID),
+			MaxResults:     aws.Int32(listPageSize),
+			NextToken:      nextToken,
+		})
+		if err != nil {
+			if isNotFound(err) {
+				return nil
+			}
+			return fmt.Errorf("ListPolicies on engine %q: %w", engineID, err)
+		}
+		if err := c.deletePolicyBatch(ctx, engineID, out.Policies); err != nil {
+			return err
+		}
+		if out.NextToken == nil {
+			break
+		}
+		nextToken = out.NextToken
+	}
 	return nil
 }
 
-// purgeAllPolicies lists and deletes every policy within a policy engine.
-func (c *realAWSClient) purgeAllPolicies(ctx context.Context, engineID string) error {
-	out, err := c.client.ListPolicies(ctx, &bedrockagentcorecontrol.ListPoliciesInput{
-		PolicyEngineId: aws.String(engineID),
-		MaxResults:     aws.Int32(listPageSize),
-	})
-	if err != nil {
-		if isNotFound(err) {
-			return nil
-		}
-		return fmt.Errorf("ListPolicies on engine %q: %w", engineID, err)
-	}
-	for _, p := range out.Policies {
+// deletePolicyBatch deletes a batch of policies from a policy engine.
+func (c *realAWSClient) deletePolicyBatch(
+	ctx context.Context, engineID string, policies []types.Policy,
+) error {
+	for _, p := range policies {
 		policyID := aws.ToString(p.PolicyId)
 		if policyID == "" {
 			continue
 		}
-		_, delErr := c.client.DeletePolicy(ctx, &bedrockagentcorecontrol.DeletePolicyInput{
+		_, err := c.client.DeletePolicy(ctx, &bedrockagentcorecontrol.DeletePolicyInput{
 			PolicyEngineId: aws.String(engineID),
 			PolicyId:       aws.String(policyID),
 		})
-		if delErr != nil && !isNotFound(delErr) {
-			return fmt.Errorf("DeletePolicy %q on engine %q: %w", policyID, engineID, delErr)
+		if err != nil && !isNotFound(err) {
+			return fmt.Errorf("DeletePolicy %q on engine %q: %w", policyID, engineID, err)
 		}
 		log.Printf("agentcore: deleted policy %s from engine %s", policyID, engineID)
 	}

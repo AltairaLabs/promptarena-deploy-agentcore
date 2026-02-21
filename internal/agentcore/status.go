@@ -12,11 +12,11 @@ import (
 // Resources are grouped by type; each group is destroyed in sequence.
 var destroyOrder = []string{
 	ResTypeOnlineEvalConfig,
+	ResTypeToolGateway,
 	ResTypeCedarPolicy,
 	ResTypeEvaluator,
 	ResTypeA2AEndpoint,
 	ResTypeAgentRuntime,
-	ResTypeToolGateway,
 	ResTypeMemory,
 }
 

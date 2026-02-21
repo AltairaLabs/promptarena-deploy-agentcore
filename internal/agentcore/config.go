@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/AltairaLabs/PromptKit/runtime/evals"
+	"github.com/AltairaLabs/PromptKit/runtime/prompt"
 )
 
 // DefaultContainerImage is empty — the user must provide an ECR URI.
@@ -54,6 +55,10 @@ type Config struct {
 	// ArenaConfig is the parsed arena configuration, populated from
 	// PlanRequest.ArenaConfig. NOT part of the deploy config JSON.
 	ArenaConfig *ArenaConfig `json:"-"`
+
+	// PackTools holds pack tool definitions, populated at apply-time.
+	// Used to build inline tool schemas for Lambda gateway targets.
+	PackTools map[string]*prompt.PackTool `json:"-"`
 }
 
 // AgentOverride holds per-agent configuration overrides.
