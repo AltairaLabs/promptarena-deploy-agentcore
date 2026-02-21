@@ -4,16 +4,56 @@ import (
 	"testing"
 )
 
-func TestLoadConfig_RequiresPackFile(t *testing.T) {
+func TestLoadConfig_RequiresPack(t *testing.T) {
 	t.Setenv(envPackFile, "")
+	t.Setenv(envPackJSON, "")
 	_, err := loadConfig()
 	if err == nil {
-		t.Fatal("expected error when PROMPTPACK_FILE is empty")
+		t.Fatal("expected error when both PROMPTPACK_FILE and PROMPTPACK_PACK_JSON are empty")
+	}
+}
+
+func TestLoadConfig_PackJSONOnly(t *testing.T) {
+	t.Setenv(envPackFile, "")
+	t.Setenv(envPackJSON, `{"id":"test","prompts":{}}`)
+	t.Setenv(envPort, "")
+	t.Setenv(envTracingEnabled, "")
+	t.Setenv(envAgentEndpoints, "")
+
+	cfg, err := loadConfig()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.PackFile != "" {
+		t.Errorf("PackFile = %q, want empty", cfg.PackFile)
+	}
+	if cfg.PackJSON != `{"id":"test","prompts":{}}` {
+		t.Errorf("PackJSON = %q, want pack JSON", cfg.PackJSON)
+	}
+}
+
+func TestLoadConfig_BothPackFileAndPackJSON(t *testing.T) {
+	t.Setenv(envPackFile, "explicit.pack.json")
+	t.Setenv(envPackJSON, `{"id":"test"}`)
+	t.Setenv(envPort, "")
+	t.Setenv(envTracingEnabled, "")
+	t.Setenv(envAgentEndpoints, "")
+
+	cfg, err := loadConfig()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.PackFile != "explicit.pack.json" {
+		t.Errorf("PackFile = %q, want %q", cfg.PackFile, "explicit.pack.json")
+	}
+	if cfg.PackJSON != `{"id":"test"}` {
+		t.Errorf("PackJSON = %q, want pack JSON", cfg.PackJSON)
 	}
 }
 
 func TestLoadConfig_Defaults(t *testing.T) {
 	t.Setenv(envPackFile, "test.pack.json")
+	t.Setenv(envPackJSON, "")
 	// Clear optional vars
 	t.Setenv(envPort, "")
 	t.Setenv(envTracingEnabled, "")
