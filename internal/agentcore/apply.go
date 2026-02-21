@@ -82,6 +82,7 @@ func (p *Provider) prepareApply(
 		return nil, fmt.Errorf("agentcore: failed to create AWS client: %w", err)
 	}
 
+	cfg.PackTools = pack.Tools
 	cfg.RuntimeEnvVars = buildRuntimeEnvVars(cfg)
 	cfg.ResourceTags = buildResourceTags(pack.ID, pack.Version, "", cfg.Tags)
 	injectMetricsConfig(cfg, pack)
@@ -157,6 +158,8 @@ func (p *Provider) applyDryRun(
 	if err != nil {
 		return "", fmt.Errorf("agentcore: %w", err)
 	}
+
+	cfg.PackTools = pack.Tools
 
 	reporter := adaptersdk.NewProgressReporter(callback)
 	desired := generateDesiredResources(pack, cfg)

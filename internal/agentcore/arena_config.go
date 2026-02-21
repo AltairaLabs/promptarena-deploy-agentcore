@@ -14,17 +14,58 @@ type ArenaConfig struct {
 
 // ArenaToolSpec describes a single tool from the arena config.
 type ArenaToolSpec struct {
-	Name        string           `json:"name,omitempty"`
-	Description string           `json:"description,omitempty"`
-	Mode        string           `json:"mode,omitempty"` // "mock" | "live" | "mcp" | "a2a"
-	InputSchema any              `json:"input_schema,omitempty"`
-	HTTPConfig  *ArenaHTTPConfig `json:"http,omitempty"`
+	Name        string                 `json:"name,omitempty"`
+	Description string                 `json:"description,omitempty"`
+	Mode        string                 `json:"mode,omitempty"` // "mock" | "live" | "mcp" | "a2a"
+	InputSchema any                    `json:"input_schema,omitempty"`
+	HTTPConfig  *ArenaHTTPConfig       `json:"http,omitempty"`
+	LambdaARN   string                 `json:"lambda_arn,omitempty"`
+	APIGateway  *ArenaAPIGatewayConfig `json:"api_gateway,omitempty"`
+	OpenAPI     *ArenaSchemaConfig     `json:"openapi,omitempty"`
+	Smithy      *ArenaSchemaConfig     `json:"smithy,omitempty"`
+	Credential  *ArenaCredentialConfig `json:"credential,omitempty"`
+}
+
+// ArenaCredentialConfig specifies the credential provider for a gateway
+// target. API Gateway targets use "GATEWAY_IAM_ROLE"; OpenAPI and Smithy
+// targets require "OAUTH" or "API_KEY".
+type ArenaCredentialConfig struct {
+	Type string `json:"type"` // "GATEWAY_IAM_ROLE" | "OAUTH" | "API_KEY"
 }
 
 // ArenaHTTPConfig holds HTTP-specific tool configuration.
 type ArenaHTTPConfig struct {
 	URL    string `json:"url,omitempty"`
 	Method string `json:"method,omitempty"`
+}
+
+// ArenaAPIGatewayConfig holds API Gateway target configuration.
+type ArenaAPIGatewayConfig struct {
+	RestAPIID string                    `json:"rest_api_id"`
+	Stage     string                    `json:"stage"`
+	Filters   []ArenaAPIGatewayFilter   `json:"filters,omitempty"`
+	Overrides []ArenaAPIGatewayOverride `json:"overrides,omitempty"`
+}
+
+// ArenaAPIGatewayFilter specifies which operations from the REST API to expose.
+type ArenaAPIGatewayFilter struct {
+	Path    string   `json:"path"`
+	Methods []string `json:"methods"`
+}
+
+// ArenaAPIGatewayOverride defines an explicit tool with custom name and description.
+type ArenaAPIGatewayOverride struct {
+	Name        string `json:"name"`
+	Path        string `json:"path"`
+	Method      string `json:"method"`
+	Description string `json:"description,omitempty"`
+}
+
+// ArenaSchemaConfig is shared by OpenAPI and Smithy targets.
+// Exactly one of Inline or S3URI should be set.
+type ArenaSchemaConfig struct {
+	Inline string `json:"inline,omitempty"`
+	S3URI  string `json:"s3_uri,omitempty"`
 }
 
 // ArenaMCPServer describes an MCP server from the arena config.

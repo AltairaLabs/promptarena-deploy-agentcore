@@ -94,8 +94,10 @@ func TestDestroy_ValidState_ReverseOrder(t *testing.T) {
 		}
 	}
 
-	// Expected reverse dependency order: evaluator, a2a_endpoint, agent_runtime, tool_gateway.
-	expected := []string{"evaluator", "a2a_endpoint", "agent_runtime", "tool_gateway"}
+	// Expected reverse dependency order: tool_gateway first (it depends on
+	// the policy engine so must be deleted before cedar_policy), then
+	// evaluator, a2a_endpoint, agent_runtime.
+	expected := []string{"tool_gateway", "evaluator", "a2a_endpoint", "agent_runtime"}
 	if len(deletedTypes) != len(expected) {
 		t.Fatalf("deleted %d resources, want %d: %v", len(deletedTypes), len(expected), deletedTypes)
 	}

@@ -150,4 +150,4 @@ All three are implemented by `realAWSClient` for production and by simulated/fai
 
 ### Destroy Order (reverse)
 
-online_eval_config → cedar_policy → evaluator → a2a_endpoint → agent_runtime → tool_gateway → memory
+online_eval_config → tool_gateway → cedar_policy → evaluator → a2a_endpoint → agent_runtime → memory
