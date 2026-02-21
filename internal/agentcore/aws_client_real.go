@@ -284,11 +284,15 @@ func (c *realAWSClient) CreateGatewayTool(
 		}
 	}
 
-	targetOut, err := c.client.CreateGatewayTarget(ctx, &bedrockagentcorecontrol.CreateGatewayTargetInput{
+	input := &bedrockagentcorecontrol.CreateGatewayTargetInput{
 		GatewayIdentifier:   aws.String(c.gatewayID),
 		Name:                aws.String(name),
 		TargetConfiguration: buildTargetConfig(name, cfg),
-	})
+	}
+	if creds := buildCredentialProviderConfigs(name, cfg); len(creds) > 0 {
+		input.CredentialProviderConfigurations = creds
+	}
+	targetOut, err := c.client.CreateGatewayTarget(ctx, input)
 	if err != nil {
 		if isConflictError(err) {
 			log.Printf("agentcore: gateway target %q already exists, adopting", name)
