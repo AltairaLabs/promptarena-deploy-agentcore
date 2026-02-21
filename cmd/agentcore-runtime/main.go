@@ -19,6 +19,8 @@ import (
 const (
 	shutdownTimeout        = 10 * time.Second
 	defaultReadHeaderTmout = 10 * time.Second
+	tmpPackPath            = "/tmp/pack.json"
+	tmpPackPerm            = 0o600
 )
 
 func main() {
@@ -33,6 +35,13 @@ func run(log *slog.Logger) error {
 	cfg, err := loadConfig()
 	if err != nil {
 		return fmt.Errorf("config: %w", err)
+	}
+
+	if cfg.PackJSON != "" && cfg.PackFile == "" {
+		if writeErr := os.WriteFile(tmpPackPath, []byte(cfg.PackJSON), tmpPackPerm); writeErr != nil {
+			return fmt.Errorf("write pack JSON to temp file: %w", writeErr)
+		}
+		cfg.PackFile = tmpPackPath
 	}
 
 	pack, err := prompt.LoadPack(cfg.PackFile)

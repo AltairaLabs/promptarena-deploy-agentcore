@@ -27,6 +27,11 @@ type Config struct {
 	A2AAuth        *A2AAuthConfig            `json:"a2a_auth,omitempty"`
 	AgentOverrides map[string]*AgentOverride `json:"agent_overrides,omitempty"`
 
+	// PackJSON holds the raw pack JSON content to inject as an env var
+	// on the runtime container. Populated at apply-time from PlanRequest.
+	// NOT serialized — it is a transient, computed field.
+	PackJSON string `json:"-"`
+
 	// RuntimeEnvVars is populated at apply-time from config fields.
 	// It is NOT serialized — it is a transient, computed field.
 	RuntimeEnvVars map[string]string `json:"-"`

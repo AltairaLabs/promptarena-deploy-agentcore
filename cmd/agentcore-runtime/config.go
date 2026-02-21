@@ -12,6 +12,7 @@ import (
 // Environment variable names.
 const (
 	envPackFile        = "PROMPTPACK_FILE"
+	envPackJSON        = "PROMPTPACK_PACK_JSON"
 	envAgentName       = "PROMPTPACK_AGENT"
 	envPort            = "PROMPTPACK_PORT"
 	envAWSRegion       = "AWS_REGION"
@@ -33,6 +34,7 @@ const defaultPort = 9000
 // runtimeConfig holds all configuration parsed from environment variables.
 type runtimeConfig struct {
 	PackFile        string
+	PackJSON        string
 	AgentName       string
 	Port            int
 	AWSRegion       string
@@ -54,6 +56,7 @@ type runtimeConfig struct {
 func loadConfig() (*runtimeConfig, error) {
 	cfg := &runtimeConfig{
 		PackFile:        os.Getenv(envPackFile),
+		PackJSON:        os.Getenv(envPackJSON),
 		AgentName:       os.Getenv(envAgentName),
 		AWSRegion:       os.Getenv(envAWSRegion),
 		MemoryStore:     os.Getenv(envMemoryStore),
@@ -68,8 +71,8 @@ func loadConfig() (*runtimeConfig, error) {
 		Port:            defaultPort,
 	}
 
-	if cfg.PackFile == "" {
-		return nil, fmt.Errorf("%s is required", envPackFile)
+	if cfg.PackFile == "" && cfg.PackJSON == "" {
+		return nil, fmt.Errorf("%s or %s is required", envPackFile, envPackJSON)
 	}
 
 	if portStr := os.Getenv(envPort); portStr != "" {

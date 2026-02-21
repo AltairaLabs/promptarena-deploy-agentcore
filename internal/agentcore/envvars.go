@@ -20,6 +20,7 @@ const (
 	EnvMetricsConfig   = "PROMPTPACK_METRICS_CONFIG"
 	EnvDashboardConfig = "PROMPTPACK_DASHBOARD_CONFIG"
 	EnvPackFile        = "PROMPTPACK_FILE"
+	EnvPackJSON        = "PROMPTPACK_PACK_JSON"
 	EnvAgentName       = "PROMPTPACK_AGENT"
 )
 
@@ -54,6 +55,10 @@ func buildRuntimeEnvVars(cfg *Config) map[string]string {
 	}
 
 	env[EnvPackFile] = defaultPackPath
+
+	if cfg.PackJSON != "" {
+		env[EnvPackJSON] = cfg.PackJSON
+	}
 
 	return env
 }

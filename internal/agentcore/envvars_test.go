@@ -131,6 +131,23 @@ func TestBuildRuntimeEnvVars(t *testing.T) {
 				EnvPackFile:    defaultPackPath,
 			},
 		},
+		{
+			name: "pack JSON injected when set",
+			cfg: &Config{
+				PackJSON: `{"id":"test","prompts":{}}`,
+			},
+			want: map[string]string{
+				EnvPackFile: defaultPackPath,
+				EnvPackJSON: `{"id":"test","prompts":{}}`,
+			},
+		},
+		{
+			name: "pack JSON omitted when empty",
+			cfg:  &Config{},
+			want: map[string]string{
+				EnvPackFile: defaultPackPath,
+			},
+		},
 	}
 
 	for _, tt := range tests {
