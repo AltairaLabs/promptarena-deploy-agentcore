@@ -124,6 +124,22 @@ observability:
   tracing_enabled: true
 ```
 
+### `protocol`
+
+Controls which servers the runtime starts. Default is `"both"`.
+
+| Value | HTTP bridge (port 8080) | A2A server (port 9000) |
+|-------|------------------------|----------------------|
+| `"both"` | Started | Started |
+| `"http"` | Started | Skipped |
+| `"a2a"` | Skipped | Started |
+
+```yaml
+protocol: both
+```
+
+Use `"http"` for external-facing agents that do not participate in A2A networks. Use `"a2a"` for internal worker agents that are only called by other agents. See [Runtime Protocols](/reference/runtime-protocols/) for details on the HTTP bridge endpoints.
+
 ### `a2a_auth`
 
 Authentication configuration for Agent-to-Agent (A2A) communication in multi-agent packs. The `mode` field is required when this object is present.
@@ -168,6 +184,7 @@ deploy:
     model: claude-3-5-haiku-20241022
     runtime_role_arn: arn:aws:iam::123456789012:role/AgentCoreExecutionRole
     memory_store: persistent
+    protocol: both
     dry_run: false
 
     tags:

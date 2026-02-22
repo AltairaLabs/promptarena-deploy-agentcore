@@ -9,3 +9,4 @@ This section contains the complete reference documentation for the AgentCore dep
 - [Configuration Reference](/reference/configuration/) -- JSON Schema for the adapter's deploy config, including all fields, nested objects, validation rules, and error examples.
 - [Resource Types](/reference/resource-types/) -- Every resource type the adapter manages, including AWS API calls, lifecycle support, health check behavior, and status values.
 - [Environment Variables](/reference/environment-variables/) -- All `PROMPTPACK_*` environment variables injected into AgentCore runtimes, with sources, conditions, and example payloads.
+- [Runtime Protocols](/reference/runtime-protocols/) -- HTTP bridge endpoints (`/invocations`, `/ws`, `/ping`), request/response payloads, SSE streaming events, WebSocket message formats, and protocol selection guide.

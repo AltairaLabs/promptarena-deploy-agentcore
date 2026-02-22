@@ -33,6 +33,7 @@ These fields are set in the `deploy.agentcore` section of your arena config:
 | `tools` | object | No | -- | Tool-related settings. See [tools](#tools). |
 | `observability` | object | No | -- | Observability settings. See [observability](#observability). |
 | `a2a_auth` | object | No | -- | Agent-to-agent authentication settings. See [a2a_auth](#a2a_auth). |
+| `protocol` | string | No | `"both"` | Server protocol mode. Controls which servers the runtime starts. See [protocol](#protocol). |
 
 ## `observability`
 
@@ -60,6 +61,20 @@ When `mode` is `"jwt"`, the adapter configures a `CustomJWTAuthorizer` on the Ag
 |-------|------|----------|-------------|
 | `code_interpreter` | boolean | No | Enables the built-in code interpreter tool on the runtime. |
 
+## `protocol`
+
+Controls which servers the runtime starts. Accepted values:
+
+| Value | HTTP bridge (port 8080) | A2A server (port 9000) | Use case |
+|-------|------------------------|----------------------|----------|
+| `"both"` | Started | Started | Standard deployment (default). |
+| `"http"` | Started | Skipped | External-facing agents not using A2A. |
+| `"a2a"` | Skipped | Started | Internal agents called only via A2A. |
+
+When omitted, defaults to `"both"`. The value is injected as `PROMPTPACK_PROTOCOL` and mapped to the AWS SDK `ProtocolConfiguration.ServerProtocol` field on the runtime.
+
+For details on the HTTP bridge endpoints and payload formats, see [Runtime Protocols](/reference/runtime-protocols/).
+
 ## `tags`
 
 Tags are a flat `map[string]string` with the following constraints:
@@ -82,7 +97,8 @@ The adapter validates the config in `ValidateConfig` before any Plan or Apply ca
 3. If `memory_store` is set, it must be `"session"` or `"persistent"`.
 4. If `a2a_auth` is present, `mode` must be `"iam"` or `"jwt"`.
 5. If `a2a_auth.mode` is `"jwt"`, `discovery_url` is required.
-6. Tag count must not exceed 50; individual key and value lengths are checked.
+6. If `protocol` is set, it must be `"http"`, `"a2a"`, or `"both"`.
+7. Tag count must not exceed 50; individual key and value lengths are checked.
 
 In addition to hard validation errors, the adapter runs diagnostic checks that emit non-fatal warnings (prefixed with `warning:`).
 
@@ -129,6 +145,17 @@ Invalid memory store:
   "valid": false,
   "errors": [
     "memory_store \"ephemeral\" must be \"session\" or \"persistent\""
+  ]
+}
+```
+
+Invalid protocol:
+
+```json
+{
+  "valid": false,
+  "errors": [
+    "protocol \"websocket\" must be \"http\", \"a2a\", or \"both\""
   ]
 }
 ```
@@ -227,6 +254,15 @@ Tag limit exceeded:
           "description": "Allowed JWT client IDs"
         }
       }
+    },
+    "runtime_binary_path": {
+      "type": "string",
+      "description": "Path to the pre-compiled Go runtime binary for code deploy"
+    },
+    "protocol": {
+      "type": "string",
+      "enum": ["http", "a2a", "both"],
+      "description": "Server protocol mode: http (port 8080), a2a (port 9000), or both (default)"
     }
   },
   "additionalProperties": false
@@ -243,7 +279,9 @@ A complete configuration with all optional fields:
 {
   "region": "us-west-2",
   "runtime_role_arn": "arn:aws:iam::123456789012:role/AgentCoreRuntime",
+  "runtime_binary_path": "/path/to/promptkit-runtime",
   "memory_store": "session",
+  "protocol": "both",
   "dry_run": false,
   "tags": {
     "env": "production",
