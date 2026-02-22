@@ -27,6 +27,8 @@ const (
 	envOTLPEndpoint    = "OTEL_EXPORTER_OTLP_ENDPOINT"
 	envTracingEnabled  = "OTEL_TRACING_ENABLED"
 	envAgentEndpoints  = "PROMPTPACK_AGENTS"
+	envProviderType    = "PROMPTPACK_PROVIDER_TYPE"
+	envProviderModel   = "PROMPTPACK_PROVIDER_MODEL"
 )
 
 const defaultPort = 9000
@@ -49,6 +51,8 @@ type runtimeConfig struct {
 	OTLPEndpoint    string
 	TracingEnabled  bool
 	AgentEndpoints  map[string]string
+	ProviderType    string
+	Model           string
 }
 
 // loadConfig reads configuration from environment variables.
@@ -68,6 +72,8 @@ func loadConfig() (*runtimeConfig, error) {
 		DashboardConfig: os.Getenv(envDashboardConfig),
 		LogGroup:        os.Getenv(envLogGroup),
 		OTLPEndpoint:    os.Getenv(envOTLPEndpoint),
+		ProviderType:    os.Getenv(envProviderType),
+		Model:           os.Getenv(envProviderModel),
 		Port:            defaultPort,
 	}
 

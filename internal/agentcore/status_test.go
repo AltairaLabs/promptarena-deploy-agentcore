@@ -63,7 +63,7 @@ func mustJSON(t *testing.T, v any) string {
 
 // validDestroyConfig returns a valid config for destroy/status tests.
 func validDestroyConfig() string {
-	return `{"region":"us-west-2","runtime_role_arn":"arn:aws:iam::123456789012:role/test","container_image":"123456789012.dkr.ecr.us-west-2.amazonaws.com/promptkit-agentcore:latest"}`
+	return `{"region":"us-west-2","runtime_role_arn":"arn:aws:iam::123456789012:role/test","runtime_binary_path":"/usr/local/bin/promptkit-runtime"}`
 }
 
 // ---------- Destroy tests ----------

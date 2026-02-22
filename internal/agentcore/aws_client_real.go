@@ -1,6 +1,7 @@
 package agentcore
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"log"
@@ -13,6 +14,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/bedrockagentcorecontrol"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockagentcorecontrol/types"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 )
 
@@ -36,6 +38,7 @@ const adoptedPlaceholder = "adopted"
 type realAWSClient struct {
 	client     *bedrockagentcorecontrol.Client
 	logsClient *cloudwatchlogs.Client
+	s3Client   *s3.Client
 	cfg        *Config
 
 	// gatewayID caches the gateway identifier so that CreateGatewayTool can
@@ -74,7 +77,11 @@ func newRealAWSClient(ctx context.Context, cfg *Config) (*realAWSClient, error) 
 
 	client := bedrockagentcorecontrol.NewFromConfig(awsCfg)
 	logsClient := cloudwatchlogs.NewFromConfig(awsCfg)
-	return &realAWSClient{client: client, logsClient: logsClient, cfg: cfg}, nil
+	s3Client := s3.NewFromConfig(awsCfg)
+	return &realAWSClient{
+		client: client, logsClient: logsClient,
+		s3Client: s3Client, cfg: cfg,
+	}, nil
 }
 
 // newRealAWSClientFactory is the awsClientFactory used by NewProvider.
@@ -188,20 +195,56 @@ func (c *realAWSClient) findPolicyEngineByName(ctx context.Context, name string)
 	return "", "", fmt.Errorf("policy engine %q not found", name)
 }
 
+// buildRuntimeArtifact returns the CodeConfiguration artifact referencing the
+// S3 code package uploaded during prepareApply.
+func buildRuntimeArtifact(cfg *Config) types.AgentRuntimeArtifact {
+	accountID := extractAccountFromARN(cfg.RuntimeRoleARN)
+	bucket := codeDeployS3Bucket(accountID, cfg.Region)
+	packID := cfg.ResourceTags[TagKeyPackID]
+	version := cfg.ResourceTags[TagKeyVersion]
+	key := codeDeployS3Key(packID, version)
+	return &types.AgentRuntimeArtifactMemberCodeConfiguration{
+		Value: types.CodeConfiguration{
+			Code: &types.CodeMemberS3{
+				Value: types.S3Location{
+					Bucket: aws.String(bucket),
+					Prefix: aws.String(key),
+				},
+			},
+			EntryPoint: []string{codeDeployEntryPoint},
+			Runtime:    types.AgentManagedRuntimeTypePython313,
+		},
+	}
+}
+
+// UploadCodePackage uploads a ZIP archive to S3 for code deploy mode.
+func (c *realAWSClient) UploadCodePackage(
+	ctx context.Context, zipData []byte, bucket, key string,
+) error {
+	_, err := c.s3Client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket: aws.String(bucket),
+		Key:    aws.String(key),
+		Body:   bytes.NewReader(zipData),
+	})
+	if err != nil {
+		return fmt.Errorf("S3 PutObject %s/%s: %w", bucket, key, err)
+	}
+	log.Printf("agentcore: uploaded code package to s3://%s/%s (%d bytes)", bucket, key, len(zipData))
+	return nil
+}
+
 // CreateRuntime provisions an AgentCore runtime via the AWS API and polls
 // until it reaches READY status. On conflict (409), adopts the existing runtime.
 func (c *realAWSClient) CreateRuntime(
 	ctx context.Context, name string, cfg *Config,
 ) (string, error) {
 	envVars := runtimeEnvVarsForAgent(cfg, name)
+	artifact := buildRuntimeArtifact(cfg)
+
 	input := &bedrockagentcorecontrol.CreateAgentRuntimeInput{
-		AgentRuntimeName: aws.String(name),
-		RoleArn:          aws.String(cfg.RuntimeRoleARN),
-		AgentRuntimeArtifact: &types.AgentRuntimeArtifactMemberContainerConfiguration{
-			Value: types.ContainerConfiguration{
-				ContainerUri: aws.String(cfg.containerImageForAgent(name)),
-			},
-		},
+		AgentRuntimeName:     aws.String(name),
+		RoleArn:              aws.String(cfg.RuntimeRoleARN),
+		AgentRuntimeArtifact: artifact,
 		NetworkConfiguration: &types.NetworkConfiguration{
 			NetworkMode: types.NetworkModePublic,
 		},
@@ -243,14 +286,11 @@ func (c *realAWSClient) UpdateRuntime(
 	}
 
 	envVars := runtimeEnvVarsForAgent(cfg, name)
+	artifact := buildRuntimeArtifact(cfg)
 	input := &bedrockagentcorecontrol.UpdateAgentRuntimeInput{
-		AgentRuntimeId: aws.String(id),
-		RoleArn:        aws.String(cfg.RuntimeRoleARN),
-		AgentRuntimeArtifact: &types.AgentRuntimeArtifactMemberContainerConfiguration{
-			Value: types.ContainerConfiguration{
-				ContainerUri: aws.String(cfg.containerImageForAgent(name)),
-			},
-		},
+		AgentRuntimeId:       aws.String(id),
+		RoleArn:              aws.String(cfg.RuntimeRoleARN),
+		AgentRuntimeArtifact: artifact,
 		NetworkConfiguration: &types.NetworkConfiguration{
 			NetworkMode: types.NetworkModePublic,
 		},
@@ -952,7 +992,8 @@ func (c *realAWSClient) CreatePolicyEngine(
 	return aws.ToString(out.PolicyEngineArn), engineID, nil
 }
 
-// CreateCedarPolicy creates a Cedar policy within a policy engine.
+// CreateCedarPolicy creates a Cedar policy within a policy engine and
+// polls until the policy reaches ACTIVE or fails.
 func (c *realAWSClient) CreateCedarPolicy(
 	ctx context.Context, engineID string, name string, cedarStatement string, _ *Config,
 ) (policyARN, policyID string, retErr error) {
@@ -973,7 +1014,37 @@ func (c *realAWSClient) CreateCedarPolicy(
 		return "", "", fmt.Errorf("CreatePolicy %q on engine %q: %w", name, engineID, err)
 	}
 
-	return aws.ToString(out.PolicyArn), aws.ToString(out.PolicyId), nil
+	pID := aws.ToString(out.PolicyId)
+	if err := c.waitForPolicyActive(ctx, engineID, pID, name); err != nil {
+		return aws.ToString(out.PolicyArn), pID, err
+	}
+	return aws.ToString(out.PolicyArn), pID, nil
+}
+
+// waitForPolicyActive polls GetPolicy until the policy leaves CREATING state.
+func (c *realAWSClient) waitForPolicyActive(ctx context.Context, engineID, policyID, name string) error {
+	for range maxPollAttempts {
+		out, err := c.client.GetPolicy(ctx, &bedrockagentcorecontrol.GetPolicyInput{
+			PolicyEngineId: aws.String(engineID),
+			PolicyId:       aws.String(policyID),
+		})
+		if err != nil {
+			return fmt.Errorf("polling policy %q: %w", name, err)
+		}
+		switch out.Status {
+		case types.PolicyStatusActive:
+			return nil
+		case types.PolicyStatusCreateFailed, types.PolicyStatusUpdateFailed:
+			reasons := strings.Join(out.StatusReasons, "; ")
+			return fmt.Errorf("policy %q failed: %s", name, reasons)
+		case types.PolicyStatusCreating, types.PolicyStatusUpdating:
+			log.Printf("agentcore: waiting for policy %q (status: %s)", name, out.Status)
+			time.Sleep(pollInterval)
+		case types.PolicyStatusDeleting, types.PolicyStatusDeleteFailed:
+			return fmt.Errorf("policy %q unexpected status: %s", name, out.Status)
+		}
+	}
+	return fmt.Errorf("policy %q still CREATING after %d poll attempts", name, maxPollAttempts)
 }
 
 // waitForPolicyEngineActive polls GetPolicyEngine until the status is ACTIVE.
@@ -1405,7 +1476,9 @@ func (c *realAWSClient) checkCedarPolicy(ctx context.Context, res ResourceState)
 	if engineID == "" {
 		return StatusMissing, nil
 	}
-	out, err := c.client.GetPolicyEngine(ctx, &bedrockagentcorecontrol.GetPolicyEngineInput{
+
+	// Check the engine is active.
+	engineOut, err := c.client.GetPolicyEngine(ctx, &bedrockagentcorecontrol.GetPolicyEngineInput{
 		PolicyEngineId: aws.String(engineID),
 	})
 	if err != nil {
@@ -1414,10 +1487,30 @@ func (c *realAWSClient) checkCedarPolicy(ctx context.Context, res ResourceState)
 		}
 		return StatusUnhealthy, fmt.Errorf("GetPolicyEngine %q: %w", res.Name, err)
 	}
-	if out.Status == types.PolicyEngineStatusActive {
+	if engineOut.Status != types.PolicyEngineStatusActive {
+		return StatusUnhealthy, nil
+	}
+
+	// Check the policy itself.
+	policyID := res.Metadata["policy_id"]
+	if policyID == "" {
+		return StatusHealthy, nil // no individual policy to check
+	}
+	policyOut, err := c.client.GetPolicy(ctx, &bedrockagentcorecontrol.GetPolicyInput{
+		PolicyEngineId: aws.String(engineID),
+		PolicyId:       aws.String(policyID),
+	})
+	if err != nil {
+		if isNotFound(err) {
+			return StatusMissing, nil
+		}
+		return StatusUnhealthy, fmt.Errorf("GetPolicy %q: %w", res.Name, err)
+	}
+	if policyOut.Status == types.PolicyStatusActive {
 		return StatusHealthy, nil
 	}
-	return StatusUnhealthy, nil
+	reasons := strings.Join(policyOut.StatusReasons, "; ")
+	return StatusUnhealthy, fmt.Errorf("policy %q status %s: %s", res.Name, policyOut.Status, reasons)
 }
 
 func (c *realAWSClient) checkOnlineEvalConfig(ctx context.Context, res ResourceState) (string, error) {

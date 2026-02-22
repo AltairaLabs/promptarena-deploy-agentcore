@@ -76,6 +76,7 @@ func (p *Provider) prepareApply(
 	if err != nil {
 		return nil, fmt.Errorf("agentcore: %w", err)
 	}
+	mergeToolTargets(cfg.ArenaConfig, cfg.ToolTargets)
 
 	client, err := p.awsClientFunc(ctx, cfg)
 	if err != nil {
@@ -84,10 +85,15 @@ func (p *Provider) prepareApply(
 
 	cfg.PackJSON = req.PackJSON
 	cfg.PackTools = pack.Tools
+	cfg.PromptNames = extractPromptNames(pack)
 	cfg.RuntimeEnvVars = buildRuntimeEnvVars(cfg)
 	cfg.ResourceTags = buildResourceTags(pack.ID, pack.Version, "", cfg.Tags)
 	injectMetricsConfig(cfg, pack)
 	injectDashboardConfig(cfg, pack)
+
+	if err := uploadCodePackage(ctx, client, cfg, req.PackJSON); err != nil {
+		return nil, fmt.Errorf("agentcore: %w", err)
+	}
 
 	return &applyContext{
 		pack:     pack,
@@ -159,6 +165,7 @@ func (p *Provider) applyDryRun(
 	if err != nil {
 		return "", fmt.Errorf("agentcore: %w", err)
 	}
+	mergeToolTargets(cfg.ArenaConfig, cfg.ToolTargets)
 
 	cfg.PackJSON = req.PackJSON
 	cfg.PackTools = pack.Tools
@@ -650,6 +657,15 @@ func evalResourceNames(pack *prompt.Pack) []string {
 			name = fmt.Sprintf("eval_%d", i)
 		}
 		names = append(names, name)
+	}
+	return names
+}
+
+// extractPromptNames returns a set of prompt names from the pack.
+func extractPromptNames(pack *prompt.Pack) map[string]bool {
+	names := make(map[string]bool, len(pack.Prompts))
+	for name := range pack.Prompts {
+		names[name] = true
 	}
 	return names
 }

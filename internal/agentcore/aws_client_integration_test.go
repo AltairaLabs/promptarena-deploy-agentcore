@@ -31,18 +31,19 @@ func integrationConfig(t *testing.T) *Config {
 	if region == "" || roleARN == "" {
 		t.Skip("AGENTCORE_TEST_REGION and AGENTCORE_TEST_ROLE_ARN must be set")
 	}
+	binaryPath := os.Getenv("AGENTCORE_TEST_BINARY_PATH")
+	if binaryPath == "" {
+		t.Skip("AGENTCORE_TEST_BINARY_PATH must be set")
+	}
 	return &Config{
-		Region:         region,
-		RuntimeRoleARN: roleARN,
-		ContainerImage: os.Getenv("AGENTCORE_TEST_CONTAINER_IMAGE"),
+		Region:            region,
+		RuntimeRoleARN:    roleARN,
+		RuntimeBinaryPath: binaryPath,
 	}
 }
 
 func TestIntegration_CreateAndDeleteRuntime(t *testing.T) {
 	cfg := integrationConfig(t)
-	if cfg.ContainerImage == "" {
-		t.Skip("AGENTCORE_TEST_CONTAINER_IMAGE must be set")
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 

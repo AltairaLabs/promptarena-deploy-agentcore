@@ -15,11 +15,9 @@ func TestBuildRuntimeEnvVars(t *testing.T) {
 		want map[string]string
 	}{
 		{
-			name: "empty config includes pack file",
+			name: "empty config produces empty env",
 			cfg:  &Config{},
-			want: map[string]string{
-				EnvPackFile: defaultPackPath,
-			},
+			want: map[string]string{},
 		},
 		{
 			name: "observability log group",
@@ -30,7 +28,6 @@ func TestBuildRuntimeEnvVars(t *testing.T) {
 			},
 			want: map[string]string{
 				EnvLogGroup: "/aws/agentcore/myapp",
-				EnvPackFile: defaultPackPath,
 			},
 		},
 		{
@@ -42,7 +39,6 @@ func TestBuildRuntimeEnvVars(t *testing.T) {
 			},
 			want: map[string]string{
 				EnvTracingEnabled: "true",
-				EnvPackFile:       defaultPackPath,
 			},
 		},
 		{
@@ -56,7 +52,6 @@ func TestBuildRuntimeEnvVars(t *testing.T) {
 			want: map[string]string{
 				EnvLogGroup:       "/aws/agentcore/prod",
 				EnvTracingEnabled: "true",
-				EnvPackFile:       defaultPackPath,
 			},
 		},
 		{
@@ -66,9 +61,7 @@ func TestBuildRuntimeEnvVars(t *testing.T) {
 					TracingEnabled: false,
 				},
 			},
-			want: map[string]string{
-				EnvPackFile: defaultPackPath,
-			},
+			want: map[string]string{},
 		},
 		{
 			name: "memory episodic strategy",
@@ -77,7 +70,6 @@ func TestBuildRuntimeEnvVars(t *testing.T) {
 			},
 			want: map[string]string{
 				EnvMemoryStore: "episodic",
-				EnvPackFile:    defaultPackPath,
 			},
 		},
 		{
@@ -87,7 +79,6 @@ func TestBuildRuntimeEnvVars(t *testing.T) {
 			},
 			want: map[string]string{
 				EnvMemoryStore: "semantic",
-				EnvPackFile:    defaultPackPath,
 			},
 		},
 		{
@@ -103,7 +94,6 @@ func TestBuildRuntimeEnvVars(t *testing.T) {
 				EnvLogGroup:       "/aws/logs",
 				EnvTracingEnabled: "true",
 				EnvMemoryStore:    "episodic",
-				EnvPackFile:       defaultPackPath,
 			},
 		},
 		{
@@ -115,7 +105,6 @@ func TestBuildRuntimeEnvVars(t *testing.T) {
 			want: map[string]string{
 				EnvA2AAuthMode: "iam",
 				EnvA2AAuthRole: "arn:aws:iam::123456789012:role/test",
-				EnvPackFile:    defaultPackPath,
 			},
 		},
 		{
@@ -128,24 +117,6 @@ func TestBuildRuntimeEnvVars(t *testing.T) {
 			},
 			want: map[string]string{
 				EnvA2AAuthMode: "jwt",
-				EnvPackFile:    defaultPackPath,
-			},
-		},
-		{
-			name: "pack JSON injected when set",
-			cfg: &Config{
-				PackJSON: `{"id":"test","prompts":{}}`,
-			},
-			want: map[string]string{
-				EnvPackFile: defaultPackPath,
-				EnvPackJSON: `{"id":"test","prompts":{}}`,
-			},
-		},
-		{
-			name: "pack JSON omitted when empty",
-			cfg:  &Config{},
-			want: map[string]string{
-				EnvPackFile: defaultPackPath,
 			},
 		},
 	}
@@ -443,8 +414,8 @@ func TestRuntimeEnvVarsForAgent(t *testing.T) {
 	t.Run("adds agent name to runtime env vars", func(t *testing.T) {
 		cfg := &Config{
 			RuntimeEnvVars: map[string]string{
-				EnvPackFile:    defaultPackPath,
 				EnvMemoryStore: "episodic",
+				EnvLogGroup:    "/aws/logs",
 			},
 		}
 
@@ -453,8 +424,8 @@ func TestRuntimeEnvVarsForAgent(t *testing.T) {
 		if env[EnvAgentName] != "worker" {
 			t.Errorf("PROMPTPACK_AGENT = %q, want %q", env[EnvAgentName], "worker")
 		}
-		if env[EnvPackFile] != defaultPackPath {
-			t.Errorf("PROMPTPACK_FILE = %q, want %q", env[EnvPackFile], defaultPackPath)
+		if env[EnvLogGroup] != "/aws/logs" {
+			t.Errorf("PROMPTPACK_LOG_GROUP = %q, want %q", env[EnvLogGroup], "/aws/logs")
 		}
 		if env[EnvMemoryStore] != "episodic" {
 			t.Errorf("PROMPTPACK_MEMORY_STORE = %q, want %q", env[EnvMemoryStore], "episodic")
@@ -462,7 +433,7 @@ func TestRuntimeEnvVarsForAgent(t *testing.T) {
 	})
 
 	t.Run("does not mutate original map", func(t *testing.T) {
-		orig := map[string]string{EnvPackFile: defaultPackPath}
+		orig := map[string]string{EnvMemoryStore: "episodic"}
 		cfg := &Config{RuntimeEnvVars: orig}
 
 		env := runtimeEnvVarsForAgent(cfg, "agent-a")
@@ -477,7 +448,7 @@ func TestRuntimeEnvVarsForAgent(t *testing.T) {
 
 	t.Run("different agents get different values", func(t *testing.T) {
 		cfg := &Config{
-			RuntimeEnvVars: map[string]string{EnvPackFile: defaultPackPath},
+			RuntimeEnvVars: map[string]string{EnvMemoryStore: "episodic"},
 		}
 
 		envA := runtimeEnvVarsForAgent(cfg, "coord")

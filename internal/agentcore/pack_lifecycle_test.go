@@ -21,9 +21,9 @@ import (
 //
 // Required env vars:
 //
-//	AGENTCORE_TEST_REGION          — AWS region (e.g. us-west-2)
-//	AGENTCORE_TEST_ROLE_ARN        — IAM role ARN for the AgentCore runtime
-//	AGENTCORE_TEST_CONTAINER_IMAGE — ECR image URI for the runtime container
+//	AGENTCORE_TEST_REGION      — AWS region (e.g. us-west-2)
+//	AGENTCORE_TEST_ROLE_ARN    — IAM role ARN for the AgentCore runtime
+//	AGENTCORE_TEST_BINARY_PATH — Path to pre-compiled Go runtime binary
 //
 // Run with:
 //
@@ -35,18 +35,18 @@ func integrationDeployConfig(t *testing.T) string {
 	t.Helper()
 	region := os.Getenv("AGENTCORE_TEST_REGION")
 	roleARN := os.Getenv("AGENTCORE_TEST_ROLE_ARN")
-	image := os.Getenv("AGENTCORE_TEST_CONTAINER_IMAGE")
+	binaryPath := os.Getenv("AGENTCORE_TEST_BINARY_PATH")
 	if region == "" || roleARN == "" {
 		t.Skip("AGENTCORE_TEST_REGION and AGENTCORE_TEST_ROLE_ARN must be set")
 	}
-	if image == "" {
-		t.Skip("AGENTCORE_TEST_CONTAINER_IMAGE must be set")
+	if binaryPath == "" {
+		t.Skip("AGENTCORE_TEST_BINARY_PATH must be set")
 	}
 	cfg := map[string]string{
-		"region":           region,
-		"runtime_role_arn": roleARN,
-		"container_image":  image,
-		"memory_store":     "semantic",
+		"region":              region,
+		"runtime_role_arn":    roleARN,
+		"runtime_binary_path": binaryPath,
+		"memory_store":        "semantic",
 	}
 	b, _ := json.Marshal(cfg)
 	return string(b)

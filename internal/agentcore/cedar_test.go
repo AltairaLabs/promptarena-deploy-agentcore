@@ -75,10 +75,10 @@ func TestCedarToolBlocklist(t *testing.T) {
 	}
 	result := strings.Join(generateCedarStatements(nil, tp, "", nil), "\n\n")
 
-	if !strings.Contains(result, `AgentCore::Action::"dangerous_tool__dangerous_tool"`) {
+	if !strings.Contains(result, `AgentCore::Action::"dangerous_tool___dangerous_tool"`) {
 		t.Errorf("expected blocklist rule for dangerous_tool, got:\n%s", result)
 	}
-	if !strings.Contains(result, `AgentCore::Action::"risky_tool__risky_tool"`) {
+	if !strings.Contains(result, `AgentCore::Action::"risky_tool___risky_tool"`) {
 		t.Errorf("expected blocklist rule for risky_tool, got:\n%s", result)
 	}
 	if !strings.Contains(result, "forbid") {
@@ -117,7 +117,7 @@ func TestCedarToolBlocklistFiltersUnregisteredTools(t *testing.T) {
 	if len(blocks) != 1 {
 		t.Fatalf("expected 1 block (only registered tool), got %d", len(blocks))
 	}
-	if !strings.Contains(blocks[0], `"search__search"`) {
+	if !strings.Contains(blocks[0], `"search___search"`) {
 		t.Errorf("expected search block, got:\n%s", blocks[0])
 	}
 }
@@ -144,7 +144,7 @@ func TestCedarMixed_OnlyBlocklistProducesCedar(t *testing.T) {
 	result := strings.Join(generateCedarStatements(vals, tp, "", nil), "\n\n")
 
 	// Only the blocklist entry should produce Cedar.
-	if !strings.Contains(result, `AgentCore::Action::"exec__exec"`) {
+	if !strings.Contains(result, `AgentCore::Action::"exec___exec"`) {
 		t.Errorf("expected blocklist rule for exec, got:\n%s", result)
 	}
 

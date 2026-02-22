@@ -69,6 +69,13 @@ func (c *simulatedAWSClient) CreateCedarPolicy(
 	return arn, policyID, nil
 }
 
+func (c *simulatedAWSClient) UploadCodePackage(
+	_ context.Context, _ []byte, _, _ string,
+) error {
+	log.Printf("agentcore: simulated S3 upload")
+	return nil
+}
+
 // simulatedDestroyer is a placeholder that logs intent without calling AWS.
 type simulatedDestroyer struct{}
 

@@ -10,7 +10,7 @@ import (
 )
 
 // validDeployConfig is a minimal valid AgentCore deploy config for tests.
-const validDeployConfig = `{"region":"us-west-2","runtime_role_arn":"arn:aws:iam::123456789012:role/test","container_image":"123456789012.dkr.ecr.us-west-2.amazonaws.com/promptkit-agentcore:latest"}`
+const validDeployConfig = `{"region":"us-west-2","runtime_role_arn":"arn:aws:iam::123456789012:role/test","runtime_binary_path":"/usr/local/bin/promptkit-runtime"}`
 
 // validArenaConfigJSON is a minimal valid arena config for tests.
 const validArenaConfigJSON = `{"tool_specs":{}}`
@@ -427,7 +427,7 @@ func TestDiffResources_MixedWithMultipleDeletes(t *testing.T) {
 
 func TestPlan_WithMemory_IncludesMemoryResource(t *testing.T) {
 	provider := newSimulatedProvider()
-	memConfig := `{"region":"us-west-2","runtime_role_arn":"arn:aws:iam::123456789012:role/test","container_image":"123456789012.dkr.ecr.us-west-2.amazonaws.com/promptkit-agentcore:latest","memory_store":"session"}`
+	memConfig := `{"region":"us-west-2","runtime_role_arn":"arn:aws:iam::123456789012:role/test","runtime_binary_path":"/usr/local/bin/promptkit-runtime","memory_store":"session"}`
 	resp, err := provider.Plan(context.Background(), &deploy.PlanRequest{
 		PackJSON:     singleAgentPackJSON(),
 		DeployConfig: memConfig,

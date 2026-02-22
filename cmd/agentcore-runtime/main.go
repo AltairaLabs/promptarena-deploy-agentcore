@@ -53,7 +53,9 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	log.Info("resolved agent", "name", agentName, "pack", cfg.PackFile)
+	log.Info("resolved agent", "name", agentName, "pack", cfg.PackFile,
+		"provider_type", cfg.ProviderType, "model", cfg.Model,
+		"aws_region", cfg.AWSRegion, "agent_name_env", cfg.AgentName)
 
 	shutdownTracing := setupTracing(cfg, log)
 	defer func() {
@@ -79,7 +81,12 @@ func run(log *slog.Logger) error {
 	}
 	log.Info("listening", "addr", ln.Addr().String(), "version", version)
 
-	return runWithShutdown(log, ln, mux, healthH, a2aSrv)
+	bridge, err := startHTTPBridge(log, healthH, cfg.Port)
+	if err != nil {
+		return fmt.Errorf("http bridge: %w", err)
+	}
+
+	return runWithShutdown(log, ln, mux, healthH, a2aSrv, bridge)
 }
 
 // runWithShutdown starts the HTTP server and handles graceful shutdown on SIGTERM/SIGINT.
@@ -89,6 +96,7 @@ func runWithShutdown(
 	mux *http.ServeMux,
 	healthH *healthHandler,
 	a2aSrv *sdk.A2AServer,
+	bridge *httpBridge,
 ) error {
 	srv := &http.Server{
 		Handler:           mux,
@@ -118,6 +126,9 @@ func runWithShutdown(
 	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
 
+	if err := bridge.shutdown(ctx); err != nil {
+		log.Error("http bridge shutdown", "error", err)
+	}
 	if err := a2aSrv.Shutdown(ctx); err != nil {
 		log.Error("a2a server shutdown", "error", err)
 	}

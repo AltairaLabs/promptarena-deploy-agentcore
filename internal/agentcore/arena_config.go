@@ -8,8 +8,17 @@ import (
 // ArenaConfig holds the subset of the PromptKit arena config that the
 // adapter needs for infrastructure decisions.
 type ArenaConfig struct {
-	ToolSpecs  map[string]*ArenaToolSpec `json:"tool_specs,omitempty"`
-	MCPServers []ArenaMCPServer          `json:"mcp_servers,omitempty"`
+	ToolSpecs       map[string]*ArenaToolSpec `json:"tool_specs,omitempty"`
+	MCPServers      []ArenaMCPServer          `json:"mcp_servers,omitempty"`
+	LoadedProviders map[string]*ArenaProvider `json:"loaded_providers,omitempty"`
+	ProviderSpecs   map[string]*ArenaProvider `json:"provider_specs,omitempty"`
+}
+
+// ArenaProvider describes a provider from the arena config.
+type ArenaProvider struct {
+	ID    string `json:"id,omitempty"`
+	Type  string `json:"type"`
+	Model string `json:"model"`
 }
 
 // ArenaToolSpec describes a single tool from the arena config.
@@ -75,6 +84,21 @@ type ArenaMCPServer struct {
 	Args    []string `json:"args,omitempty"`
 }
 
+// firstProvider returns the first provider found in the arena config,
+// checking LoadedProviders first, then ProviderSpecs. Returns nil if none.
+func (a *ArenaConfig) firstProvider() *ArenaProvider {
+	if a == nil {
+		return nil
+	}
+	for _, p := range a.LoadedProviders {
+		return p
+	}
+	for _, p := range a.ProviderSpecs {
+		return p
+	}
+	return nil
+}
+
 // toolSpecForName returns the tool spec with the given name, or nil if
 // not found.
 func (a *ArenaConfig) toolSpecForName(name string) *ArenaToolSpec {
@@ -94,4 +118,47 @@ func parseArenaConfig(raw string) (*ArenaConfig, error) {
 		return nil, fmt.Errorf("invalid arena_config JSON: %w", err)
 	}
 	return &cfg, nil
+}
+
+// mergeToolTargets copies provider-specific target fields from deploy
+// config tool_targets into the ArenaConfig tool specs. This lets users
+// keep AWS-specific fields (lambda_arn, api_gateway, etc.) in the deploy
+// section rather than polluting the PromptKit arena config.
+func mergeToolTargets(arena *ArenaConfig, targets map[string]*ArenaToolSpec) {
+	if len(targets) == 0 || arena == nil {
+		return
+	}
+	if arena.ToolSpecs == nil {
+		arena.ToolSpecs = make(map[string]*ArenaToolSpec)
+	}
+	for name, target := range targets {
+		existing := arena.ToolSpecs[name]
+		if existing == nil {
+			arena.ToolSpecs[name] = target
+			continue
+		}
+		mergeTargetFields(existing, target)
+	}
+}
+
+// mergeTargetFields copies non-zero target-specific fields from src into dst.
+func mergeTargetFields(dst, src *ArenaToolSpec) {
+	if src.LambdaARN != "" {
+		dst.LambdaARN = src.LambdaARN
+	}
+	if src.APIGateway != nil {
+		dst.APIGateway = src.APIGateway
+	}
+	if src.OpenAPI != nil {
+		dst.OpenAPI = src.OpenAPI
+	}
+	if src.Smithy != nil {
+		dst.Smithy = src.Smithy
+	}
+	if src.Credential != nil {
+		dst.Credential = src.Credential
+	}
+	if src.HTTPConfig != nil {
+		dst.HTTPConfig = src.HTTPConfig
+	}
 }

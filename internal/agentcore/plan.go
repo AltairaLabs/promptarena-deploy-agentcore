@@ -33,6 +33,7 @@ func (p *Provider) Plan(_ context.Context, req *deploy.PlanRequest) (*deploy.Pla
 	if err != nil {
 		return nil, fmt.Errorf("agentcore: %w", err)
 	}
+	mergeToolTargets(cfg.ArenaConfig, cfg.ToolTargets)
 
 	// 4. Parse prior state (if any).
 	var prior *AdapterState

@@ -10,22 +10,23 @@ import (
 	"github.com/AltairaLabs/PromptKit/runtime/prompt"
 )
 
-// DefaultContainerImage is empty — the user must provide an ECR URI.
-// AgentCore only supports images hosted in Amazon ECR.
-const DefaultContainerImage = ""
-
 // Config holds AWS Bedrock AgentCore-specific configuration.
 type Config struct {
-	Region         string                    `json:"region"`
-	RuntimeRoleARN string                    `json:"runtime_role_arn"`
-	Memory         MemoryConfig              `json:"memory_store,omitempty"`
-	ContainerImage string                    `json:"container_image,omitempty"`
-	Tags           map[string]string         `json:"tags,omitempty"`
-	DryRun         bool                      `json:"dry_run,omitempty"`
-	Tools          *ToolsConfig              `json:"tools,omitempty"`
-	Observability  *ObservabilityConfig      `json:"observability,omitempty"`
-	A2AAuth        *A2AAuthConfig            `json:"a2a_auth,omitempty"`
-	AgentOverrides map[string]*AgentOverride `json:"agent_overrides,omitempty"`
+	Region            string               `json:"region"`
+	RuntimeRoleARN    string               `json:"runtime_role_arn"`
+	Memory            MemoryConfig         `json:"memory_store,omitempty"`
+	RuntimeBinaryPath string               `json:"runtime_binary_path,omitempty"`
+	Tags              map[string]string    `json:"tags,omitempty"`
+	DryRun            bool                 `json:"dry_run,omitempty"`
+	Tools             *ToolsConfig         `json:"tools,omitempty"`
+	Observability     *ObservabilityConfig `json:"observability,omitempty"`
+	A2AAuth           *A2AAuthConfig       `json:"a2a_auth,omitempty"`
+
+	// ToolTargets maps tool names to provider-specific target config
+	// (e.g. lambda_arn). These are merged into ArenaConfig.ToolSpecs
+	// so that buildTargetConfig can find Lambda ARNs and other
+	// target configuration supplied via the deploy section.
+	ToolTargets map[string]*ArenaToolSpec `json:"tool_targets,omitempty"`
 
 	// PackJSON holds the raw pack JSON content to inject as an env var
 	// on the runtime container. Populated at apply-time from PlanRequest.
@@ -64,26 +65,11 @@ type Config struct {
 	// PackTools holds pack tool definitions, populated at apply-time.
 	// Used to build inline tool schemas for Lambda gateway targets.
 	PackTools map[string]*prompt.PackTool `json:"-"`
-}
 
-// AgentOverride holds per-agent configuration overrides.
-type AgentOverride struct {
-	ContainerImage string `json:"container_image,omitempty"`
-}
-
-// containerImageForAgent returns the container image to use for the given
-// agent. It checks agent_overrides[name] first, then the global
-// container_image, and finally falls back to DefaultContainerImage.
-func (c *Config) containerImageForAgent(name string) string {
-	if c.AgentOverrides != nil {
-		if ov, ok := c.AgentOverrides[name]; ok && ov.ContainerImage != "" {
-			return ov.ContainerImage
-		}
-	}
-	if c.ContainerImage != "" {
-		return c.ContainerImage
-	}
-	return DefaultContainerImage
+	// PromptNames is a set of prompt names from the pack. Used to
+	// determine if a runtime name matches an actual prompt (multi-agent)
+	// vs the pack ID (single-agent). NOT serialized.
+	PromptNames map[string]bool `json:"-"`
 }
 
 // Valid memory strategy names.
@@ -256,7 +242,6 @@ type ObservabilityConfig struct {
 var (
 	regionRE  = regexp.MustCompile(`^[a-z]{2}-[a-z]+-\d+$`)
 	roleARNRE = regexp.MustCompile(`^arn:aws:iam::\d{12}:role/.+$`)
-	ecrURIRE  = regexp.MustCompile(`^\d{12}\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com/.+$`)
 )
 
 // parseConfig unmarshals JSON config into Config.
@@ -284,23 +269,14 @@ func (c *Config) validate() []string {
 		errs = append(errs, fmt.Sprintf("runtime_role_arn %q is not a valid IAM role ARN", c.RuntimeRoleARN))
 	}
 
-	errs = append(errs, validateMemory(&c.Memory)...)
-
-	if c.ContainerImage == "" {
+	if c.RuntimeBinaryPath == "" {
 		errs = append(errs,
-			"container_image is required"+
-				" (must be an ECR URI, e.g. 123456789012.dkr.ecr.us-west-2.amazonaws.com/my-repo:latest)")
-	} else {
-		errs = append(errs, validateContainerImage(c.ContainerImage)...)
+			"runtime_binary_path is required (path to pre-compiled Go runtime binary)")
 	}
 
+	errs = append(errs, validateMemory(&c.Memory)...)
 	errs = append(errs, validateA2AAuth(c.A2AAuth)...)
 	errs = append(errs, validateTags(c.Tags)...)
-	for name, ov := range c.AgentOverrides {
-		for _, e := range validateContainerImage(ov.ContainerImage) {
-			errs = append(errs, fmt.Sprintf("agent_overrides[%s].%s", name, e))
-		}
-	}
 
 	return errs
 }
@@ -335,22 +311,6 @@ func validateTags(tags map[string]string) []string {
 		}
 	}
 	return errs
-}
-
-// validateContainerImage checks that a container image reference is valid.
-// AgentCore requires ECR URIs in the format:
-// {account}.dkr.ecr.{region}.amazonaws.com/{repo}[:{tag}]
-func validateContainerImage(image string) []string {
-	if image == "" {
-		return nil
-	}
-	if !ecrURIRE.MatchString(image) {
-		return []string{fmt.Sprintf(
-			"container_image %q is not a valid ECR URI (expected {account}.dkr.ecr.{region}.amazonaws.com/{repo}:{tag})",
-			image,
-		)}
-	}
-	return nil
 }
 
 // validateMemory checks the memory configuration for errors.
