@@ -4,15 +4,30 @@ sidebar:
   order: 1
 ---
 
-The AgentCore adapter accepts a JSON configuration object via the `deploy_config` field in every JSON-RPC request. This page documents every field, its type, constraints, and validation behavior.
+The AgentCore adapter accepts configuration from two sources:
 
-## Top-level fields
+1. **Arena config** (`deploy.agentcore` section in `arena.yaml`) — deployment settings like `region`, `runtime_binary_path`, and `model`.
+2. **JSON-RPC `deploy_config`** — adapter-specific settings passed in every JSON-RPC request.
+
+This page documents every field, its type, constraints, and validation behavior.
+
+## Arena config fields (`deploy.agentcore`)
+
+These fields are set in the `deploy.agentcore` section of your arena config:
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `region` | string | Yes | AWS region for the AgentCore deployment (e.g. `us-west-2`). |
+| `runtime_binary_path` | string | Yes | Path to the cross-compiled PromptKit runtime binary (Linux ARM64). Built with `make build-runtime-arm64`. |
+| `model` | string | Yes | Bedrock model ID (e.g. `claude-3-5-haiku-20241022`, `claude-3-5-sonnet-20241022`). |
+
+## Top-level fields (deploy_config)
 
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
 | `region` | string | Yes | -- | AWS region for the AgentCore deployment. Must match `^[a-z]{2}-[a-z]+-\d+$` (e.g. `us-west-2`). |
-| `runtime_role_arn` | string | Yes | -- | IAM role ARN assumed by the AgentCore runtime. Must match `^arn:aws:iam::\d{12}:role/.+$`. The role needs `AmazonBedrockFullAccess`, `AmazonEC2ContainerRegistryReadOnly`, and `CloudWatchLogsReadOnlyAccess` (required when the pack includes evals). |
-| `memory_store` | string | No | -- | Memory store type. Allowed values: `"session"`, `"persistent"`. |
+| `runtime_role_arn` | string | Yes | -- | IAM role ARN assumed by the AgentCore runtime. Must match `^arn:aws:iam::\d{12}:role/.+$`. The role needs `AmazonBedrockFullAccess` and `CloudWatchLogsReadOnlyAccess` (required when the pack includes evals). |
+| `memory_store` | string | No | -- | Memory store type. Allowed values: `"session"`, `"persistent"`, or compound/object forms. See [memory_store config](/how-to/configure#memory_store). |
 | `dry_run` | boolean | No | `false` | When `true`, Apply simulates resource creation without calling AWS APIs. Resources are emitted with status `"planned"`. |
 | `tags` | map[string]string | No | -- | User-defined tags applied to all created AWS resources. Maximum 50 tags. Keys max 128 characters, values max 256 characters. |
 | `tools` | object | No | -- | Tool-related settings. See [tools](#tools). |

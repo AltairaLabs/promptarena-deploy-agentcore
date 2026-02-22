@@ -17,7 +17,7 @@ The AgentCore adapter is a deploy provider plugin for PromptKit. It translates y
 
 | Pack Concept | AWS Resource | Adapter Resource Type |
 |---|---|---|
-| Agent prompt | AgentCore Runtime (container) | `agent_runtime` |
+| Agent prompt | AgentCore Runtime | `agent_runtime` |
 | Pack tool | Gateway Tool target (MCP) | `tool_gateway` |
 | Validators / tool policy | Cedar Policy Engine + Policy | `cedar_policy` |
 | Agent member (multi-agent) | A2A endpoint wiring | `a2a_endpoint` |
@@ -41,9 +41,11 @@ The AgentCore adapter is a deploy provider plugin for PromptKit. It translates y
 # arena.yaml
 deploy:
   provider: agentcore
-  config:
+  agentcore:
     region: us-west-2
     runtime_role_arn: arn:aws:iam::123456789012:role/AgentCoreRuntime
+    runtime_binary_path: /path/to/promptkit-runtime
+    model: claude-3-5-haiku-20241022
 ```
 
 ```bash
@@ -93,6 +95,17 @@ adapter -> state: returns state
 ```
 
 The adapter runs as a subprocess, receiving JSON-RPC requests from the PromptKit CLI. It calls the AWS Bedrock AgentCore SDK to create and manage resources, then returns an opaque state blob containing ARNs and metadata for subsequent operations.
+
+### Runtime Architecture
+
+The deployed runtime serves two protocols simultaneously:
+
+| Port | Protocol | Purpose |
+|------|----------|---------|
+| 8080 | HTTP | External callers — `POST /invocations` accepts `{"prompt": "..."}` payloads |
+| 9000 | A2A | Agent-to-agent communication — full A2A JSON-RPC protocol |
+
+The HTTP bridge on port 8080 translates simple invocation requests into A2A `message/send` calls on port 9000. For multi-agent deployments, agents communicate directly via A2A.
 
 ---
 

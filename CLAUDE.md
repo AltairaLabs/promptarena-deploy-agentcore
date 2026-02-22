@@ -145,6 +145,25 @@ SonarCloud runs on every PR and enforces the **Sonar Way** quality profile. The 
 | `cmd/agentcore-runtime/otel.go` | OpenTelemetry tracing setup |
 | `cmd/agentcore-runtime/version.go` | Version metadata (injected via ldflags) |
 
+### Documentation (`docs/`)
+
+Astro-based documentation site (Starlight theme). Content lives in `docs/src/content/docs/`:
+
+| Path | Purpose |
+|------|---------|
+| `docs/src/content/docs/index.md` | Landing page, quick start, architecture overview |
+| `docs/src/content/docs/tutorials/01-first-deployment.md` | Tutorial: single-agent deploy, invoke, destroy |
+| `docs/src/content/docs/tutorials/02-multi-agent.md` | Tutorial: multi-agent deploy with A2A wiring |
+| `docs/src/content/docs/how-to/configure.md` | All configuration options with examples |
+| `docs/src/content/docs/how-to/dry-run.md` | Dry-run mode guide |
+| `docs/src/content/docs/how-to/observability.md` | CloudWatch, X-Ray, dashboards |
+| `docs/src/content/docs/how-to/tagging.md` | Resource tagging guide |
+| `docs/src/content/docs/reference/configuration.md` | Full config schema reference |
+| `docs/src/content/docs/reference/environment-variables.md` | All injected env vars |
+| `docs/src/content/docs/reference/resource-types.md` | Resource types and lifecycle |
+| `docs/src/content/docs/explanation/resource-lifecycle.md` | Resource creation/update/destroy flow |
+| `docs/src/content/docs/explanation/security.md` | IAM, Cedar policies, A2A auth |
+
 ### Build & CI
 
 | Path | Purpose |

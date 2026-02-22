@@ -12,11 +12,46 @@ This guide covers every configuration option accepted by the AgentCore deploy ad
 - An IAM role ARN that the AgentCore runtime will assume at execution time.
 - The target AWS region must support Bedrock AgentCore (currently `us-east-1`, `us-west-2`, `eu-west-1`).
 
-## Required fields
+## Arena config fields
+
+These fields go in the `deploy.agentcore` section of your `arena.yaml` or `config.arena.yaml`:
 
 ### `region`
 
-The AWS region where all resources will be created. Must match the pattern `^[a-z]{2}-[a-z]+-\d+$`.
+The AWS region where all resources will be created.
+
+```yaml
+deploy:
+  provider: agentcore
+  agentcore:
+    region: us-west-2
+```
+
+### `runtime_binary_path`
+
+Path to the cross-compiled PromptKit runtime binary (Linux ARM64). Build with `make build-runtime-arm64` in the adapter repository.
+
+```yaml
+deploy:
+  agentcore:
+    runtime_binary_path: /path/to/promptkit-runtime
+```
+
+### `model`
+
+The Bedrock model ID the runtime will use for LLM invocations. Injected as `PROMPTPACK_PROVIDER_MODEL`.
+
+```yaml
+deploy:
+  agentcore:
+    model: claude-3-5-haiku-20241022
+```
+
+## Required fields (deploy_config)
+
+### `region`
+
+The AWS region. Must match the pattern `^[a-z]{2}-[a-z]+-\d+$`.
 
 ```yaml
 region: us-west-2
@@ -122,30 +157,37 @@ a2a_auth:
 
 ## Complete example
 
+Arena config (`config.arena.yaml`):
+
 ```yaml
-region: us-west-2
-runtime_role_arn: arn:aws:iam::123456789012:role/AgentCoreExecutionRole
-memory_store: persistent
-dry_run: false
+deploy:
+  provider: agentcore
+  agentcore:
+    region: us-west-2
+    runtime_binary_path: /path/to/promptkit-runtime
+    model: claude-3-5-haiku-20241022
+    runtime_role_arn: arn:aws:iam::123456789012:role/AgentCoreExecutionRole
+    memory_store: persistent
+    dry_run: false
 
-tags:
-  environment: staging
-  team: ml-platform
+    tags:
+      environment: staging
+      team: ml-platform
 
-tools:
-  code_interpreter: true
+    tools:
+      code_interpreter: true
 
-observability:
-  cloudwatch_log_group: /aws/agentcore/my-agent
-  tracing_enabled: true
+    observability:
+      cloudwatch_log_group: /aws/agentcore/my-agent
+      tracing_enabled: true
 
-a2a_auth:
-  mode: jwt
-  discovery_url: https://cognito-idp.us-west-2.amazonaws.com/us-west-2_abc123/.well-known/openid-configuration
-  allowed_audience:
-    - my-agent-audience
-  allowed_clients:
-    - client-id-1
+    a2a_auth:
+      mode: jwt
+      discovery_url: https://cognito-idp.us-west-2.amazonaws.com/us-west-2_abc123/.well-known/openid-configuration
+      allowed_audience:
+        - my-agent-audience
+      allowed_clients:
+        - client-id-1
 ```
 
 ## Validation errors
