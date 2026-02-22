@@ -119,6 +119,20 @@ func TestBuildRuntimeEnvVars(t *testing.T) {
 				EnvA2AAuthMode: "jwt",
 			},
 		},
+		{
+			name: "protocol set",
+			cfg: &Config{
+				Protocol: ProtocolA2A,
+			},
+			want: map[string]string{
+				EnvProtocol: "a2a",
+			},
+		},
+		{
+			name: "protocol empty not injected",
+			cfg:  &Config{},
+			want: map[string]string{},
+		},
 	}
 
 	for _, tt := range tests {

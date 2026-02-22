@@ -745,3 +745,99 @@ func TestParseConfig_MemoryStore_NullOmitted(t *testing.T) {
 		t.Error("expected no memory when memory_store is null")
 	}
 }
+
+func TestValidate_Protocol(t *testing.T) {
+	base := Config{
+		Region:            "us-west-2",
+		RuntimeRoleARN:    "arn:aws:iam::123456789012:role/test",
+		RuntimeBinaryPath: "/path/to/binary",
+	}
+
+	t.Run("empty protocol is valid", func(t *testing.T) {
+		cfg := base
+		errs := cfg.validate()
+		for _, e := range errs {
+			if contains(e, "protocol") {
+				t.Errorf("unexpected protocol error: %s", e)
+			}
+		}
+	})
+
+	for _, proto := range []string{"http", "a2a", "both"} {
+		t.Run("valid "+proto, func(t *testing.T) {
+			cfg := base
+			cfg.Protocol = proto
+			errs := cfg.validate()
+			for _, e := range errs {
+				if contains(e, "protocol") {
+					t.Errorf("unexpected protocol error: %s", e)
+				}
+			}
+		})
+	}
+
+	t.Run("invalid protocol", func(t *testing.T) {
+		cfg := base
+		cfg.Protocol = "grpc"
+		errs := cfg.validate()
+		found := false
+		for _, e := range errs {
+			if contains(e, "protocol") {
+				found = true
+			}
+		}
+		if !found {
+			t.Error("expected protocol validation error")
+		}
+	})
+}
+
+func TestResolveServerProtocol(t *testing.T) {
+	tests := []struct {
+		protocol string
+		want     string
+	}{
+		{"", ""},
+		{"http", "HTTP"},
+		{"a2a", "A2A"},
+		{"both", "HTTP"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.protocol, func(t *testing.T) {
+			cfg := &Config{Protocol: tt.protocol}
+			if got := resolveServerProtocol(cfg); got != tt.want {
+				t.Errorf("resolveServerProtocol(%q) = %q, want %q",
+					tt.protocol, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseConfig_WithProtocol(t *testing.T) {
+	raw := `{
+		"region":"us-west-2",
+		"runtime_role_arn":"arn:aws:iam::123456789012:role/t",
+		"runtime_binary_path":"/bin/rt",
+		"protocol":"a2a"
+	}`
+	cfg, err := parseConfig(raw)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Protocol != "a2a" {
+		t.Errorf("Protocol = %q, want a2a", cfg.Protocol)
+	}
+}
+
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && searchString(s, substr)
+}
+
+func searchString(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}

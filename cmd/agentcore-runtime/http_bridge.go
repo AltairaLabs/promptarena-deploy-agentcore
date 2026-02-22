@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"net"
 	"net/http"
 	"strings"
@@ -19,11 +20,42 @@ const httpBridgePort = 8080
 // invocationsPath is the HTTP protocol endpoint for agent invocations.
 const invocationsPath = "/invocations"
 
+// sessionHeader is the AgentCore header that carries the session ID.
+const sessionHeader = "X-Amzn-Bedrock-AgentCore-Runtime-Session-Id"
+
 // invocationRequest is the payload format sent by invoke_agent_runtime.
 // Supports both "prompt" (our convention) and "input" (AWS example convention).
+// Extra fields are captured as metadata and forwarded to the A2A server.
 type invocationRequest struct {
-	Prompt string `json:"prompt"`
-	Input  string `json:"input"`
+	Prompt   string         `json:"prompt"`
+	Input    string         `json:"input"`
+	Metadata map[string]any `json:"metadata,omitempty"`
+	Extra    map[string]any `json:"-"` // all other top-level fields
+}
+
+// UnmarshalJSON implements custom unmarshalling to capture extra fields
+// beyond prompt, input, and metadata.
+func (r *invocationRequest) UnmarshalJSON(data []byte) error {
+	// First unmarshal known fields via an alias to avoid recursion.
+	type alias invocationRequest
+	var a alias
+	if err := json.Unmarshal(data, &a); err != nil {
+		return err
+	}
+	*r = invocationRequest(a)
+
+	// Then unmarshal everything into a generic map for extra fields.
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	delete(raw, "prompt")
+	delete(raw, "input")
+	delete(raw, "metadata")
+	if len(raw) > 0 {
+		r.Extra = raw
+	}
+	return nil
 }
 
 // text returns the user's message, preferring "prompt" over "input".
@@ -34,10 +66,35 @@ func (r *invocationRequest) text() string {
 	return r.Input
 }
 
+// allMetadata merges explicit metadata with extra top-level fields.
+// Extra fields are namespaced under "payload" to avoid collisions.
+func (r *invocationRequest) allMetadata() map[string]any {
+	if len(r.Metadata) == 0 && len(r.Extra) == 0 {
+		return nil
+	}
+	merged := make(map[string]any, len(r.Metadata)+1)
+	maps.Copy(merged, r.Metadata)
+	if len(r.Extra) > 0 {
+		merged["payload"] = r.Extra
+	}
+	return merged
+}
+
 // invocationResponse is the HTTP protocol response format.
+// Extra fields use omitempty for backward compatibility.
 type invocationResponse struct {
-	Response string `json:"response"`
-	Status   string `json:"status"`
+	Response  string         `json:"response"`
+	Status    string         `json:"status"`
+	TaskID    string         `json:"task_id,omitempty"`
+	ContextID string         `json:"context_id,omitempty"`
+	Usage     *usageInfo     `json:"usage,omitempty"`
+	Metadata  map[string]any `json:"metadata,omitempty"`
+}
+
+// usageInfo holds token usage from the A2A response.
+type usageInfo struct {
+	InputTokens  int `json:"input_tokens,omitempty"`
+	OutputTokens int `json:"output_tokens,omitempty"`
 }
 
 // httpBridge serves the AgentCore HTTP protocol contract on port 8080,
@@ -114,7 +171,9 @@ func (b *httpBridge) handleUnknown(w http.ResponseWriter, r *http.Request) {
 // a2aResponse is the parsed JSON-RPC response from the A2A server.
 type a2aResponse struct {
 	Result struct {
-		Status struct {
+		ID        string `json:"id"`
+		ContextID string `json:"contextId"`
+		Status    struct {
 			State   string `json:"state"`
 			Message *struct {
 				Parts []struct {
@@ -126,7 +185,9 @@ type a2aResponse struct {
 			Parts []struct {
 				Text string `json:"text"`
 			} `json:"parts"`
+			Metadata map[string]any `json:"metadata,omitempty"`
 		} `json:"artifacts"`
+		Metadata map[string]any `json:"metadata,omitempty"`
 	} `json:"result"`
 	Error *struct {
 		Message string `json:"message"`
@@ -134,23 +195,35 @@ type a2aResponse struct {
 }
 
 // buildA2ARequest creates a blocking A2A message/send JSON-RPC request.
-func buildA2ARequest(text string) ([]byte, error) {
+// sessionID maps to contextId for multi-turn conversation continuity.
+// metadata is forwarded as A2A message-level metadata.
+func buildA2ARequest(text, sessionID string, metadata map[string]any) ([]byte, error) {
+	message := map[string]any{
+		"role": "user",
+		"parts": []map[string]any{
+			{"kind": "text", "text": text},
+		},
+		"messageId": fmt.Sprintf("http-%d", time.Now().UnixNano()),
+	}
+	if len(metadata) > 0 {
+		message["metadata"] = metadata
+	}
+
+	params := map[string]any{
+		"message": message,
+		"configuration": map[string]any{
+			"blocking": true,
+		},
+	}
+	if sessionID != "" {
+		params["contextId"] = sessionID
+	}
+
 	a2aReq := map[string]any{
 		"jsonrpc": "2.0",
 		"id":      "http-bridge-1",
 		"method":  "message/send",
-		"params": map[string]any{
-			"message": map[string]any{
-				"role": "user",
-				"parts": []map[string]any{
-					{"kind": "text", "text": text},
-				},
-				"messageId": fmt.Sprintf("http-%d", time.Now().UnixNano()),
-			},
-			"configuration": map[string]any{
-				"blocking": true,
-			},
-		},
+		"params":  params,
 	}
 	return json.Marshal(a2aReq)
 }
@@ -182,6 +255,33 @@ func extractArtifactText(result *a2aResponse) string {
 	return sb.String()
 }
 
+// extractUsage extracts token usage from A2A response metadata.
+func extractUsage(result *a2aResponse) *usageInfo {
+	md := result.Result.Metadata
+	if md == nil {
+		return nil
+	}
+	usage, ok := md["usage"]
+	if !ok {
+		return nil
+	}
+	usageMap, ok := usage.(map[string]any)
+	if !ok {
+		return nil
+	}
+	info := &usageInfo{}
+	if v, ok := usageMap["input_tokens"].(float64); ok {
+		info.InputTokens = int(v)
+	}
+	if v, ok := usageMap["output_tokens"].(float64); ok {
+		info.OutputTokens = int(v)
+	}
+	if info.InputTokens == 0 && info.OutputTokens == 0 {
+		return nil
+	}
+	return info
+}
+
 // handleInvocation converts an HTTP /invocations request to an A2A message/send
 // call and returns the response.
 func (b *httpBridge) handleInvocation(w http.ResponseWriter, r *http.Request) {
@@ -210,7 +310,8 @@ func (b *httpBridge) handleInvocation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	a2aBody, err := buildA2ARequest(req.text())
+	sessionID := r.Header.Get(sessionHeader)
+	a2aBody, err := buildA2ARequest(req.text(), sessionID, req.allMetadata())
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
@@ -268,7 +369,10 @@ func (b *httpBridge) writeA2AResponse(w http.ResponseWriter, respBody []byte) {
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(invocationResponse{
-		Response: extractArtifactText(&result),
-		Status:   "success",
+		Response:  extractArtifactText(&result),
+		Status:    "success",
+		TaskID:    result.Result.ID,
+		ContextID: result.Result.ContextID,
+		Usage:     extractUsage(&result),
 	})
 }

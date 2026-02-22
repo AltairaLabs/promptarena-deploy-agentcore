@@ -29,6 +29,7 @@ const (
 	envAgentEndpoints  = "PROMPTPACK_AGENTS"
 	envProviderType    = "PROMPTPACK_PROVIDER_TYPE"
 	envProviderModel   = "PROMPTPACK_PROVIDER_MODEL"
+	envProtocol        = "PROMPTPACK_PROTOCOL"
 )
 
 const defaultPort = 9000
@@ -39,6 +40,7 @@ type runtimeConfig struct {
 	PackJSON        string
 	AgentName       string
 	Port            int
+	Protocol        string // "http", "a2a", "both", or "" (default = both)
 	AWSRegion       string
 	MemoryStore     string
 	MemoryID        string
@@ -55,6 +57,23 @@ type runtimeConfig struct {
 	Model           string
 }
 
+// Protocol mode constants matching adapter-side values.
+const (
+	protocolHTTP = "http"
+	protocolA2A  = "a2a"
+	protocolBoth = "both"
+)
+
+// wantHTTPBridge returns true if the HTTP bridge should be started.
+func (c *runtimeConfig) wantHTTPBridge() bool {
+	return c.Protocol == "" || c.Protocol == protocolBoth || c.Protocol == protocolHTTP
+}
+
+// wantA2AServer returns true if the A2A server should be started.
+func (c *runtimeConfig) wantA2AServer() bool {
+	return c.Protocol == "" || c.Protocol == protocolBoth || c.Protocol == protocolA2A
+}
+
 // loadConfig reads configuration from environment variables.
 // PROMPTPACK_FILE is required; all others have sensible defaults.
 func loadConfig() (*runtimeConfig, error) {
@@ -62,6 +81,7 @@ func loadConfig() (*runtimeConfig, error) {
 		PackFile:        os.Getenv(envPackFile),
 		PackJSON:        os.Getenv(envPackJSON),
 		AgentName:       os.Getenv(envAgentName),
+		Protocol:        os.Getenv(envProtocol),
 		AWSRegion:       os.Getenv(envAWSRegion),
 		MemoryStore:     os.Getenv(envMemoryStore),
 		MemoryID:        os.Getenv(envMemoryID),
