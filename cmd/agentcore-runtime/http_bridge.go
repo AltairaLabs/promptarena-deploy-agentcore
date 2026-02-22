@@ -23,6 +23,9 @@ const invocationsPath = "/invocations"
 // sessionHeader is the AgentCore header that carries the session ID.
 const sessionHeader = "X-Amzn-Bedrock-AgentCore-Runtime-Session-Id"
 
+// stateFailed is the A2A task state indicating failure.
+const stateFailed = "failed"
+
 // invocationRequest is the payload format sent by invoke_agent_runtime.
 // Supports both "prompt" (our convention) and "input" (AWS example convention).
 // Extra fields are captured as metadata and forwarded to the A2A server.
@@ -115,6 +118,7 @@ func startHTTPBridge(log *slog.Logger, healthH *healthHandler, a2aPort int) (*ht
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST "+invocationsPath, b.handleInvocation)
+	mux.HandleFunc("/ws", b.handleWebSocket)
 	mux.Handle("/ping", healthH)
 	mux.HandleFunc("/", b.handleUnknown)
 
@@ -310,6 +314,12 @@ func (b *httpBridge) handleInvocation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Route to SSE streaming if the client accepts event-stream.
+	if wantsSSE(r) {
+		b.handleStreamingInvocation(w, r, &req)
+		return
+	}
+
 	sessionID := r.Header.Get(sessionHeader)
 	a2aBody, err := buildA2ARequest(req.text(), sessionID, req.allMetadata())
 	if err != nil {
@@ -362,7 +372,7 @@ func (b *httpBridge) writeA2AResponse(w http.ResponseWriter, respBody []byte) {
 		return
 	}
 
-	if result.Result.Status.State == "failed" {
+	if result.Result.Status.State == stateFailed {
 		writeInvocationError(w, extractFailedMessage(&result))
 		return
 	}
