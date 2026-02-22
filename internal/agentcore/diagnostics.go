@@ -2,6 +2,7 @@ package agentcore
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -36,6 +37,7 @@ func DiagnoseConfig(cfg *Config) []DiagnosticWarning {
 	warnings = append(warnings, diagnoseRegion(cfg)...)
 	warnings = append(warnings, diagnoseRoleARN(cfg)...)
 	warnings = append(warnings, diagnoseA2AConfig(cfg)...)
+	warnings = append(warnings, diagnoseMemory(cfg)...)
 	return warnings
 }
 
@@ -104,6 +106,18 @@ func diagnoseA2AConfig(cfg *Config) []DiagnosticWarning {
 		}
 	}
 	return warnings
+}
+
+// diagnoseMemory checks for memory strategy issues.
+func diagnoseMemory(cfg *Config) []DiagnosticWarning {
+	if slices.Contains(cfg.Memory.Strategies, StrategyEpisodic) {
+		return []DiagnosticWarning{{
+			Category: ErrCategoryConfiguration,
+			Message:  "episodic memory strategy may be rejected by AWS Bedrock AgentCore",
+			Hint:     "consider using semantic, summary, or user_preference instead",
+		}}
+	}
+	return nil
 }
 
 // joinMapKeys returns sorted, comma-separated keys of a map.

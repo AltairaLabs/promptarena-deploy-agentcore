@@ -199,6 +199,54 @@ func TestDiagnoseConfig_EmptyRoleARN(t *testing.T) {
 	}
 }
 
+func TestDiagnoseConfig_EpisodicMemoryWarning(t *testing.T) {
+	cfg := &Config{
+		Region:         "us-west-2",
+		RuntimeRoleARN: "arn:aws:iam::999888777666:role/test",
+		Memory:         MemoryConfig{Strategies: []string{"episodic"}},
+	}
+	warnings := DiagnoseConfig(cfg)
+	found := false
+	for _, w := range warnings {
+		if strings.Contains(w.Message, "episodic memory strategy") {
+			found = true
+			if !strings.Contains(w.Hint, "semantic") {
+				t.Errorf("expected hint to suggest alternatives, got %q", w.Hint)
+			}
+		}
+	}
+	if !found {
+		t.Error("expected a warning about episodic memory strategy")
+	}
+}
+
+func TestDiagnoseConfig_SemanticMemory_NoEpisodicWarning(t *testing.T) {
+	cfg := &Config{
+		Region:         "us-west-2",
+		RuntimeRoleARN: "arn:aws:iam::999888777666:role/test",
+		Memory:         MemoryConfig{Strategies: []string{"semantic"}},
+	}
+	warnings := DiagnoseConfig(cfg)
+	for _, w := range warnings {
+		if strings.Contains(w.Message, "episodic") {
+			t.Errorf("should not warn about episodic for semantic strategy: %s", w.Message)
+		}
+	}
+}
+
+func TestDiagnoseConfig_NoMemory_NoEpisodicWarning(t *testing.T) {
+	cfg := &Config{
+		Region:         "us-west-2",
+		RuntimeRoleARN: "arn:aws:iam::999888777666:role/test",
+	}
+	warnings := DiagnoseConfig(cfg)
+	for _, w := range warnings {
+		if strings.Contains(w.Message, "episodic") {
+			t.Errorf("should not warn about episodic when no memory: %s", w.Message)
+		}
+	}
+}
+
 func TestDiagnosticWarning_String_WithHint(t *testing.T) {
 	w := DiagnosticWarning{
 		Category: ErrCategoryConfiguration,

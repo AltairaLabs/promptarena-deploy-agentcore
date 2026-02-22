@@ -23,7 +23,7 @@ func singleAgentPackJSON() string {
 // multiAgentPackJSON returns a multi-agent pack JSON with two members.
 func multiAgentPackJSON() string {
 	p := map[string]any{
-		"id":      "multi-pack",
+		"id":      "multi_pack",
 		"version": "v1.0.0",
 		"prompts": map[string]any{
 			"router": map[string]any{
@@ -58,7 +58,7 @@ func multiAgentPackJSON() string {
 // multiAgentPackWithToolsAndEvalsJSON returns a multi-agent pack with tools and evals.
 func multiAgentPackWithToolsAndEvalsJSON() string {
 	p := map[string]any{
-		"id":      "multi-pack",
+		"id":      "multi_pack",
 		"version": "v1.0.0",
 		"prompts": map[string]any{
 			"router": map[string]any{
@@ -568,6 +568,45 @@ func TestBuildSummary_NoChanges(t *testing.T) {
 	summary := buildSummary(nil)
 	if summary != "Plan: 0 to create, 0 to update, 0 to delete" {
 		t.Errorf("summary = %q", summary)
+	}
+}
+
+func TestPlan_InvalidResourceNames_HyphenatedPackID(t *testing.T) {
+	provider := newSimulatedProvider()
+	packJSON := `{"id":"research-team","version":"v1.0.0","prompts":{"default":{"id":"default","system_template":"hello"}}}`
+	_, err := provider.Plan(context.Background(), &deploy.PlanRequest{
+		PackJSON:     packJSON,
+		DeployConfig: validDeployConfig,
+		ArenaConfig:  validArenaConfigJSON,
+	})
+	if err == nil {
+		t.Fatal("expected error for hyphenated pack ID")
+	}
+	if !strings.Contains(err.Error(), "invalid resource names") {
+		t.Errorf("error = %q, want 'invalid resource names'", err.Error())
+	}
+	if !strings.Contains(err.Error(), "research-team") {
+		t.Errorf("error should mention the invalid name, got %q", err.Error())
+	}
+}
+
+func TestPlan_InvalidResourceNames_HyphenatedMultiAgent(t *testing.T) {
+	provider := newSimulatedProvider()
+	packJSON := `{
+		"id":"multi","version":"v1.0.0",
+		"prompts":{"my-router":{"id":"my-router","system_template":"r"},"worker":{"id":"worker","system_template":"w"}},
+		"agents":{"entry":"my-router","members":{"my-router":{},"worker":{}}}
+	}`
+	_, err := provider.Plan(context.Background(), &deploy.PlanRequest{
+		PackJSON:     packJSON,
+		DeployConfig: validDeployConfig,
+		ArenaConfig:  validArenaConfigJSON,
+	})
+	if err == nil {
+		t.Fatal("expected error for hyphenated agent name")
+	}
+	if !strings.Contains(err.Error(), "my-router") {
+		t.Errorf("error should mention my-router, got %q", err.Error())
 	}
 }
 

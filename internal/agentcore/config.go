@@ -323,6 +323,7 @@ func (c *Config) validate() []string {
 	errs = append(errs, validateMemory(&c.Memory)...)
 	errs = append(errs, validateA2AAuth(c.A2AAuth)...)
 	errs = append(errs, validateTags(c.Tags)...)
+	errs = append(errs, validateToolTargetNames(c.ToolTargets)...)
 
 	return errs
 }
