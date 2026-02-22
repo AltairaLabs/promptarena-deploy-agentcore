@@ -22,6 +22,7 @@ const (
 	EnvAgentName       = "PROMPTPACK_AGENT"
 	EnvProviderType    = "PROMPTPACK_PROVIDER_TYPE"
 	EnvProviderModel   = "PROMPTPACK_PROVIDER_MODEL"
+	EnvProtocol        = "PROMPTPACK_PROTOCOL"
 )
 
 // buildRuntimeEnvVars constructs the environment variable map that will be
@@ -59,6 +60,10 @@ func buildRuntimeEnvVars(cfg *Config) map[string]string {
 	// explicitly to ensure it's always available.
 	if cfg.Region != "" {
 		env["AWS_REGION"] = cfg.Region
+	}
+
+	if cfg.Protocol != "" {
+		env[EnvProtocol] = cfg.Protocol
 	}
 
 	injectProviderEnvVars(env, cfg.ArenaConfig)

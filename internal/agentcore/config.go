@@ -10,12 +10,27 @@ import (
 	"github.com/AltairaLabs/PromptKit/runtime/prompt"
 )
 
+// Protocol mode constants for the runtime server protocol.
+const (
+	ProtocolHTTP = "http"
+	ProtocolA2A  = "a2a"
+	ProtocolBoth = "both"
+)
+
+// validProtocols lists accepted protocol mode values.
+var validProtocols = map[string]bool{
+	ProtocolHTTP: true,
+	ProtocolA2A:  true,
+	ProtocolBoth: true,
+}
+
 // Config holds AWS Bedrock AgentCore-specific configuration.
 type Config struct {
 	Region            string               `json:"region"`
 	RuntimeRoleARN    string               `json:"runtime_role_arn"`
 	Memory            MemoryConfig         `json:"memory_store,omitempty"`
 	RuntimeBinaryPath string               `json:"runtime_binary_path,omitempty"`
+	Protocol          string               `json:"protocol,omitempty"`
 	Tags              map[string]string    `json:"tags,omitempty"`
 	DryRun            bool                 `json:"dry_run,omitempty"`
 	Tools             *ToolsConfig         `json:"tools,omitempty"`
@@ -214,6 +229,31 @@ func resolveAlias(s string) string {
 	return s
 }
 
+// AWS SDK ServerProtocol values.
+const (
+	serverProtocolHTTP = "HTTP"
+	serverProtocolA2A  = "A2A"
+)
+
+// resolveServerProtocol maps the config protocol value to the AWS SDK
+// ServerProtocol string. Returns "" if no explicit protocol is set (let
+// the API decide the default).
+func resolveServerProtocol(cfg *Config) string {
+	switch cfg.Protocol {
+	case ProtocolHTTP:
+		return serverProtocolHTTP
+	case ProtocolA2A:
+		return serverProtocolA2A
+	case ProtocolBoth:
+		// "both" means our container serves both, but AgentCore only
+		// accepts a single value. Use HTTP as the routed protocol;
+		// our container still starts both servers regardless.
+		return serverProtocolHTTP
+	default:
+		return ""
+	}
+}
+
 // A2AAuthConfig holds A2A authentication settings.
 type A2AAuthConfig struct {
 	Mode         string   `json:"mode"`                       // "iam" or "jwt"
@@ -272,6 +312,12 @@ func (c *Config) validate() []string {
 	if c.RuntimeBinaryPath == "" {
 		errs = append(errs,
 			"runtime_binary_path is required (path to pre-compiled Go runtime binary)")
+	}
+
+	if c.Protocol != "" && !validProtocols[c.Protocol] {
+		errs = append(errs, fmt.Sprintf(
+			"protocol %q must be %q, %q, or %q",
+			c.Protocol, ProtocolHTTP, ProtocolA2A, ProtocolBoth))
 	}
 
 	errs = append(errs, validateMemory(&c.Memory)...)

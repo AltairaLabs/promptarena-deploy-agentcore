@@ -249,6 +249,11 @@ func (c *realAWSClient) CreateRuntime(
 			NetworkMode: types.NetworkModePublic,
 		},
 	}
+	if proto := resolveServerProtocol(cfg); proto != "" {
+		input.ProtocolConfiguration = &types.ProtocolConfiguration{
+			ServerProtocol: types.ServerProtocol(proto),
+		}
+	}
 	if len(envVars) > 0 {
 		input.EnvironmentVariables = envVars
 	}
@@ -294,6 +299,11 @@ func (c *realAWSClient) UpdateRuntime(
 		NetworkConfiguration: &types.NetworkConfiguration{
 			NetworkMode: types.NetworkModePublic,
 		},
+	}
+	if proto := resolveServerProtocol(cfg); proto != "" {
+		input.ProtocolConfiguration = &types.ProtocolConfiguration{
+			ServerProtocol: types.ServerProtocol(proto),
+		}
 	}
 	if len(envVars) > 0 {
 		input.EnvironmentVariables = envVars

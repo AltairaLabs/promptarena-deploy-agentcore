@@ -89,6 +89,11 @@ const configSchema = `{
     "runtime_binary_path": {
       "type": "string",
       "description": "Path to the pre-compiled Go runtime binary for code deploy"
+    },
+    "protocol": {
+      "type": "string",
+      "enum": ["http", "a2a", "both"],
+      "description": "Server protocol mode: http (port 8080), a2a (port 9000), or both (default)"
     }
   },
   "additionalProperties": false

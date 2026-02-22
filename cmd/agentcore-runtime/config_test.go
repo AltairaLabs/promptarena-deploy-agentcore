@@ -170,6 +170,7 @@ func TestLoadConfig_AllEnvVars(t *testing.T) {
 	t.Setenv(envPackFile, "my.pack.json")
 	t.Setenv(envAgentName, "myagent")
 	t.Setenv(envPort, "3000")
+	t.Setenv(envProtocol, "a2a")
 	t.Setenv(envAWSRegion, "us-east-1")
 	t.Setenv(envMemoryStore, "dynamodb")
 	t.Setenv(envMemoryID, "mem-123")
@@ -194,6 +195,9 @@ func TestLoadConfig_AllEnvVars(t *testing.T) {
 	if cfg.Port != 3000 {
 		t.Errorf("Port = %d, want 3000", cfg.Port)
 	}
+	if cfg.Protocol != "a2a" {
+		t.Errorf("Protocol = %q, want %q", cfg.Protocol, "a2a")
+	}
 	if cfg.AWSRegion != "us-east-1" {
 		t.Errorf("AWSRegion = %q, want %q", cfg.AWSRegion, "us-east-1")
 	}
@@ -205,5 +209,47 @@ func TestLoadConfig_AllEnvVars(t *testing.T) {
 	}
 	if cfg.LogGroup != "/aws/agentcore/myagent" {
 		t.Errorf("LogGroup = %q, want %q", cfg.LogGroup, "/aws/agentcore/myagent")
+	}
+}
+
+func TestWantHTTPBridge(t *testing.T) {
+	tests := []struct {
+		protocol string
+		want     bool
+	}{
+		{"", true},
+		{"both", true},
+		{"http", true},
+		{"a2a", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.protocol, func(t *testing.T) {
+			cfg := &runtimeConfig{Protocol: tt.protocol}
+			if got := cfg.wantHTTPBridge(); got != tt.want {
+				t.Errorf("wantHTTPBridge(%q) = %v, want %v",
+					tt.protocol, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestWantA2AServer(t *testing.T) {
+	tests := []struct {
+		protocol string
+		want     bool
+	}{
+		{"", true},
+		{"both", true},
+		{"a2a", true},
+		{"http", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.protocol, func(t *testing.T) {
+			cfg := &runtimeConfig{Protocol: tt.protocol}
+			if got := cfg.wantA2AServer(); got != tt.want {
+				t.Errorf("wantA2AServer(%q) = %v, want %v",
+					tt.protocol, got, tt.want)
+			}
+		})
 	}
 }
