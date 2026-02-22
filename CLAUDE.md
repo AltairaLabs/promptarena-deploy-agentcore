@@ -10,8 +10,14 @@
 ## Build & Test Commands
 
 ```bash
-# Build (requires PromptKit sibling checkout at ../promptkit)
+# Build adapter (requires PromptKit sibling checkout at ../promptkit)
 GOWORK=off go build -o promptarena-deploy-agentcore .
+
+# Build runtime binary (native, for local testing)
+make build-runtime
+
+# Cross-compile runtime for AgentCore (Linux ARM64)
+make build-runtime-arm64
 
 # Test with race detector
 GOWORK=off go test ./... -v -race -count=1
@@ -23,8 +29,10 @@ go tool cover -func=coverage.out
 # Lint (25 linters, see .golangci.yml)
 golangci-lint run
 
-# Integration tests (requires real AWS credentials)
-AGENTCORE_TEST_REGION=us-west-2 AGENTCORE_TEST_ROLE_ARN=arn:aws:iam::123:role/test go test ./... -tags=integration -v
+# Integration tests — invoke a deployed runtime (requires AWS credentials + deployed runtime)
+AGENTCORE_TEST_REGION=us-west-2 \
+AGENTCORE_TEST_RUNTIME_ARN=arn:aws:bedrock-agentcore:us-west-2:123:runtime/my-runtime \
+  GOWORK=off go test -tags=integration -v ./internal/agentcore/
 
 # Run the adapter (JSON-RPC over stdio)
 echo '{"jsonrpc":"2.0","method":"get_provider_info","id":1}' | ./promptarena-deploy-agentcore
@@ -51,7 +59,9 @@ Makefile targets available individually:
 | `make fmt` | Format code with goimports |
 | `make lint` | Run golangci-lint |
 | `make test` | Run tests with race detector |
-| `make build` | Build binary |
+| `make build` | Build adapter binary |
+| `make build-runtime` | Build runtime binary (native) |
+| `make build-runtime-arm64` | Cross-compile runtime for Linux ARM64 |
 | `make check` | Run all checks (fmt + lint + test + build) |
 | `make install-hooks` | Install the pre-commit hook |
 
@@ -103,33 +113,58 @@ SonarCloud runs on every PR and enforces the **Sonar Way** quality profile. The 
 
 ## Project Structure
 
+### Deploy Adapter (`internal/agentcore/`)
+
 | Path | Purpose |
 |------|---------|
-| `main.go` | Entry point — calls `adaptersdk.Serve(provider)` |
 | `main.go` | Entry point — thin wrapper calling `adaptersdk.Serve(provider)` |
 | `internal/agentcore/provider.go` | `Provider`, factories, `GetProviderInfo`, `ValidateConfig` |
 | `internal/agentcore/config.go` | Config parsing, validation, JSON Schema definition |
+| `internal/agentcore/arena_config.go` | Arena config deploy section parsing (region, model, binary path) |
 | `internal/agentcore/plan.go` | Plan generation — diffs desired resources vs prior state |
-| `internal/agentcore/apply.go` | Apply — creates resources in 4 dependency-ordered phases |
+| `internal/agentcore/apply.go` | Apply — creates resources in dependency-ordered phases |
+| `internal/agentcore/codedeploy.go` | Code deploy — ZIP packaging with launcher script, S3 upload |
 | `internal/agentcore/status.go` | Destroy + Status — teardown and health checks |
 | `internal/agentcore/state.go` | `AdapterState` and `ResourceState` type definitions |
+| `internal/agentcore/envvars.go` | Runtime environment variable generation |
+| `internal/agentcore/gateway.go` | Tool gateway resource management |
+| `internal/agentcore/cedar.go` | Cedar policy resource management |
 | `internal/agentcore/aws_client.go` | `awsClient`, `resourceDestroyer`, `resourceChecker` interfaces |
 | `internal/agentcore/aws_client_real.go` | Real AWS SDK implementation (`bedrockagentcorecontrol`) |
 | `internal/agentcore/aws_client_simulated_test.go` | Simulated clients for unit tests |
-| `internal/agentcore/version.go` | Version metadata (injected via ldflags) |
-| `Makefile` | Build targets: fmt, lint, test, build, check, install-hooks |
+
+### Runtime Binary (`cmd/agentcore-runtime/`)
+
+| Path | Purpose |
+|------|---------|
+| `cmd/agentcore-runtime/main.go` | Runtime entrypoint — A2A server (port 9000) + HTTP bridge (port 8080) |
+| `cmd/agentcore-runtime/config.go` | Runtime config from environment variables |
+| `cmd/agentcore-runtime/server.go` | Server setup — A2A mux, agent card, state store |
+| `cmd/agentcore-runtime/http_bridge.go` | HTTP bridge — translates `/invocations` to A2A `message/send` |
+| `cmd/agentcore-runtime/health.go` | Health check handler (`/ping`) |
+| `cmd/agentcore-runtime/otel.go` | OpenTelemetry tracing setup |
+| `cmd/agentcore-runtime/version.go` | Version metadata (injected via ldflags) |
+
+### Build & CI
+
+| Path | Purpose |
+|------|---------|
+| `Makefile` | Build targets: fmt, lint, test, build, build-runtime, build-runtime-arm64, check |
 | `.githooks/pre-commit` | Pre-commit hook — runs formatting, lint, test, build |
 | `.golangci.yml` | Linter configuration (25 linters) |
-| `.github/workflows/ci.yml` | CI pipeline (test + lint) |
+| `.github/workflows/ci.yml` | CI pipeline (test + lint + SonarCloud) |
 | `.github/workflows/release.yml` | Release pipeline (GoReleaser) |
 | `.github/workflows/update-deps.yml` | Auto-update PromptKit dependency on release |
-| `docs/remaining-features-proposal.md` | Implementation roadmap with issue breakdown |
 
 ## Architecture
 
-This is a **deploy adapter** that plugs into PromptKit's deploy framework via JSON-RPC 2.0 over stdio. It is NOT a CLI tool — PromptKit discovers and invokes it as a subprocess.
+This project has two components:
 
-### Interfaces
+### 1. Deploy Adapter
+
+A JSON-RPC 2.0 subprocess that plugs into PromptKit's deploy framework. It is NOT a CLI tool — PromptKit discovers and invokes it as a subprocess.
+
+**Interfaces:**
 
 ```
 awsClient           — Create resources (runtime, gateway, a2a, evaluator, online_eval_config)
@@ -139,7 +174,7 @@ resourceChecker     — Health check resources (healthy/unhealthy/missing)
 
 All three are implemented by `realAWSClient` for production and by simulated/failing variants for tests. Dependency injection is via factory functions on `Provider`.
 
-### Deploy Phases (Apply)
+**Deploy Phases (Apply):**
 
 1. **Tools** (0-17%): `CreateGatewayTool` for each pack tool (lazy parent gateway)
 2. **Policies** (17-33%): `CreatePolicyEngine` + `CreateCedarPolicy` per prompt with validators
@@ -148,6 +183,19 @@ All three are implemented by `realAWSClient` for production and by simulated/fai
 5. **Evaluators** (67-83%): `CreateEvaluator` per eval (`llm_as_judge` only)
 6. **Online Eval Config** (83-100%): `CreateOnlineEvaluationConfig` (wires evaluators to traces)
 
-### Destroy Order (reverse)
+**Destroy Order (reverse):**
 
 online_eval_config → tool_gateway → cedar_policy → evaluator → a2a_endpoint → agent_runtime → memory
+
+### 2. Runtime Binary
+
+Runs inside AgentCore, serving the PromptKit agent via two protocols:
+
+| Protocol | Port | Purpose |
+|----------|------|---------|
+| A2A | 9000 | Full A2A protocol — multi-agent, streaming, task management, agent cards |
+| HTTP | 8080 | AgentCore HTTP contract — `/invocations` (external callers), `/ping` (health) |
+
+The HTTP bridge on port 8080 translates `/invocations` requests (simple `{"prompt":"..."}` payloads) into A2A `message/send` calls on port 9000. It supports both `prompt` and `input` fields for compatibility with the AWS ecosystem convention.
+
+For multi-agent deployments, other agents call directly via A2A on port 9000 — the HTTP bridge is only for external invocations (SDK, console, CLI).
