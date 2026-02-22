@@ -44,13 +44,18 @@ func (p *Provider) Plan(_ context.Context, req *deploy.PlanRequest) (*deploy.Pla
 		}
 	}
 
-	// 5. Generate desired resources.
+	// 5. Validate derived resource names before generating the plan.
+	if nameErrs := validateResourceNames(pack, cfg); len(nameErrs) > 0 {
+		return nil, fmt.Errorf("agentcore: invalid resource names: %s", formatNameErrors(nameErrs))
+	}
+
+	// 6. Generate desired resources.
 	desired := generateDesiredResources(pack, cfg)
 
-	// 6. Diff against prior state.
+	// 7. Diff against prior state.
 	changes := diffResources(desired, prior)
 
-	// 7. Build summary.
+	// 8. Build summary.
 	summary := buildSummary(changes)
 
 	return &deploy.PlanResponse{
@@ -109,7 +114,7 @@ func generateAgentResources(pack *prompt.Pack) []deploy.ResourceChange {
 
 	name := pack.ID
 	if name == "" {
-		name = "default"
+		name = defaultPackName
 	}
 	desired := []deploy.ResourceChange{{
 		Type:   ResTypeAgentRuntime,
@@ -123,7 +128,7 @@ func generateAgentResources(pack *prompt.Pack) []deploy.ResourceChange {
 		for _, tn := range toolNames {
 			desired = append(desired, deploy.ResourceChange{
 				Type:   ResTypeToolGateway,
-				Name:   tn + "-tool-gw",
+				Name:   tn + toolGatewaySuffix,
 				Action: deploy.ActionCreate,
 				Detail: fmt.Sprintf("Create tool gateway for %s", tn),
 			})
@@ -142,7 +147,7 @@ func generateMultiAgentResources(pack *prompt.Pack) []deploy.ResourceChange {
 		for _, name := range toolNames {
 			desired = append(desired, deploy.ResourceChange{
 				Type:   ResTypeToolGateway,
-				Name:   name + "-tool-gw",
+				Name:   name + toolGatewaySuffix,
 				Action: deploy.ActionCreate,
 				Detail: fmt.Sprintf("Create tool gateway for %s", name),
 			})

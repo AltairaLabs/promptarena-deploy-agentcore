@@ -351,6 +351,45 @@ func TestValidate_WithValidTags(t *testing.T) {
 	}
 }
 
+func TestValidate_WithValidToolTargets(t *testing.T) {
+	cfg := Config{
+		Region:            "us-west-2",
+		RuntimeRoleARN:    "arn:aws:iam::123456789012:role/test",
+		RuntimeBinaryPath: "/path/to/binary",
+		ToolTargets: map[string]*ArenaToolSpec{
+			"search": {LambdaARN: "arn:aws:lambda:us-west-2:123456789012:function:search"},
+		},
+	}
+	errs := cfg.validate()
+	if len(errs) != 0 {
+		t.Errorf("expected 0 errors, got %d: %v", len(errs), errs)
+	}
+}
+
+func TestValidate_WithInvalidToolTargets(t *testing.T) {
+	cfg := Config{
+		Region:            "us-west-2",
+		RuntimeRoleARN:    "arn:aws:iam::123456789012:role/test",
+		RuntimeBinaryPath: "/path/to/binary",
+		ToolTargets: map[string]*ArenaToolSpec{
+			"web-search": {LambdaARN: "arn:aws:lambda:us-west-2:123456789012:function:search"},
+		},
+	}
+	errs := cfg.validate()
+	if len(errs) != 1 {
+		t.Errorf("expected 1 error, got %d: %v", len(errs), errs)
+	}
+	found := false
+	for _, e := range errs {
+		if contains(e, "web-search") && contains(e, "tool_targets") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected error mentioning tool_targets and web-search")
+	}
+}
+
 func TestValidate_WithInvalidTags(t *testing.T) {
 	cfg := Config{
 		Region:            "us-west-2",
