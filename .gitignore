@@ -1,5 +1,6 @@
 promptarena-deploy-agentcore
-agentcore-runtime
+/agentcore-runtime
+/promptkit-runtime
 go.work
 go.work.sum
 docs/local-backlog/

@@ -84,7 +84,7 @@ func TestGetProviderInfo(t *testing.T) {
 
 func TestValidateConfig_Valid(t *testing.T) {
 	params := map[string]string{
-		"config": `{"region":"us-west-2","runtime_role_arn":"arn:aws:iam::123456789012:role/test","container_image":"123456789012.dkr.ecr.us-west-2.amazonaws.com/promptkit-agentcore:latest"}`,
+		"config": `{"region":"us-west-2","runtime_role_arn":"arn:aws:iam::123456789012:role/test","runtime_binary_path":"/usr/local/bin/promptkit-runtime"}`,
 	}
 	resp := callAdapter(t, jsonRPCRequest("validate_config", 2, params))
 
@@ -126,8 +126,8 @@ func TestValidateConfig_Invalid(t *testing.T) {
 	if result.Valid {
 		t.Error("expected valid=false for empty config")
 	}
-	if len(result.Errors) < 2 {
-		t.Errorf("expected at least 2 errors (region + role), got %d: %v", len(result.Errors), result.Errors)
+	if len(result.Errors) < 3 {
+		t.Errorf("expected at least 3 errors (region + role + runtime_binary_path), got %d: %v", len(result.Errors), result.Errors)
 	}
 }
 
@@ -157,7 +157,7 @@ func TestValidateConfig_BadJSON(t *testing.T) {
 func TestPlanViaJSONRPC(t *testing.T) {
 	params := map[string]string{
 		"pack_json":     `{"id":"mypack","version":"v1.0.0"}`,
-		"deploy_config": `{"region":"us-west-2","runtime_role_arn":"arn:aws:iam::123456789012:role/test","container_image":"123456789012.dkr.ecr.us-west-2.amazonaws.com/promptkit-agentcore:latest"}`,
+		"deploy_config": `{"region":"us-west-2","runtime_role_arn":"arn:aws:iam::123456789012:role/test","runtime_binary_path":"/usr/local/bin/promptkit-runtime"}`,
 		"arena_config":  `{"tool_specs":{}}`,
 	}
 	resp := callAdapter(t, jsonRPCRequest("plan", 5, params))
@@ -189,7 +189,7 @@ func TestPlanViaJSONRPC(t *testing.T) {
 func TestApplyReturnsErrorOnBadPack(t *testing.T) {
 	params := map[string]string{
 		"pack_json":     `{not valid json}`,
-		"deploy_config": `{"region":"us-west-2","runtime_role_arn":"arn:aws:iam::123456789012:role/test","container_image":"123456789012.dkr.ecr.us-west-2.amazonaws.com/promptkit-agentcore:latest"}`,
+		"deploy_config": `{"region":"us-west-2","runtime_role_arn":"arn:aws:iam::123456789012:role/test","runtime_binary_path":"/usr/local/bin/promptkit-runtime"}`,
 	}
 	resp := callAdapter(t, jsonRPCRequest("apply", 6, params))
 
@@ -203,7 +203,7 @@ func TestApplyReturnsErrorOnBadPack(t *testing.T) {
 
 func TestDestroyEmptyState(t *testing.T) {
 	params := map[string]string{
-		"deploy_config": `{"region":"us-west-2","runtime_role_arn":"arn:aws:iam::123456789012:role/test","container_image":"123456789012.dkr.ecr.us-west-2.amazonaws.com/promptkit-agentcore:latest"}`,
+		"deploy_config": `{"region":"us-west-2","runtime_role_arn":"arn:aws:iam::123456789012:role/test","runtime_binary_path":"/usr/local/bin/promptkit-runtime"}`,
 	}
 	resp := callAdapter(t, jsonRPCRequest("destroy", 7, params))
 
@@ -214,7 +214,7 @@ func TestDestroyEmptyState(t *testing.T) {
 
 func TestStatusEmptyState(t *testing.T) {
 	params := map[string]string{
-		"deploy_config": `{"region":"us-west-2","runtime_role_arn":"arn:aws:iam::123456789012:role/test","container_image":"123456789012.dkr.ecr.us-west-2.amazonaws.com/promptkit-agentcore:latest"}`,
+		"deploy_config": `{"region":"us-west-2","runtime_role_arn":"arn:aws:iam::123456789012:role/test","runtime_binary_path":"/usr/local/bin/promptkit-runtime"}`,
 	}
 	resp := callAdapter(t, jsonRPCRequest("status", 8, params))
 

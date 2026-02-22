@@ -19,14 +19,10 @@ const (
 	EnvPolicyEngineARN = "PROMPTPACK_POLICY_ENGINE_ARN"
 	EnvMetricsConfig   = "PROMPTPACK_METRICS_CONFIG"
 	EnvDashboardConfig = "PROMPTPACK_DASHBOARD_CONFIG"
-	EnvPackFile        = "PROMPTPACK_FILE"
-	EnvPackJSON        = "PROMPTPACK_PACK_JSON"
 	EnvAgentName       = "PROMPTPACK_AGENT"
+	EnvProviderType    = "PROMPTPACK_PROVIDER_TYPE"
+	EnvProviderModel   = "PROMPTPACK_PROVIDER_MODEL"
 )
-
-// defaultPackPath is the default path where the pack file is mounted
-// inside the container.
-const defaultPackPath = "/app/pack.json"
 
 // buildRuntimeEnvVars constructs the environment variable map that will be
 // passed to CreateAgentRuntime / UpdateAgentRuntime. It reads observability,
@@ -54,24 +50,55 @@ func buildRuntimeEnvVars(cfg *Config) map[string]string {
 		}
 	}
 
-	env[EnvPackFile] = defaultPackPath
+	// Code deploy: pack.json is bundled in the ZIP alongside main.py.
+	// The Go binary reads PROMPTPACK_FILE which is set by main.py at startup.
+	// No pack-related env vars needed here.
 
-	if cfg.PackJSON != "" {
-		env[EnvPackJSON] = cfg.PackJSON
+	// AWS_REGION is required by the Go runtime to configure Bedrock as the
+	// LLM provider. AgentCore may set it automatically, but we inject it
+	// explicitly to ensure it's always available.
+	if cfg.Region != "" {
+		env["AWS_REGION"] = cfg.Region
 	}
 
+	injectProviderEnvVars(env, cfg.ArenaConfig)
+
 	return env
+}
+
+// injectProviderEnvVars sets provider type and model env vars from the
+// arena config's loaded providers.
+func injectProviderEnvVars(env map[string]string, arena *ArenaConfig) {
+	p := arena.firstProvider()
+	if p == nil {
+		return
+	}
+	if p.Type != "" {
+		env[EnvProviderType] = p.Type
+	}
+	if p.Model != "" {
+		env[EnvProviderModel] = p.Model
+	}
 }
 
 // runtimeEnvVarsForAgent returns a copy of cfg.RuntimeEnvVars with
 // PROMPTPACK_AGENT set to the given agent name. Each runtime gets its
 // own copy so the per-agent value does not leak across runtimes.
+//
+// For single-agent packs the runtime is named after the pack ID, which
+// may not match the prompt name. When that happens we omit PROMPTPACK_AGENT
+// so the runtime auto-discovers the single prompt from the pack.
 func runtimeEnvVarsForAgent(cfg *Config, agentName string) map[string]string {
 	env := make(map[string]string, len(cfg.RuntimeEnvVars)+1)
 	for k, v := range cfg.RuntimeEnvVars {
 		env[k] = v
 	}
-	env[EnvAgentName] = agentName
+	// If PromptNames is populated and the agent name is not a known
+	// prompt, skip setting PROMPTPACK_AGENT to let the runtime
+	// auto-discover from the pack.
+	if len(cfg.PromptNames) == 0 || cfg.PromptNames[agentName] {
+		env[EnvAgentName] = agentName
+	}
 	return env
 }
 

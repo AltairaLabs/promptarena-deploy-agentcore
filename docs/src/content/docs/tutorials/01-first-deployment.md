@@ -15,11 +15,12 @@ A single AgentCore runtime running your compiled prompt pack in AWS. By the end,
 ## Learning Objectives
 
 - Create an IAM role with the correct trust policy for AgentCore
-- Push a container image to Amazon ECR
+- Build the PromptKit runtime binary for AgentCore (Linux ARM64)
 - Configure the AgentCore deploy adapter in `arena.yaml`
 - Validate your configuration before deploying
 - Preview a deployment plan and understand the resource changes
 - Apply the plan to create AWS resources
+- Invoke the deployed agent via the HTTP bridge
 - Check deployment health with the status command
 - Destroy all resources cleanly
 
@@ -29,11 +30,11 @@ Before starting, make sure you have the following ready:
 
 1. **AWS account** with Bedrock AgentCore access enabled in your target region.
 2. **AWS CLI** configured with credentials that have permission to manage AgentCore resources.
-3. **Docker** installed and running (needed to push the container image to ECR).
-4. **PromptKit CLI** installed and on your PATH. Verify with:
+3. **PromptKit CLI** installed and on your PATH. Verify with:
    ```bash
    promptarena --version
    ```
+4. **AgentCore adapter** checked out locally (needed to build the runtime binary).
 5. **Compiled pack** -- a `.pack.json` file produced by `packc compile`. For this tutorial, any single-agent pack will work. If you do not have one, compile the quickstart example:
    ```bash
    packc compile -o my-agent.pack.json
@@ -115,34 +116,18 @@ aws iam get-role --role-name AgentCoreRuntime --query "Role.Arn" --output text
 # e.g. arn:aws:iam::518192007936:role/AgentCoreRuntime
 ```
 
-## Step 2: Push the Container Image to ECR
+## Step 2: Build the Runtime Binary
 
-AgentCore only runs container images hosted in Amazon ECR. You need to create an ECR repository and push your PromptKit runtime image to it.
+The PromptKit runtime binary runs inside AgentCore, serving your agent via HTTP (port 8080) and A2A (port 9000). It must be cross-compiled for Linux ARM64 (AgentCore's architecture).
 
-Create the ECR repository:
-
-```bash
-aws ecr create-repository \
-  --repository-name promptkit-agentcore \
-  --region us-west-2
-```
-
-Authenticate Docker with ECR, then tag and push the image:
+From the adapter repository:
 
 ```bash
-# Login to ECR
-aws ecr get-login-password --region us-west-2 | \
-  docker login --username AWS --password-stdin YOUR_ACCOUNT_ID.dkr.ecr.us-west-2.amazonaws.com
-
-# Tag the local image (assumes you have promptkit-agentcore:local built)
-docker tag promptkit-agentcore:local \
-  YOUR_ACCOUNT_ID.dkr.ecr.us-west-2.amazonaws.com/promptkit-agentcore:latest
-
-# Push to ECR
-docker push YOUR_ACCOUNT_ID.dkr.ecr.us-west-2.amazonaws.com/promptkit-agentcore:latest
+cd promptarena-deploy-agentcore
+make build-runtime-arm64
 ```
 
-Note the full ECR URI for the next step (e.g., `518192007936.dkr.ecr.us-west-2.amazonaws.com/promptkit-agentcore:latest`).
+This produces a `promptkit-runtime` binary in the current directory. Note the path for the next step.
 
 ## Step 3: Create the Deploy Configuration
 
@@ -161,18 +146,20 @@ spec:
 
   deploy:
     provider: agentcore
-    config:
+    agentcore:
       region: us-west-2
       runtime_role_arn: arn:aws:iam::123456789012:role/AgentCoreRuntime
-      container_image: 123456789012.dkr.ecr.us-west-2.amazonaws.com/promptkit-agentcore:latest
+      runtime_binary_path: /path/to/promptkit-runtime
+      model: claude-3-5-haiku-20241022
 ```
 
 Replace the values:
 - **`region`** -- the AWS region where AgentCore is available (e.g., `us-west-2`, `us-east-1`).
 - **`runtime_role_arn`** -- the full ARN of the IAM role created in Step 1.
-- **`container_image`** -- the ECR URI from Step 2.
+- **`runtime_binary_path`** -- the path to the cross-compiled runtime binary from Step 2.
+- **`model`** -- the Bedrock model ID to use (e.g., `claude-3-5-haiku-20241022`).
 
-These three fields are the required configuration. The adapter supports additional options (memory, observability, tags) covered in the [Configuration Reference](/reference/configuration/).
+The adapter supports additional options (memory, observability, tags) covered in the [Configuration Reference](/reference/configuration/).
 
 ## Step 4: Validate the Configuration
 
@@ -259,7 +246,31 @@ Deploy complete. 1 resource created.
 
 The runtime creation includes a polling phase -- the adapter waits until the runtime transitions from `CREATING` to `READY` before reporting success. This typically takes 30-90 seconds.
 
-## Step 7: Verify Deployment Health
+## Step 7: Invoke the Agent
+
+Once deployed, you can invoke your agent via the `InvokeAgentRuntime` API. The runtime ARN is in the deploy state output.
+
+Using the AWS CLI:
+
+```bash
+aws bedrock-agentcore invoke-agent-runtime \
+  --agent-runtime-arn "arn:aws:bedrock-agentcore:us-west-2:123456789012:runtime/my-agent-xxxx" \
+  --runtime-session-id "test-session-1" \
+  --payload '{"prompt": "Explain machine learning in one sentence."}' \
+  --content-type "application/json" \
+  --accept "application/json" \
+  /dev/stdout
+```
+
+The HTTP bridge on port 8080 accepts the payload and returns:
+
+```json
+{"response": "Machine learning is...", "status": "success"}
+```
+
+The payload supports both `prompt` and `input` field names for compatibility with the AWS ecosystem convention.
+
+## Step 8: Verify Deployment Health
 
 Confirm that the deployed resources are healthy:
 
@@ -284,7 +295,7 @@ Each resource is checked against the AWS API. Possible statuses are:
 
 If any resource is unhealthy or missing, the aggregate status changes to `degraded`.
 
-## Step 8: Destroy the Deployment
+## Step 9: Destroy the Deployment
 
 When you are done, tear down all resources:
 
@@ -314,7 +325,7 @@ AgentCore deployment status: not_deployed
 
 ## What You Learned
 
-- The `deploy.config` section in `arena.yaml` requires `region`, `runtime_role_arn`, and `container_image` for a basic deployment.
+- The `deploy.agentcore` section in `arena.yaml` requires `region`, `runtime_role_arn`, `runtime_binary_path`, and `model` for a basic deployment.
 - `promptarena deploy validate` catches configuration errors before you spend time on a real deployment.
 - `promptarena deploy plan` previews the exact resources that will be created, updated, or deleted.
 - `promptarena deploy` creates the resources and polls until they are ready.
@@ -332,14 +343,6 @@ region "uswest2" does not match expected format (e.g. us-west-2)
 ```
 
 The region must be a valid AWS region identifier in the format `xx-xxxx-N` (e.g., `us-west-2`, `eu-central-1`). Check the [AWS region list](https://docs.aws.amazon.com/general/latest/gr/bedrock.html) for regions that support Bedrock AgentCore.
-
-### Container Image Not Valid ECR URI
-
-```
-container_image "ghcr.io/org/image:latest" is not a valid ECR URI
-```
-
-AgentCore only supports container images hosted in Amazon ECR. The image URI must match the format `{account}.dkr.ecr.{region}.amazonaws.com/{repo}:{tag}`. See Step 2 for instructions on creating an ECR repository and pushing your image.
 
 ### Role Validation Failed
 

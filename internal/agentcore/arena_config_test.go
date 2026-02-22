@@ -146,6 +146,57 @@ func TestArenaConfig_ToolSpecForName_NilToolSpecs(t *testing.T) {
 	}
 }
 
+func TestMergeToolTargets_NilArena(t *testing.T) {
+	// Should not panic.
+	mergeToolTargets(nil, map[string]*ArenaToolSpec{"x": {LambdaARN: "arn"}})
+}
+
+func TestMergeToolTargets_EmptyTargets(t *testing.T) {
+	arena := &ArenaConfig{}
+	mergeToolTargets(arena, nil)
+	if arena.ToolSpecs != nil {
+		t.Error("expected nil ToolSpecs after merge with nil targets")
+	}
+}
+
+func TestMergeToolTargets_NewTool(t *testing.T) {
+	arena := &ArenaConfig{}
+	mergeToolTargets(arena, map[string]*ArenaToolSpec{
+		"search": {LambdaARN: "arn:aws:lambda:us-west-2:123:function:search"},
+	})
+	if arena.ToolSpecs == nil {
+		t.Fatal("expected ToolSpecs to be initialized")
+	}
+	spec := arena.ToolSpecs["search"]
+	if spec == nil {
+		t.Fatal("expected search spec")
+	}
+	if spec.LambdaARN != "arn:aws:lambda:us-west-2:123:function:search" {
+		t.Errorf("unexpected lambda_arn: %s", spec.LambdaARN)
+	}
+}
+
+func TestMergeToolTargets_MergeIntoExisting(t *testing.T) {
+	arena := &ArenaConfig{
+		ToolSpecs: map[string]*ArenaToolSpec{
+			"search": {Name: "search", Description: "Web search", Mode: "live"},
+		},
+	}
+	mergeToolTargets(arena, map[string]*ArenaToolSpec{
+		"search": {LambdaARN: "arn:aws:lambda:us-west-2:123:function:search"},
+	})
+	spec := arena.ToolSpecs["search"]
+	if spec.Name != "search" {
+		t.Errorf("expected name preserved, got %q", spec.Name)
+	}
+	if spec.Description != "Web search" {
+		t.Errorf("expected description preserved, got %q", spec.Description)
+	}
+	if spec.LambdaARN != "arn:aws:lambda:us-west-2:123:function:search" {
+		t.Errorf("expected lambda_arn merged, got %q", spec.LambdaARN)
+	}
+}
+
 func TestParseArenaConfig_UnknownFieldsIgnored(t *testing.T) {
 	raw := `{"unknown_field": "value", "tool_specs": {}}`
 	cfg, err := parseArenaConfig(raw)

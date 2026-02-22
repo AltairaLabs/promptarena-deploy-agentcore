@@ -43,8 +43,8 @@ func buildSDKOptions(cfg *runtimeConfig) []sdk.Option {
 	var opts []sdk.Option
 
 	if cfg.AWSRegion != "" {
-		// Provider type and model come from the pack file; WithBedrock sets the platform.
-		opts = append(opts, sdk.WithBedrock(cfg.AWSRegion, "", ""))
+		// Provider type and model come from the arena config via env vars.
+		opts = append(opts, sdk.WithBedrock(cfg.AWSRegion, cfg.ProviderType, cfg.Model))
 	}
 
 	opts = append(opts, sdk.WithStateStore(buildStateStore(cfg)))
@@ -98,6 +98,7 @@ func buildAgentCard(pack *prompt.Pack, agentName string) *a2a.AgentCard {
 func buildMux(a2aHandler, healthH http.Handler) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.Handle("/health", healthH)
+	mux.Handle("/ping", healthH) // AgentCore health check endpoint
 	// A2AServer.Handler() registers /.well-known/agent.json and /a2a internally.
 	mux.Handle("/", a2aHandler)
 	return mux

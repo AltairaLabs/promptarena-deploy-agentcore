@@ -209,9 +209,11 @@ Add a `deploy` section to your `config.arena.yaml`. For multi-agent packs, you s
 # Add this under spec: in config.arena.yaml
   deploy:
     provider: agentcore
-    config:
+    agentcore:
       region: us-west-2
       runtime_role_arn: arn:aws:iam::123456789012:role/AgentCoreRuntime
+      runtime_binary_path: /path/to/promptkit-runtime
+      model: claude-3-5-haiku-20241022
       a2a_auth:
         mode: iam
       tags:

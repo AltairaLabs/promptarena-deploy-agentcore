@@ -18,6 +18,7 @@ type awsClient interface {
 		cedarStatement string, cfg *Config) (arn string, policyID string, err error,
 	)
 	AssociatePolicyEngine(ctx context.Context, policyEngineARN string, cfg *Config) error
+	UploadCodePackage(ctx context.Context, zipData []byte, bucket, key string) error
 }
 
 // resourceDestroyer abstracts resource deletion so that real AWS calls

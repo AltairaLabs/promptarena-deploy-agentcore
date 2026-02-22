@@ -76,23 +76,40 @@ go test ./... -v -race -count=1
 
 ### Project Structure
 
-This is a flat, single-module Go binary. There are no sub-packages.
-
 ```
 promptarena-deploy-agentcore/
-├── main.go          # Entrypoint — calls adaptersdk.Serve()
-├── version.go       # Version info embedded at build time
-├── config.go        # Configuration parsing and validation
-├── provider.go      # deploy.Provider interface implementation
-├── plan.go          # Plan phase — preview deployment changes
-├── apply.go         # Apply phase — execute deployment to AgentCore
-├── status.go        # Status phase — query deployment state
-├── *_test.go        # Tests alongside each source file
-├── go.mod           # Module definition
-└── LICENSE          # MIT license
+├── main.go                              # Entrypoint — thin wrapper calling adaptersdk.Serve()
+├── cmd/agentcore-runtime/               # Runtime binary (runs inside AgentCore)
+│   ├── main.go                          # Runtime entrypoint — A2A server + HTTP bridge
+│   ├── config.go                        # Runtime config from environment variables
+│   ├── server.go                        # Server setup (A2A mux, agent card, state store)
+│   ├── http_bridge.go                   # HTTP bridge — /invocations to A2A translation
+│   ├── health.go                        # Health check handler (/ping)
+│   ├── otel.go                          # OpenTelemetry tracing setup
+│   └── version.go                       # Version metadata (injected via ldflags)
+├── internal/agentcore/                  # Deploy adapter domain logic
+│   ├── provider.go                      # Provider, factories, GetProviderInfo, ValidateConfig
+│   ├── config.go                        # Config parsing, validation, JSON Schema
+│   ├── arena_config.go                  # Arena config deploy section parsing
+│   ├── plan.go                          # Plan generation — diffs desired vs prior state
+│   ├── apply.go                         # Apply — creates resources in dependency order
+│   ├── status.go                        # Destroy + Status — teardown and health checks
+│   ├── codedeploy.go                    # Code deploy — ZIP packaging, S3 upload
+│   ├── envvars.go                       # Runtime environment variable generation
+│   ├── gateway.go                       # Tool gateway resource management
+│   ├── cedar.go                         # Cedar policy resource management
+│   ├── state.go                         # AdapterState and ResourceState types
+│   ├── aws_client.go                    # awsClient, resourceDestroyer, resourceChecker interfaces
+│   ├── aws_client_real.go               # Real AWS SDK implementation
+│   └── aws_client_simulated_test.go     # Simulated clients for unit tests
+├── Makefile                             # Build targets: fmt, lint, test, build, check
+├── .githooks/pre-commit                 # Pre-commit hook
+├── .golangci.yml                        # Linter configuration (25 linters)
+├── .github/workflows/                   # CI, release, dependency update workflows
+└── LICENSE                              # MIT license
 ```
 
-This adapter implements PromptKit's `deploy.Provider` interface and is served via `adaptersdk.Serve()`.
+The deploy adapter implements PromptKit's `deploy.Provider` interface via `adaptersdk.Serve()`. The runtime binary runs inside AgentCore containers, serving the agent via HTTP (port 8080) and A2A (port 9000).
 
 ## Coding Guidelines
 

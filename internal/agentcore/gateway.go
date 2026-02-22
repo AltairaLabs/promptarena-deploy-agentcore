@@ -287,7 +287,7 @@ func buildCredentialProviderConfigs(name string, cfg *Config) []types.Credential
 		return nil
 	}
 
-	needsCreds := spec.APIGateway != nil || spec.OpenAPI != nil || spec.Smithy != nil
+	needsCreds := spec.LambdaARN != "" || spec.APIGateway != nil || spec.OpenAPI != nil || spec.Smithy != nil
 	if !needsCreds && spec.Credential == nil {
 		return nil
 	}

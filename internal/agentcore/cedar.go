@@ -52,8 +52,9 @@ func cedarFromToolPolicy(tp *prompt.ToolPolicyPack, gatewayARN string, registere
 }
 
 // cedarToolBlocklist generates a forbid block for a blocked tool.
-// Uses the AgentCore Cedar action format: AgentCore::Action::"ToolName__ToolName".
-// The resource is constrained to the specific gateway ARN as required by AWS.
+// Uses the AgentCore Cedar action format: AgentCore::Action::"ToolName___ToolName"
+// (three underscores). The resource is constrained to the specific gateway ARN
+// as required by AWS.
 func cedarToolBlocklist(toolName, gatewayARN string) string {
 	escapedName := escapeCedarString(toolName)
 	resourceClause := "resource"
@@ -61,7 +62,7 @@ func cedarToolBlocklist(toolName, gatewayARN string) string {
 		resourceClause = fmt.Sprintf("resource == AgentCore::Gateway::%q", gatewayARN)
 	}
 	return fmt.Sprintf(
-		`forbid (principal, action == AgentCore::Action::"%s__%s", %s);`,
+		`forbid (principal, action == AgentCore::Action::"%s___%s", %s);`,
 		escapedName, escapedName, resourceClause,
 	)
 }

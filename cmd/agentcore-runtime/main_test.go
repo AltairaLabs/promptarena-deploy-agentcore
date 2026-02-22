@@ -34,7 +34,7 @@ func TestRunWithShutdown_SignalTermination(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- runWithShutdown(log, ln, mux, healthH, a2aSrv)
+		errCh <- runWithShutdown(log, ln, mux, healthH, a2aSrv, nil)
 	}()
 
 	// Give the server a moment to start
@@ -82,7 +82,7 @@ func TestRunWithShutdown_HealthDuringOperation(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- runWithShutdown(log, ln, mux, healthH, a2aSrv)
+		errCh <- runWithShutdown(log, ln, mux, healthH, a2aSrv, nil)
 	}()
 
 	// Give the server a moment to start

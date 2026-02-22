@@ -10,6 +10,9 @@ The AgentCore adapter injects environment variables into agent runtimes via the 
 
 | Variable | Source | When Set | Description |
 |----------|--------|----------|-------------|
+| `PROMPTPACK_PROVIDER_TYPE` | Arena config `deploy.agentcore` | Always (code deploy) | LLM provider type (e.g. `"bedrock"`). Used by the runtime to select the correct provider. |
+| `PROMPTPACK_PROVIDER_MODEL` | Arena config `deploy.agentcore.model` | Always (code deploy) | Bedrock model ID (e.g. `"claude-3-5-haiku-20241022"`). Used by the runtime to configure the LLM. |
+| `PROMPTPACK_PACK_JSON` | Pack file contents | Always (code deploy) | The full pack JSON, injected so the runtime can load the pack without a separate file. |
 | `PROMPTPACK_LOG_GROUP` | `observability.cloudwatch_log_group` | When `cloudwatch_log_group` is a non-empty string | CloudWatch log group name for structured logging. |
 | `PROMPTPACK_TRACING_ENABLED` | `observability.tracing_enabled` | When `tracing_enabled` is `true` | Enables AWS X-Ray tracing. Value is the string `"true"`. |
 | `PROMPTPACK_MEMORY_STORE` | `memory_store` config field | When `memory_store` is set | Memory store type: `"session"` or `"persistent"`. |
@@ -22,6 +25,30 @@ The AgentCore adapter injects environment variables into agent runtimes via the 
 | `PROMPTPACK_DASHBOARD_CONFIG` | Pack structure (agents + evals) | When the pack has agents or eval metrics | JSON `DashboardConfig` object describing a CloudWatch dashboard layout. |
 
 ## Variable details
+
+### PROMPTPACK_PROVIDER_TYPE
+
+Set from the arena config's `deploy.agentcore` section. Tells the runtime which LLM provider to use. For AgentCore deployments, this is always `"bedrock"`.
+
+```
+PROMPTPACK_PROVIDER_TYPE=bedrock
+```
+
+### PROMPTPACK_PROVIDER_MODEL
+
+Set from the arena config's `deploy.agentcore.model` field. Specifies the Bedrock model ID the runtime should use for LLM invocations.
+
+```
+PROMPTPACK_PROVIDER_MODEL=claude-3-5-haiku-20241022
+```
+
+### PROMPTPACK_PACK_JSON
+
+Injected during code deploy. Contains the entire compiled pack JSON so the runtime can load the pack directly from the environment without needing a separate file on disk.
+
+```
+PROMPTPACK_PACK_JSON={"id":"my-agent","version":"v1.0.0","prompts":{...}}
+```
 
 ### PROMPTPACK_LOG_GROUP
 
@@ -280,7 +307,7 @@ Environment variables are built and injected at different points during the Appl
 
 | Timing | Variables |
 |--------|-----------|
-| Before any resource creation | `PROMPTPACK_LOG_GROUP`, `PROMPTPACK_TRACING_ENABLED`, `PROMPTPACK_MEMORY_STORE`, `PROMPTPACK_A2A_AUTH_MODE`, `PROMPTPACK_A2A_AUTH_ROLE`, `PROMPTPACK_METRICS_CONFIG`, `PROMPTPACK_DASHBOARD_CONFIG` |
+| Before any resource creation | `PROMPTPACK_PROVIDER_TYPE`, `PROMPTPACK_PROVIDER_MODEL`, `PROMPTPACK_PACK_JSON`, `PROMPTPACK_LOG_GROUP`, `PROMPTPACK_TRACING_ENABLED`, `PROMPTPACK_MEMORY_STORE`, `PROMPTPACK_A2A_AUTH_MODE`, `PROMPTPACK_A2A_AUTH_ROLE`, `PROMPTPACK_METRICS_CONFIG`, `PROMPTPACK_DASHBOARD_CONFIG` |
 | After memory creation (pre-step) | `PROMPTPACK_MEMORY_ID` |
 | After Cedar policy creation (phase 2) | `PROMPTPACK_POLICY_ENGINE_ARN` |
 | After runtime creation (phase 3) | `PROMPTPACK_AGENTS` (injected via UpdateRuntime on entry agent) |
