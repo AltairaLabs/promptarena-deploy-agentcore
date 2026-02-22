@@ -23,6 +23,8 @@ The AgentCore adapter injects environment variables into agent runtimes via the 
 | `PROMPTPACK_POLICY_ENGINE_ARN` | Cedar policy resource ARNs | After Cedar policy creation during Apply | Comma-separated list of policy engine ARNs. Set when prompts define validators or tool_policy. |
 | `PROMPTPACK_METRICS_CONFIG` | Pack evals with metrics | When at least one eval defines a `metric` | JSON `MetricsConfig` object describing CloudWatch metrics for eval reporting. |
 | `PROMPTPACK_DASHBOARD_CONFIG` | Pack structure (agents + evals) | When the pack has agents or eval metrics | JSON `DashboardConfig` object describing a CloudWatch dashboard layout. |
+| `PROMPTPACK_PROTOCOL` | `protocol` config field | When `protocol` is set to a non-empty value | Server protocol mode: `"http"`, `"a2a"`, or `"both"`. Controls which servers the runtime starts. See [Runtime Protocols](/reference/runtime-protocols/). |
+| `PROMPTPACK_AGENT` | Pack prompt/agent name | Multi-agent packs; set per-runtime | The agent name this runtime serves. Omitted for single-agent packs to allow auto-discovery. |
 
 ## Variable details
 
@@ -301,13 +303,31 @@ Injected when the pack has agents or eval metrics. Contains a JSON `DashboardCon
 | A2A call latency | Multi-agent packs only | Full-width, 24 units wide |
 | Eval metric | One per eval with a `metric` definition | Two-column, 12 units wide, with optional min/max threshold annotations |
 
+### PROMPTPACK_PROTOCOL
+
+Set from the `protocol` config field. Controls which servers the runtime starts: the HTTP bridge (port 8080), the A2A server (port 9000), or both.
+
+```
+PROMPTPACK_PROTOCOL=both
+```
+
+See [Runtime Protocols](/reference/runtime-protocols/) for details on the HTTP bridge endpoints and payload formats.
+
+### PROMPTPACK_AGENT
+
+Set per-runtime in multi-agent packs. Contains the agent/prompt name this runtime serves. Omitted for single-agent packs to allow the runtime to auto-discover the single prompt from the pack.
+
+```
+PROMPTPACK_AGENT=coordinator
+```
+
 ## Injection timing
 
 Environment variables are built and injected at different points during the Apply lifecycle:
 
 | Timing | Variables |
 |--------|-----------|
-| Before any resource creation | `PROMPTPACK_PROVIDER_TYPE`, `PROMPTPACK_PROVIDER_MODEL`, `PROMPTPACK_PACK_JSON`, `PROMPTPACK_LOG_GROUP`, `PROMPTPACK_TRACING_ENABLED`, `PROMPTPACK_MEMORY_STORE`, `PROMPTPACK_A2A_AUTH_MODE`, `PROMPTPACK_A2A_AUTH_ROLE`, `PROMPTPACK_METRICS_CONFIG`, `PROMPTPACK_DASHBOARD_CONFIG` |
+| Before any resource creation | `PROMPTPACK_PROVIDER_TYPE`, `PROMPTPACK_PROVIDER_MODEL`, `PROMPTPACK_PACK_JSON`, `PROMPTPACK_LOG_GROUP`, `PROMPTPACK_TRACING_ENABLED`, `PROMPTPACK_MEMORY_STORE`, `PROMPTPACK_A2A_AUTH_MODE`, `PROMPTPACK_A2A_AUTH_ROLE`, `PROMPTPACK_METRICS_CONFIG`, `PROMPTPACK_DASHBOARD_CONFIG`, `PROMPTPACK_PROTOCOL`, `PROMPTPACK_AGENT` |
 | After memory creation (pre-step) | `PROMPTPACK_MEMORY_ID` |
 | After Cedar policy creation (phase 2) | `PROMPTPACK_POLICY_ENGINE_ARN` |
 | After runtime creation (phase 3) | `PROMPTPACK_AGENTS` (injected via UpdateRuntime on entry agent) |
