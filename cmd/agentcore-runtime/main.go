@@ -14,6 +14,7 @@ import (
 
 	"github.com/AltairaLabs/PromptKit/runtime/prompt"
 	"github.com/AltairaLabs/PromptKit/sdk"
+	a2aserver "github.com/AltairaLabs/PromptKit/server/a2a"
 )
 
 const (
@@ -68,7 +69,7 @@ func run(log *slog.Logger) error {
 	opener := sdk.A2AOpener(cfg.PackFile, agentName, sdkOpts...)
 
 	card := buildAgentCard(pack, agentName)
-	a2aSrv := sdk.NewA2AServer(opener, sdk.WithA2ACard(card))
+	a2aSrv := a2aserver.NewServer(opener, a2aserver.WithCard(card))
 
 	healthH := newHealthHandler()
 	mux := buildMux(a2aSrv.Handler(), healthH)
@@ -109,7 +110,7 @@ func runWithShutdown(
 	ln net.Listener,
 	mux *http.ServeMux,
 	healthH *healthHandler,
-	a2aSrv *sdk.A2AServer,
+	a2aSrv *a2aserver.Server,
 	bridge *httpBridge,
 ) error {
 	var srv *http.Server

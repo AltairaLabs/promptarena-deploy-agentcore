@@ -648,11 +648,11 @@ func mergePhase(
 // filtered to only llm_as_judge type evals that create AWS resources.
 func evalResourceNames(pack *prompt.Pack) []string {
 	names := make([]string, 0, len(pack.Evals))
-	for i, ev := range pack.Evals {
-		if ev.Type != evalTypeLLMAsJudge {
+	for i := range pack.Evals {
+		if pack.Evals[i].Type != evalTypeLLMAsJudge {
 			continue
 		}
-		name := ev.ID
+		name := pack.Evals[i].ID
 		if name == "" {
 			name = fmt.Sprintf("eval_%d", i)
 		}
@@ -740,15 +740,15 @@ func createMemoryResource(
 // llm_as_judge evals are included.
 func buildEvalDefs(pack *prompt.Pack) map[string]evals.EvalDef {
 	defs := make(map[string]evals.EvalDef)
-	for i, ev := range pack.Evals {
-		if ev.Type != evalTypeLLMAsJudge {
+	for i := range pack.Evals {
+		if pack.Evals[i].Type != evalTypeLLMAsJudge {
 			continue
 		}
-		name := ev.ID
+		name := pack.Evals[i].ID
 		if name == "" {
 			name = fmt.Sprintf("eval_%d", i)
 		}
-		defs[name] = ev
+		defs[name] = pack.Evals[i]
 	}
 	return defs
 }
@@ -770,9 +770,9 @@ func collectEvalARNs(resources []ResourceState) map[string]string {
 // they're referenced directly by ID in the online eval config.
 func collectBuiltinEvalIDs(pack *prompt.Pack) []string {
 	var ids []string
-	for _, ev := range pack.Evals {
-		if ev.Type == evalTypeBuiltin && ev.ID != "" {
-			ids = append(ids, ev.ID)
+	for i := range pack.Evals {
+		if pack.Evals[i].Type == evalTypeBuiltin && pack.Evals[i].ID != "" {
+			ids = append(ids, pack.Evals[i].ID)
 		}
 	}
 	return ids

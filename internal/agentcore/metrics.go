@@ -46,25 +46,25 @@ func buildMetricsConfig(pack *prompt.Pack) *MetricsConfig {
 	var metrics []MetricEntry
 	var alarms []AlarmEntry
 
-	for _, ev := range pack.Evals {
-		if ev.Metric == nil {
+	for i := range pack.Evals {
+		if pack.Evals[i].Metric == nil {
 			continue
 		}
 
-		evalID := ev.ID
+		evalID := pack.Evals[i].ID
 		entry := MetricEntry{
 			EvalID:     evalID,
-			MetricName: ev.Metric.Name,
-			MetricType: string(ev.Metric.Type),
-			Unit:       metricTypeToUnit(ev.Metric.Type),
+			MetricName: pack.Evals[i].Metric.Name,
+			MetricType: string(pack.Evals[i].Metric.Type),
+			Unit:       metricTypeToUnit(pack.Evals[i].Metric.Type),
 		}
 		metrics = append(metrics, entry)
 
-		if ev.Metric.Range != nil {
+		if pack.Evals[i].Metric.Range != nil {
 			alarms = append(alarms, AlarmEntry{
-				MetricName: ev.Metric.Name,
-				Min:        ev.Metric.Range.Min,
-				Max:        ev.Metric.Range.Max,
+				MetricName: pack.Evals[i].Metric.Name,
+				Min:        pack.Evals[i].Metric.Range.Min,
+				Max:        pack.Evals[i].Metric.Range.Max,
 			})
 		}
 	}

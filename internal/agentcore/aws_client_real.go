@@ -498,9 +498,11 @@ func (c *realAWSClient) CreateEvaluator(
 // mapTriggerToLevel maps a PromptKit eval trigger to an SDK evaluator level.
 func mapTriggerToLevel(trigger evals.EvalTrigger) types.EvaluatorLevel {
 	switch trigger {
-	case evals.TriggerOnSessionComplete, evals.TriggerSampleSessions:
+	case evals.TriggerOnSessionComplete, evals.TriggerSampleSessions,
+		evals.TriggerOnConversationComplete:
 		return types.EvaluatorLevelSession
-	case evals.TriggerEveryTurn, evals.TriggerSampleTurns:
+	case evals.TriggerEveryTurn, evals.TriggerSampleTurns,
+		evals.TriggerOnWorkflowStep:
 		return types.EvaluatorLevelTrace
 	}
 	return types.EvaluatorLevelTrace
@@ -703,8 +705,8 @@ func buildEvaluatorReferences(evalARNs map[string]string, builtinIDs []string) [
 // resolveSamplingPercentage extracts the sampling percentage from eval params,
 // defaulting to 100%.
 func resolveSamplingPercentage(cfg *Config) float64 {
-	for _, def := range cfg.EvalDefs {
-		if v, ok := def.Params["sample_percentage"]; ok {
+	for name := range cfg.EvalDefs {
+		if v, ok := cfg.EvalDefs[name].Params["sample_percentage"]; ok {
 			if pct, ok := v.(float64); ok && pct > 0 {
 				return pct
 			}

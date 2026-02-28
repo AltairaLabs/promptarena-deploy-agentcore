@@ -169,15 +169,15 @@ const evalTypeBuiltin = "builtin"
 // generateEvalResources returns evaluator resource changes for llm_as_judge evals only.
 func generateEvalResources(pack *prompt.Pack) []deploy.ResourceChange {
 	var resources []deploy.ResourceChange
-	for _, ev := range pack.Evals {
-		if ev.Type != evalTypeLLMAsJudge {
+	for i := range pack.Evals {
+		if pack.Evals[i].Type != evalTypeLLMAsJudge {
 			continue
 		}
 		resources = append(resources, deploy.ResourceChange{
 			Type:   ResTypeEvaluator,
-			Name:   ev.ID + "_eval",
+			Name:   pack.Evals[i].ID + "_eval",
 			Action: deploy.ActionCreate,
-			Detail: fmt.Sprintf("Create evaluator for %s", ev.ID),
+			Detail: fmt.Sprintf("Create evaluator for %s", pack.Evals[i].ID),
 		})
 	}
 	return resources
@@ -187,8 +187,8 @@ func generateEvalResources(pack *prompt.Pack) []deploy.ResourceChange {
 // if the pack has any llm_as_judge or builtin evals. The config wires evaluators
 // to agent runtime traces via CloudWatch.
 func generateOnlineEvalConfigResources(pack *prompt.Pack) []deploy.ResourceChange {
-	for _, ev := range pack.Evals {
-		if ev.Type == evalTypeLLMAsJudge || ev.Type == evalTypeBuiltin {
+	for i := range pack.Evals {
+		if pack.Evals[i].Type == evalTypeLLMAsJudge || pack.Evals[i].Type == evalTypeBuiltin {
 			return []deploy.ResourceChange{{
 				Type:   ResTypeOnlineEvalConfig,
 				Name:   pack.ID + "_online_eval",
