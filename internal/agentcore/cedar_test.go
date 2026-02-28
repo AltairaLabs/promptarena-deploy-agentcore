@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/AltairaLabs/PromptKit/runtime/prompt"
-	"github.com/AltairaLabs/PromptKit/runtime/validators"
 )
 
 func boolPtr(b bool) *bool { return &b }
@@ -15,28 +14,20 @@ func boolPtr(b bool) *bool { return &b }
 func TestCedarValidatorsProduceNothing(t *testing.T) {
 	vals := []prompt.ValidatorConfig{
 		{
-			ValidatorConfig: validators.ValidatorConfig{
-				Type:   "banned_words",
-				Params: map[string]interface{}{"words": []interface{}{"badword", "evil"}},
-			},
+			Type:   "banned_words",
+			Params: map[string]interface{}{"words": []interface{}{"badword", "evil"}},
 		},
 		{
-			ValidatorConfig: validators.ValidatorConfig{
-				Type:   "max_length",
-				Params: map[string]interface{}{"max_characters": float64(500)},
-			},
+			Type:   "max_length",
+			Params: map[string]interface{}{"max_characters": float64(500)},
 		},
 		{
-			ValidatorConfig: validators.ValidatorConfig{
-				Type:   "regex_match",
-				Params: map[string]interface{}{"pattern": `^[A-Z].*\.$`},
-			},
+			Type:   "regex_match",
+			Params: map[string]interface{}{"pattern": `^[A-Z].*\.$`},
 		},
 		{
-			ValidatorConfig: validators.ValidatorConfig{
-				Type:   "json_schema",
-				Params: map[string]interface{}{"schema": map[string]interface{}{"type": "object"}},
-			},
+			Type:   "json_schema",
+			Params: map[string]interface{}{"schema": map[string]interface{}{"type": "object"}},
 		},
 	}
 	blocks := generateCedarStatements(vals, nil, "", nil)
@@ -125,16 +116,12 @@ func TestCedarToolBlocklistFiltersUnregisteredTools(t *testing.T) {
 func TestCedarMixed_OnlyBlocklistProducesCedar(t *testing.T) {
 	vals := []prompt.ValidatorConfig{
 		{
-			ValidatorConfig: validators.ValidatorConfig{
-				Type:   "banned_words",
-				Params: map[string]interface{}{"words": []interface{}{"secret"}},
-			},
+			Type:   "banned_words",
+			Params: map[string]interface{}{"words": []interface{}{"secret"}},
 		},
 		{
-			ValidatorConfig: validators.ValidatorConfig{
-				Type:   "max_length",
-				Params: map[string]interface{}{"max_characters": float64(1000)},
-			},
+			Type:   "max_length",
+			Params: map[string]interface{}{"max_characters": float64(1000)},
 		},
 	}
 	tp := &prompt.ToolPolicyPack{
@@ -177,7 +164,7 @@ func TestCedarEmptyToolPolicy(t *testing.T) {
 func TestHasPolicyRules_ValidatorsOnly(t *testing.T) {
 	p := &prompt.PackPrompt{
 		Validators: []prompt.ValidatorConfig{
-			{ValidatorConfig: validators.ValidatorConfig{Type: "banned_words"}},
+			{Type: "banned_words"},
 		},
 	}
 	if hasPolicyRules(p) {
@@ -208,7 +195,7 @@ func TestPolicyResourceNames(t *testing.T) {
 		Prompts: map[string]*prompt.PackPrompt{
 			"chat": {
 				Validators: []prompt.ValidatorConfig{
-					{ValidatorConfig: validators.ValidatorConfig{Type: "banned_words"}},
+					{Type: "banned_words"},
 				},
 			},
 			"nopolicy": {},

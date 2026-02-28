@@ -161,15 +161,15 @@ func appendA2ALatencyWidget(
 func appendEvalWidgets(
 	widgets []DashboardWidget, pack *prompt.Pack, region string, row int,
 ) []DashboardWidget {
-	for i, ev := range pack.Evals {
-		if ev.Metric == nil {
+	for i := range pack.Evals {
+		if pack.Evals[i].Metric == nil {
 			continue
 		}
 		col := (i % dashboardColumns) * dashboardWidgetWidth
 		if i > 0 && i%dashboardColumns == 0 {
 			row += dashboardWidgetHeight
 		}
-		w := buildEvalWidget(&ev, pack.ID, region, col, row)
+		w := buildEvalWidget(&pack.Evals[i], pack.ID, region, col, row)
 		widgets = append(widgets, w)
 	}
 	return widgets

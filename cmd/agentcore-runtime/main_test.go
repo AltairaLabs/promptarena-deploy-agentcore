@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/AltairaLabs/PromptKit/sdk"
+	a2aserver "github.com/AltairaLabs/PromptKit/server/a2a"
 )
 
 func TestRunWithShutdown_SignalTermination(t *testing.T) {
@@ -17,7 +18,7 @@ func TestRunWithShutdown_SignalTermination(t *testing.T) {
 
 	// Use a no-op opener since we won't send A2A requests.
 	opener := sdk.A2AOpener("nonexistent.pack.json", "test")
-	a2aSrv := sdk.NewA2AServer(opener)
+	a2aSrv := a2aserver.NewServer(opener)
 
 	healthH := newHealthHandler()
 	mux := buildMux(
@@ -64,7 +65,7 @@ func TestRunWithShutdown_HealthDuringOperation(t *testing.T) {
 	log := slog.New(slog.NewJSONHandler(os.Stderr, nil))
 
 	opener := sdk.A2AOpener("nonexistent.pack.json", "test")
-	a2aSrv := sdk.NewA2AServer(opener)
+	a2aSrv := a2aserver.NewServer(opener)
 
 	healthH := newHealthHandler()
 	mux := buildMux(

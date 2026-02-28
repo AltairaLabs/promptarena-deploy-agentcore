@@ -64,10 +64,10 @@ func collectPackLevelNames(names map[string]string, pack *prompt.Pack, cfg *Conf
 // collectEvalNames adds evaluator and online eval config names.
 func collectEvalNames(names map[string]string, pack *prompt.Pack) {
 	hasOnlineEval := false
-	for _, ev := range pack.Evals {
-		switch ev.Type {
+	for i := range pack.Evals {
+		switch pack.Evals[i].Type {
 		case evalTypeLLMAsJudge:
-			names[ev.ID+"_eval"] = ResTypeEvaluator
+			names[pack.Evals[i].ID+"_eval"] = ResTypeEvaluator
 			hasOnlineEval = true
 		case evalTypeBuiltin:
 			hasOnlineEval = true

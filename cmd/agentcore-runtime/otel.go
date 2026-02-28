@@ -19,15 +19,14 @@ func setupTracing(cfg *runtimeConfig, log *slog.Logger) tracingShutdown {
 		return func(context.Context) error { return nil }
 	}
 
-	exporter := telemetry.NewOTLPExporter(cfg.OTLPEndpoint,
-		telemetry.WithResource(&telemetry.Resource{
-			Attributes: map[string]any{
-				"service.name":    "agentcore-runtime",
-				"service.version": version,
-			},
-		}),
-	)
+	tp, err := telemetry.NewTracerProvider(context.Background(), cfg.OTLPEndpoint, "agentcore-runtime")
+	if err != nil {
+		log.Error("failed to create tracer provider", "error", err)
+		return func(context.Context) error { return nil }
+	}
+
+	telemetry.SetupPropagation()
 
 	log.Info("tracing enabled", "endpoint", cfg.OTLPEndpoint)
-	return exporter.Shutdown
+	return tp.Shutdown
 }
