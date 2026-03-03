@@ -28,13 +28,17 @@ jobs:
       run: |
         echo "Updating PromptKit runtime to $VERSION..."
 
-        # Update the required version
+        # Update required versions for all PromptKit modules
         go mod edit -require="github.com/AltairaLabs/PromptKit/runtime@$VERSION"
+        go mod edit -require="github.com/AltairaLabs/PromptKit/sdk@$VERSION"
+        go mod edit -require="github.com/AltairaLabs/PromptKit/server/a2a@$VERSION"
+        go mod edit -require="github.com/AltairaLabs/PromptKit/pkg@$VERSION"
 
-        # Drop replace directives — the published module is now available
+        # Drop all replace directives — the published modules are now available
         go mod edit -dropreplace=github.com/AltairaLabs/PromptKit/runtime
         go mod edit -dropreplace=github.com/AltairaLabs/PromptKit/pkg
         go mod edit -dropreplace=github.com/AltairaLabs/PromptKit/sdk
+        go mod edit -dropreplace=github.com/AltairaLabs/PromptKit/server/a2a
 
         # Tidy to resolve dependencies
         go mod tidy
