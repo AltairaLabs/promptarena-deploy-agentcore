@@ -35,28 +35,28 @@ func wantsSSE(r *http.Request) bool {
 // buildA2AStreamRequest creates a streaming A2A message/stream JSON-RPC request.
 func buildA2AStreamRequest(text, sessionID string, metadata map[string]any) ([]byte, error) {
 	message := map[string]any{
-		"role": "user",
-		"parts": []map[string]any{
-			{"kind": "text", "text": text},
+		keyRole: roleUser,
+		keyParts: []map[string]any{
+			{keyKind: kindText, kindText: text},
 		},
-		"messageId": fmt.Sprintf("http-%d", time.Now().UnixNano()),
+		keyMessageID: fmt.Sprintf("http-%d", time.Now().UnixNano()),
 	}
 	if len(metadata) > 0 {
 		message["metadata"] = metadata
 	}
 
 	params := map[string]any{
-		"message": message,
+		keyMessage: message,
 	}
 	if sessionID != "" {
 		params["contextId"] = sessionID
 	}
 
 	a2aReq := map[string]any{
-		"jsonrpc": "2.0",
-		"id":      "http-bridge-stream-1",
-		"method":  "message/stream",
-		"params":  params,
+		keyJSONRPC: jsonrpcVersion,
+		"id":       "http-bridge-stream-1",
+		keyMethod:  "message/stream",
+		keyParams:  params,
 	}
 	return json.Marshal(a2aReq)
 }
@@ -122,7 +122,7 @@ func (b *httpBridge) relaySSEEvents(w http.ResponseWriter, r *http.Request, body
 		}
 
 		// Stop on terminal states.
-		if evt.Type == "status" && isTerminalState(evt.State) {
+		if evt.Type == keyStatus && isTerminalState(evt.State) {
 			writeSSEDone(w, flusher)
 			return
 		}
@@ -175,7 +175,7 @@ func (b *httpBridge) parseA2ASSEEvent(data string) *sseEvent {
 	}
 
 	if payload.Error != nil {
-		return &sseEvent{Type: "error", Content: payload.Error.Message}
+		return &sseEvent{Type: keyError, Content: payload.Error.Message}
 	}
 
 	var evt a2aStreamEvent
@@ -199,7 +199,7 @@ func (b *httpBridge) parseStatusEvent(evt *a2aStreamEvent) *sseEvent {
 		return nil
 	}
 	return &sseEvent{
-		Type:      "status",
+		Type:      keyStatus,
 		State:     status.State,
 		TaskID:    evt.TaskID,
 		ContextID: evt.ContextID,
@@ -222,7 +222,7 @@ func (b *httpBridge) parseArtifactEvent(evt *a2aStreamEvent) *sseEvent {
 		return nil
 	}
 	return &sseEvent{
-		Type:      "text",
+		Type:      kindText,
 		Content:   text,
 		TaskID:    evt.TaskID,
 		ContextID: evt.ContextID,

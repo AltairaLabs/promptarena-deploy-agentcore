@@ -9,6 +9,14 @@ import (
 // CloudWatch namespace for eval metrics.
 const metricsNamespace = "PromptPack/Evals"
 
+// CloudWatch dimension keys and widget type strings shared across metrics
+// and dashboard generation.
+const (
+	dimKeyPackID     = "pack_id"
+	dimKeyAgent      = "agent"
+	widgetTypeMetric = "metric"
+)
+
 // CloudWatch unit strings mapped from MetricType.
 const (
 	unitNone         = "None"
@@ -74,10 +82,10 @@ func buildMetricsConfig(pack *prompt.Pack) *MetricsConfig {
 	}
 
 	dims := map[string]string{
-		"pack_id": pack.ID,
+		dimKeyPackID: pack.ID,
 	}
 	if adaptersdk.IsMultiAgent(pack) {
-		dims["agent"] = "multi"
+		dims[dimKeyAgent] = "multi"
 	}
 
 	return &MetricsConfig{

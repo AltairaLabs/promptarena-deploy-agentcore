@@ -35,5 +35,5 @@ func (h *healthHandler) ServeHTTP(w http.ResponseWriter, _ *http.Request) {
 	}
 
 	w.WriteHeader(code)
-	_ = json.NewEncoder(w).Encode(map[string]string{"status": status})
+	_ = json.NewEncoder(w).Encode(map[string]string{keyStatus: status})
 }

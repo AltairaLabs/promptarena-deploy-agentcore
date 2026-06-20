@@ -17,6 +17,7 @@ const (
 	ResStatusUpdated = "updated"
 	ResStatusFailed  = "failed"
 	ResStatusPlanned = "planned"
+	ResStatusDeleted = "deleted"
 )
 
 // Health status constants returned by resource checks.

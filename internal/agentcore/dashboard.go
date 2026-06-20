@@ -99,7 +99,7 @@ func appendAgentWidgets(
 			nextRow += dashboardWidgetHeight
 		}
 		w := DashboardWidget{
-			Type:   "metric",
+			Type:   widgetTypeMetric,
 			X:      col,
 			Y:      nextRow,
 			Width:  dashboardWidgetWidth,
@@ -109,9 +109,9 @@ func appendAgentWidgets(
 				Region: region,
 				Period: dashboardPeriod,
 				Metrics: [][]string{
-					{metricsNamespace, "Invocations", "agent", name},
-					{metricsNamespace, "Errors", "agent", name},
-					{metricsNamespace, "Duration", "agent", name},
+					{metricsNamespace, "Invocations", dimKeyAgent, name},
+					{metricsNamespace, "Errors", dimKeyAgent, name},
+					{metricsNamespace, "Duration", dimKeyAgent, name},
 				},
 			},
 		}
@@ -136,12 +136,12 @@ func appendA2ALatencyWidget(
 	var metrics [][]string
 	for _, ag := range agents {
 		metrics = append(metrics, []string{
-			metricsNamespace, "A2ALatency", "agent", ag.Name,
+			metricsNamespace, "A2ALatency", dimKeyAgent, ag.Name,
 		})
 	}
 
 	w := DashboardWidget{
-		Type:   "metric",
+		Type:   widgetTypeMetric,
 		X:      0,
 		Y:      row,
 		Width:  dashboardGridColumns,
@@ -180,7 +180,7 @@ func buildEvalWidget(
 	ev *evals.EvalDef, packID, region string, col, row int,
 ) DashboardWidget {
 	w := DashboardWidget{
-		Type:   "metric",
+		Type:   widgetTypeMetric,
 		X:      col,
 		Y:      row,
 		Width:  dashboardWidgetWidth,
@@ -190,7 +190,7 @@ func buildEvalWidget(
 			Region: region,
 			Period: dashboardPeriod,
 			Metrics: [][]string{
-				{metricsNamespace, ev.Metric.Name, "pack_id", packID},
+				{metricsNamespace, ev.Metric.Name, dimKeyPackID, packID},
 			},
 		},
 	}

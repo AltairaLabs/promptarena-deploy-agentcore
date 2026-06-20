@@ -158,7 +158,7 @@ func writeInvocationError(w http.ResponseWriter, msg string) {
 	w.WriteHeader(http.StatusInternalServerError)
 	_ = json.NewEncoder(w).Encode(invocationResponse{
 		Response: msg,
-		Status:   "error",
+		Status:   keyError,
 	})
 }
 
@@ -203,20 +203,20 @@ type a2aResponse struct {
 // metadata is forwarded as A2A message-level metadata.
 func buildA2ARequest(text, sessionID string, metadata map[string]any) ([]byte, error) {
 	message := map[string]any{
-		"role": "user",
-		"parts": []map[string]any{
-			{"kind": "text", "text": text},
+		keyRole: roleUser,
+		keyParts: []map[string]any{
+			{keyKind: kindText, kindText: text},
 		},
-		"messageId": fmt.Sprintf("http-%d", time.Now().UnixNano()),
+		keyMessageID: fmt.Sprintf("http-%d", time.Now().UnixNano()),
 	}
 	if len(metadata) > 0 {
 		message["metadata"] = metadata
 	}
 
 	params := map[string]any{
-		"message": message,
-		"configuration": map[string]any{
-			"blocking": true,
+		keyMessage: message,
+		keyConfiguration: map[string]any{
+			keyBlocking: true,
 		},
 	}
 	if sessionID != "" {
@@ -224,10 +224,10 @@ func buildA2ARequest(text, sessionID string, metadata map[string]any) ([]byte, e
 	}
 
 	a2aReq := map[string]any{
-		"jsonrpc": "2.0",
-		"id":      "http-bridge-1",
-		"method":  "message/send",
-		"params":  params,
+		keyJSONRPC: jsonrpcVersion,
+		"id":       "http-bridge-1",
+		keyMethod:  methodMessageSend,
+		keyParams:  params,
 	}
 	return json.Marshal(a2aReq)
 }
