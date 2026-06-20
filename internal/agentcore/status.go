@@ -80,18 +80,18 @@ func destroyResourceGroup(
 				Message: deployErr.Error(),
 				Resource: &deploy.ResourceResult{
 					Type: res.Type, Name: res.Name,
-					Action: deploy.ActionDelete, Status: "failed",
+					Action: deploy.ActionDelete, Status: ResStatusFailed,
 					Detail: deployErr.Error(),
 				},
 			})
 			continue
 		}
 		_ = callback(&deploy.DestroyEvent{
-			Type:    "resource",
+			Type:    ErrCategoryResource,
 			Message: fmt.Sprintf("Deleted %s %q", res.Type, res.Name),
 			Resource: &deploy.ResourceResult{
 				Type: res.Type, Name: res.Name,
-				Action: deploy.ActionDelete, Status: "deleted",
+				Action: deploy.ActionDelete, Status: ResStatusDeleted,
 			},
 		})
 	}
@@ -108,12 +108,12 @@ func destroyUnorderedResources(
 			continue
 		}
 		err := destroyer.DeleteResource(ctx, res)
-		status := "deleted"
+		status := ResStatusDeleted
 		if err != nil {
-			status = "failed"
+			status = ResStatusFailed
 		}
 		_ = callback(&deploy.DestroyEvent{
-			Type:    "resource",
+			Type:    ErrCategoryResource,
 			Message: fmt.Sprintf("Deleted %s %q", res.Type, res.Name),
 			Resource: &deploy.ResourceResult{
 				Type: res.Type, Name: res.Name,
