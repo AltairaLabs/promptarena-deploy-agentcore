@@ -3,9 +3,9 @@ module github.com/AltairaLabs/promptarena-deploy-agentcore
 go 1.26.0
 
 require (
-	github.com/AltairaLabs/PromptKit/runtime v1.3.5
-	github.com/AltairaLabs/PromptKit/sdk v1.3.2
-	github.com/AltairaLabs/PromptKit/server/a2a v1.3.2
+	github.com/AltairaLabs/PromptKit/runtime v1.5.2
+	github.com/AltairaLabs/PromptKit/sdk v1.5.2
+	github.com/AltairaLabs/PromptKit/server/a2a v1.5.2
 	github.com/aws/aws-sdk-go-v2 v1.42.0
 	github.com/aws/aws-sdk-go-v2/config v1.32.23
 	github.com/aws/aws-sdk-go-v2/service/apigateway v1.38.4
@@ -19,7 +19,7 @@ require (
 
 require (
 	cloud.google.com/go/compute/metadata v0.9.0 // indirect
-	github.com/AltairaLabs/PromptKit/pkg v1.3.2 // indirect
+	github.com/AltairaLabs/PromptKit/pkg v1.5.2 // indirect
 	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.22.0 // indirect
 	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.13.1 // indirect
 	github.com/Azure/azure-sdk-for-go/sdk/internal v1.12.0 // indirect
@@ -99,11 +99,3 @@ require (
 	sigs.k8s.io/randfill v1.0.0 // indirect
 	sigs.k8s.io/structured-merge-diff/v6 v6.3.2 // indirect
 )
-
-replace github.com/AltairaLabs/PromptKit/runtime => ../promptkit/runtime
-
-replace github.com/AltairaLabs/PromptKit/pkg => ../promptkit/pkg
-
-replace github.com/AltairaLabs/PromptKit/sdk => ../promptkit/sdk
-
-replace github.com/AltairaLabs/PromptKit/server/a2a => ../promptkit/server/a2a
