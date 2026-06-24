@@ -371,7 +371,7 @@ func applyPoliciesPhase(
 			deployErr := newDeployError("create", ResTypeCedarPolicy, promptName, err)
 			_ = ac.reporter.Error(deployErr)
 			resources = append(resources, ResourceState{
-				Type: ResTypeCedarPolicy, Name: promptName, Status: "failed",
+				Type: ResTypeCedarPolicy, Name: promptName, Status: ResStatusFailed,
 			})
 			applyErr = combineErrors(applyErr, deployErr)
 			continue
@@ -555,7 +555,7 @@ func applyPhase(
 			deployErr := newDeployError(op.failVerb, resType, name, opErr)
 			_ = reporter.Error(deployErr)
 			result.resources = append(result.resources, ResourceState{
-				Type: resType, Name: name, Status: "failed",
+				Type: resType, Name: name, Status: ResStatusFailed,
 			})
 			result.err = combineErrors(result.err, deployErr)
 			continue
@@ -596,12 +596,12 @@ func resolveOp(
 		return resourceOp{
 			isUpdate: true, priorARN: prior.ARN,
 			verb: "Updating", failVerb: "update",
-			action: deploy.ActionUpdate, status: "updated",
+			action: deploy.ActionUpdate, status: ResStatusUpdated,
 		}
 	}
 	return resourceOp{
 		verb: "Creating", failVerb: "create",
-		action: deploy.ActionCreate, status: "created",
+		action: deploy.ActionCreate, status: ResStatusCreated,
 	}
 }
 
@@ -724,7 +724,7 @@ func createMemoryResource(
 
 	if err := reporter.Resource(&deploy.ResourceResult{
 		Type: ResTypeMemory, Name: memName,
-		Action: deploy.ActionCreate, Status: "created",
+		Action: deploy.ActionCreate, Status: ResStatusCreated,
 		Detail: arn,
 	}); err != nil {
 		return nil, err

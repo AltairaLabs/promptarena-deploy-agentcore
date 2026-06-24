@@ -109,24 +109,24 @@ func (b *httpBridge) processWSMessage(conn *websocket.Conn, msg []byte) {
 // buildWSA2ARequest creates a blocking A2A message/send for WebSocket messages.
 func buildWSA2ARequest(text string, metadata map[string]any) ([]byte, error) {
 	message := map[string]any{
-		"role": "user",
-		"parts": []map[string]any{
-			{"kind": "text", "text": text},
+		keyRole: roleUser,
+		keyParts: []map[string]any{
+			{keyKind: kindText, kindText: text},
 		},
-		"messageId": fmt.Sprintf("ws-%d", time.Now().UnixNano()),
+		keyMessageID: fmt.Sprintf("ws-%d", time.Now().UnixNano()),
 	}
 	if len(metadata) > 0 {
 		message["metadata"] = metadata
 	}
 
 	a2aReq := map[string]any{
-		"jsonrpc": "2.0",
-		"id":      "ws-bridge-1",
-		"method":  "message/send",
-		"params": map[string]any{
-			"message": message,
-			"configuration": map[string]any{
-				"blocking": true,
+		keyJSONRPC: jsonrpcVersion,
+		"id":       "ws-bridge-1",
+		keyMethod:  methodMessageSend,
+		keyParams: map[string]any{
+			keyMessage: message,
+			keyConfiguration: map[string]any{
+				keyBlocking: true,
 			},
 		},
 	}
@@ -149,14 +149,14 @@ func (b *httpBridge) writeWSA2AResponse(conn *websocket.Conn, body []byte) {
 
 	if result.Result.Status.State == stateFailed {
 		b.writeWSJSON(conn, wsResponse{
-			Type:    "error",
+			Type:    keyError,
 			Content: extractFailedMessage(&result),
 		})
 		return
 	}
 
 	b.writeWSJSON(conn, wsResponse{
-		Type:      "text",
+		Type:      kindText,
 		Content:   extractArtifactText(&result),
 		TaskID:    result.Result.ID,
 		ContextID: result.Result.ContextID,
@@ -168,7 +168,7 @@ func (b *httpBridge) writeWSA2AResponse(conn *websocket.Conn, body []byte) {
 
 // writeWSError writes an error message to the WebSocket connection.
 func (b *httpBridge) writeWSError(conn *websocket.Conn, msg string) {
-	b.writeWSJSON(conn, wsResponse{Type: "error", Content: msg})
+	b.writeWSJSON(conn, wsResponse{Type: keyError, Content: msg})
 }
 
 // writeWSJSON writes a JSON message to the WebSocket connection.

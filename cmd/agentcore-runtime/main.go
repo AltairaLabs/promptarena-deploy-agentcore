@@ -39,6 +39,9 @@ func run(log *slog.Logger) error {
 	}
 
 	if cfg.PackJSON != "" && cfg.PackFile == "" {
+		// tmpPackPath is a fixed, compile-time constant path (not derived from
+		// user input), so this write is not a path-traversal risk.
+		//nolint:gosec // G703: constant path, no taint.
 		if writeErr := os.WriteFile(tmpPackPath, []byte(cfg.PackJSON), tmpPackPerm); writeErr != nil {
 			return fmt.Errorf("write pack JSON to temp file: %w", writeErr)
 		}

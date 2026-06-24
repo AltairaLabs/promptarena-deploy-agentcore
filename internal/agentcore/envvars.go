@@ -115,7 +115,7 @@ func buildA2AEndpointMap(runtimeResources []ResourceState) string {
 		if r.Type != ResTypeAgentRuntime {
 			continue
 		}
-		if r.Status != "created" && r.Status != "updated" {
+		if r.Status != ResStatusCreated && r.Status != ResStatusUpdated {
 			continue
 		}
 		m[r.Name] = r.ARN
