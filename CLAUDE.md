@@ -10,7 +10,7 @@
 ## Build & Test Commands
 
 ```bash
-# Build adapter (requires PromptKit sibling checkout at ../promptkit)
+# Build adapter
 GOWORK=off go build -o promptarena-deploy-agentcore .
 
 # Build runtime binary (native, for local testing)
@@ -65,16 +65,13 @@ Makefile targets available individually:
 | `make check` | Run all checks (fmt + lint + test + build) |
 | `make install-hooks` | Install the pre-commit hook |
 
-Prerequisites: `go`, `golangci-lint`, `goimports` (`go install golang.org/x/tools/cmd/goimports@latest`), and sibling `../promptkit` checkout.
+Prerequisites: `go`, `golangci-lint`, `goimports` (`go install golang.org/x/tools/cmd/goimports@latest`).
 
-## Sibling Repo Dependency
+## PromptKit Dependency
 
-This repo depends on `github.com/AltairaLabs/PromptKit/runtime` via `replace` directives in `go.mod` pointing to `../promptkit/runtime`. This is temporary until the next PromptKit release tags `runtime/v1.3.0`. Once released, the `update-deps.yml` workflow will auto-create a PR to drop the replace directives.
+This repo depends on published `github.com/AltairaLabs/PromptKit/*` modules resolved from the Go module proxy. There are **no `replace` directives** and no sibling checkout is required — `go build` works from a clean clone.
 
-For local development, ensure `../promptkit` is checked out:
-```bash
-git clone git@github.com:AltairaLabs/PromptKit.git ../promptkit
-```
+The `update-deps.yml` workflow bumps the pinned version automatically when PromptKit cuts a release. If you need to co-develop against a local PromptKit checkout, add `replace` directives temporarily and **never commit them** — a committed replace breaks container builds (no `../promptkit` in the build context) and makes CI depend on undocumented local state.
 
 ## SonarCloud Quality Gate (CI)
 

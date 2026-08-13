@@ -12,7 +12,7 @@ func boolPtr(b bool) *bool { return &b }
 // Validators should NOT produce Cedar — they are runtime-only.
 
 func TestCedarValidatorsProduceNothing(t *testing.T) {
-	vals := []prompt.ValidatorConfig{
+	vals := []prompt.Validator{
 		{
 			Type:   "banned_words",
 			Params: map[string]interface{}{"words": []interface{}{"badword", "evil"}},
@@ -114,7 +114,7 @@ func TestCedarToolBlocklistFiltersUnregisteredTools(t *testing.T) {
 }
 
 func TestCedarMixed_OnlyBlocklistProducesCedar(t *testing.T) {
-	vals := []prompt.ValidatorConfig{
+	vals := []prompt.Validator{
 		{
 			Type:   "banned_words",
 			Params: map[string]interface{}{"words": []interface{}{"secret"}},
@@ -163,7 +163,7 @@ func TestCedarEmptyToolPolicy(t *testing.T) {
 
 func TestHasPolicyRules_ValidatorsOnly(t *testing.T) {
 	p := &prompt.PackPrompt{
-		Validators: []prompt.ValidatorConfig{
+		Validators: []prompt.Validator{
 			{Type: "banned_words"},
 		},
 	}
@@ -194,7 +194,7 @@ func TestPolicyResourceNames(t *testing.T) {
 	pack := &prompt.Pack{
 		Prompts: map[string]*prompt.PackPrompt{
 			"chat": {
-				Validators: []prompt.ValidatorConfig{
+				Validators: []prompt.Validator{
 					{Type: "banned_words"},
 				},
 			},
