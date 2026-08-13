@@ -10,8 +10,9 @@ The AgentCore adapter injects environment variables into agent runtimes via the 
 
 | Variable | Source | When Set | Description |
 |----------|--------|----------|-------------|
-| `PROMPTPACK_PROVIDER_TYPE` | Arena config `deploy.agentcore` | Always (code deploy) | LLM provider type (e.g. `"bedrock"`). Used by the runtime to select the correct provider. |
-| `PROMPTPACK_PROVIDER_MODEL` | Arena config `deploy.agentcore.model` | Always (code deploy) | Bedrock model ID (e.g. `"claude-3-5-haiku-20241022"`). Used by the runtime to configure the LLM. |
+| `PROMPTPACK_PROVIDERS` | `providers` config field, or the arena config | Always (code deploy) | JSON array of resolved provider bindings, one per role. The runtime wires one SDK provider per entry. |
+| `PROMPTPACK_PROVIDER_TYPE` | Primary provider binding | Always (code deploy) | LLM provider type of the primary binding. Legacy — superseded by `PROMPTPACK_PROVIDERS`. |
+| `PROMPTPACK_PROVIDER_MODEL` | Primary provider binding | Always (code deploy) | Model ID of the primary binding. Legacy — superseded by `PROMPTPACK_PROVIDERS`. |
 | `PROMPTPACK_PACK_JSON` | Pack file contents | Always (code deploy) | The full pack JSON, injected so the runtime can load the pack without a separate file. |
 | `PROMPTPACK_LOG_GROUP` | `observability.cloudwatch_log_group` | When `cloudwatch_log_group` is a non-empty string | CloudWatch log group name for structured logging. |
 | `PROMPTPACK_TRACING_ENABLED` | `observability.tracing_enabled` | When `tracing_enabled` is `true` | Enables AWS X-Ray tracing. Value is the string `"true"`. |
@@ -28,17 +29,34 @@ The AgentCore adapter injects environment variables into agent runtimes via the 
 
 ## Variable details
 
+### PROMPTPACK_PROVIDERS
+
+A JSON array of fully-resolved provider bindings, built from the `providers` field of the deploy config. Each entry names a provider, the capability role it serves, and the type and model to use. Exactly one entry is marked `"primary": true` — that is the runtime's main LLM.
+
+```json
+[
+  {"name":"default","role":"llm","type":"claude","model":"claude-sonnet-4","primary":true},
+  {"name":"embed","role":"embedding","type":"titan","model":"titan-embed-text-v2"}
+]
+```
+
+The runtime configures the primary binding through Bedrock's platform credential chain, and wires each remaining binding to the matching capability provider (embedding, TTS, STT, image, inference). A binding with an unrecognized role is logged and skipped rather than failing startup.
+
+When the deploy config declares no `providers`, the adapter falls back to deriving a single LLM binding from the arena config and logs a deprecation warning naming the provider it chose.
+
 ### PROMPTPACK_PROVIDER_TYPE
 
-Set from the arena config's `deploy.agentcore` section. Tells the runtime which LLM provider to use. For AgentCore deployments, this is always `"bedrock"`.
+The provider type of the primary binding, duplicated here so a runtime built before provider bindings existed keeps working.
 
 ```
 PROMPTPACK_PROVIDER_TYPE=bedrock
 ```
 
+Prefer `PROMPTPACK_PROVIDERS` — this variable cannot express more than one provider or any role other than `llm`.
+
 ### PROMPTPACK_PROVIDER_MODEL
 
-Set from the arena config's `deploy.agentcore.model` field. Specifies the Bedrock model ID the runtime should use for LLM invocations.
+The model ID of the primary binding. Legacy, for the same reason as `PROMPTPACK_PROVIDER_TYPE`.
 
 ```
 PROMPTPACK_PROVIDER_MODEL=claude-3-5-haiku-20241022

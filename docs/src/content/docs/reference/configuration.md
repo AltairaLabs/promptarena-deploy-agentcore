@@ -19,7 +19,7 @@ These fields are set in the `deploy.agentcore` section of your arena config:
 |-------|------|----------|-------------|
 | `region` | string | Yes | AWS region for the AgentCore deployment (e.g. `us-west-2`). |
 | `runtime_binary_path` | string | Yes | Path to the cross-compiled PromptKit runtime binary (Linux ARM64). Built with `make build-runtime-arm64`. |
-| `model` | string | Yes | Bedrock model ID (e.g. `claude-3-5-haiku-20241022`, `claude-3-5-sonnet-20241022`). |
+| `model` | string | No | Bedrock model ID (e.g. `claude-3-5-haiku-20241022`). Superseded by [`providers`](#providers) — prefer an explicit binding, which also lets you deploy more than one provider. |
 
 ## Top-level fields (deploy_config)
 
@@ -34,6 +34,43 @@ These fields are set in the `deploy.agentcore` section of your arena config:
 | `observability` | object | No | -- | Observability settings. See [observability](#observability). |
 | `a2a_auth` | object | No | -- | Agent-to-agent authentication settings. See [a2a_auth](#a2a_auth). |
 | `protocol` | string | No | `"both"` | Server protocol mode. Controls which servers the runtime starts. See [protocol](#protocol). |
+| `providers` | object[] | No | -- | Provider bindings declaring what the runtime uses and in what role. See [providers](#providers). |
+| `tool_targets` | map[string]object | No | -- | Per-tool AWS target config (`lambda_arn`, `api_gateway`, `openapi`, `smithy`, `credential`), merged into the arena tool specs. |
+
+## `providers`
+
+Each entry binds one provider to one capability role in the deployed runtime.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | string | Yes | Logical binding name, unique within the config. The binding named `default` is the primary provider. |
+| `role` | string | No | Capability served. One of `llm`, `embedding`, `tts`, `stt`, `image`, `inference`. Defaults to `llm`. |
+| `arena_provider` | string | No | Name of a provider in the arena config to inherit `type` and `model` from. |
+| `type` | string | Required unless `arena_provider` is set | Provider type, overriding anything inherited from `arena_provider`. |
+| `model` | string | No | Model identifier, overriding anything inherited from `arena_provider`. |
+
+```yaml
+deploy:
+  provider: agentcore
+  agentcore:
+    region: us-west-2
+    runtime_role_arn: arn:aws:iam::123456789012:role/my-agent-role
+
+    providers:
+      - name: default              # "default" is the primary provider
+        role: llm
+        arena_provider: sonnet     # inherit type + model from the arena config
+      - name: embed
+        role: embedding
+        type: titan                # or declare inline
+        model: titan-embed-text-v2
+```
+
+A binding resolves either by naming an arena provider (deploy what you tested) or by declaring `type`/`model` inline (keeping the deploy config self-contained). When both are given, the inline fields win field by field.
+
+Exactly one binding is the primary — the runtime's main LLM. A binding named `default` always wins. Otherwise the first `llm`-role binding in declaration order is used and the adapter logs a warning naming it.
+
+**Omitting `providers` is deprecated.** With no bindings the adapter derives a single LLM provider from the arena config and logs a deprecation warning naming the provider it chose. Arena configs routinely declare several providers — comparing them is the point of an arena — so relying on this fallback means the deploy config does not state which model actually ships.
 
 ## `observability`
 
@@ -191,7 +228,10 @@ Tag limit exceeded:
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "type": "object",
-  "required": ["region", "runtime_role_arn"],
+  "required": [
+    "region",
+    "runtime_role_arn"
+  ],
   "properties": {
     "region": {
       "type": "string",
@@ -204,26 +244,65 @@ Tag limit exceeded:
       "description": "IAM role ARN for the AgentCore runtime"
     },
     "memory_store": {
-      "type": "string",
-      "enum": ["session", "persistent"],
-      "description": "Memory store type for the agent"
+      "oneOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "strategies": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "event_expiry_days": {
+              "type": "integer",
+              "minimum": 3,
+              "maximum": 365
+            },
+            "encryption_key_arn": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "strategies"
+          ]
+        }
+      ],
+      "description": "Memory config: string, array, or object with strategies"
     },
     "tools": {
       "type": "object",
       "properties": {
-        "code_interpreter": { "type": "boolean" }
+        "code_interpreter": {
+          "type": "boolean"
+        }
       }
     },
     "observability": {
       "type": "object",
       "properties": {
-        "cloudwatch_log_group": { "type": "string" },
-        "tracing_enabled": { "type": "boolean" }
+        "cloudwatch_log_group": {
+          "type": "string"
+        },
+        "tracing_enabled": {
+          "type": "boolean"
+        }
       }
     },
     "tags": {
       "type": "object",
-      "additionalProperties": { "type": "string" },
+      "additionalProperties": {
+        "type": "string"
+      },
       "description": "User-defined tags to apply to all created AWS resources"
     },
     "dry_run": {
@@ -232,11 +311,16 @@ Tag limit exceeded:
     },
     "a2a_auth": {
       "type": "object",
-      "required": ["mode"],
+      "required": [
+        "mode"
+      ],
       "properties": {
         "mode": {
           "type": "string",
-          "enum": ["iam", "jwt"],
+          "enum": [
+            "iam",
+            "jwt"
+          ],
           "description": "A2A authentication mode"
         },
         "discovery_url": {
@@ -245,12 +329,16 @@ Tag limit exceeded:
         },
         "allowed_audience": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "description": "Allowed JWT audiences"
         },
         "allowed_clients": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "description": "Allowed JWT client IDs"
         }
       }
@@ -261,8 +349,60 @@ Tag limit exceeded:
     },
     "protocol": {
       "type": "string",
-      "enum": ["http", "a2a", "both"],
+      "enum": [
+        "http",
+        "a2a",
+        "both"
+      ],
       "description": "Server protocol mode: http (port 8080), a2a (port 9000), or both (default)"
+    },
+    "tool_targets": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object"
+      },
+      "description": "Per-tool provider-specific target config (lambda_arn, api_gateway, openapi, smithy, credential)"
+    },
+    "providers": {
+      "type": "array",
+      "description": "What the runtime uses, in what role. Omit to derive one from the arena config (deprecated).",
+      "items": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Unique binding name. The binding named \"default\" is the primary provider."
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "llm",
+              "embedding",
+              "tts",
+              "stt",
+              "image",
+              "inference"
+            ],
+            "description": "Capability this provider serves (default: llm)"
+          },
+          "arena_provider": {
+            "type": "string",
+            "description": "Name of a provider in the arena config to inherit type and model from"
+          },
+          "type": {
+            "type": "string",
+            "description": "Provider type, overriding anything inherited from arena_provider"
+          },
+          "model": {
+            "type": "string",
+            "description": "Model identifier, overriding anything inherited from arena_provider"
+          }
+        },
+        "additionalProperties": false
+      }
     }
   },
   "additionalProperties": false
@@ -299,7 +439,20 @@ A complete configuration with all optional fields:
   },
   "tools": {
     "code_interpreter": true
-  }
+  },
+  "providers": [
+    {
+      "name": "default",
+      "role": "llm",
+      "arena_provider": "sonnet"
+    },
+    {
+      "name": "embed",
+      "role": "embedding",
+      "type": "titan",
+      "model": "titan-embed-text-v2"
+    }
+  ]
 }
 ```
 

@@ -37,6 +37,11 @@ type Config struct {
 	Observability     *ObservabilityConfig `json:"observability,omitempty"`
 	A2AAuth           *A2AAuthConfig       `json:"a2a_auth,omitempty"`
 
+	// Providers declares which providers the deployed runtime uses and in
+	// what role. When empty the adapter falls back to deriving a single LLM
+	// provider from the arena config, which is deprecated.
+	Providers []ProviderBinding `json:"providers,omitempty"`
+
 	// ToolTargets maps tool names to provider-specific target config
 	// (e.g. lambda_arn). These are merged into ArenaConfig.ToolSpecs
 	// so that buildTargetConfig can find Lambda ARNs and other
@@ -324,6 +329,7 @@ func (c *Config) validate() []string {
 	errs = append(errs, validateA2AAuth(c.A2AAuth)...)
 	errs = append(errs, validateTags(c.Tags)...)
 	errs = append(errs, validateToolTargetNames(c.ToolTargets)...)
+	errs = append(errs, validateProviderBindings(c)...)
 
 	return errs
 }
