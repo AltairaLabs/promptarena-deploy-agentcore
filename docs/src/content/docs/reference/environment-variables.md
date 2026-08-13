@@ -36,11 +36,13 @@ A JSON array of fully-resolved provider bindings, built from the `providers` fie
 ```json
 [
   {"name":"default","role":"llm","type":"claude","model":"claude-sonnet-4","primary":true},
-  {"name":"embed","role":"embedding","type":"titan","model":"titan-embed-text-v2"}
+  {"name":"fast","role":"llm","type":"claude","model":"claude-3-5-haiku-20241022"}
 ]
 ```
 
 The runtime configures the primary binding through Bedrock's platform credential chain, and wires each remaining binding to the matching capability provider (embedding, TTS, STT, image, inference). A binding with an unrecognized role is logged and skipped rather than failing startup.
+
+Note that only the `llm` role currently has a Bedrock-native provider in PromptKit — see [which roles actually work today](/reference/configuration/#which-roles-actually-work-today).
 
 When the deploy config declares no `providers`, the adapter falls back to deriving a single LLM binding from the arena config and logs a deprecation warning naming the provider it chose.
 

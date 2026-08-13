@@ -1,6 +1,8 @@
 package main
 
 import (
+	"encoding/json"
+	"reflect"
 	"testing"
 
 	"github.com/AltairaLabs/promptarena-deploy-agentcore/internal/agentcore"
@@ -10,6 +12,96 @@ import (
 func setMinimalPack(t *testing.T) {
 	t.Helper()
 	t.Setenv(envPackJSON, `{"id":"test"}`)
+}
+
+// The adapter writes these env vars and the runtime reads them, but each side
+// declares its own string constant. Nothing else in the build links the two,
+// so a rename on one side would silently break every deployed runtime.
+func TestEnvVarNamesMatchTheAdapter(t *testing.T) {
+	pairs := []struct {
+		name             string
+		adapter, runtime string
+	}{
+		{"providers", agentcore.EnvProviders, envProviders},
+		{"provider type", agentcore.EnvProviderType, envProviderType},
+		{"provider model", agentcore.EnvProviderModel, envProviderModel},
+		{"agent endpoints", agentcore.EnvA2AAgents, envAgentEndpoints},
+		{"agent name", agentcore.EnvAgentName, envAgentName},
+		{"memory store", agentcore.EnvMemoryStore, envMemoryStore},
+		{"memory id", agentcore.EnvMemoryID, envMemoryID},
+		{"a2a auth mode", agentcore.EnvA2AAuthMode, envA2AAuthMode},
+		{"a2a auth role", agentcore.EnvA2AAuthRole, envA2AAuthRole},
+		{"policy engine arn", agentcore.EnvPolicyEngineARN, envPolicyEngineARN},
+		{"metrics config", agentcore.EnvMetricsConfig, envMetricsConfig},
+		{"dashboard config", agentcore.EnvDashboardConfig, envDashboardConfig},
+		{"log group", agentcore.EnvLogGroup, envLogGroup},
+		{"protocol", agentcore.EnvProtocol, envProtocol},
+	}
+	for _, p := range pairs {
+		if p.adapter != p.runtime {
+			t.Errorf("%s env var: adapter writes %q but runtime reads %q",
+				p.name, p.adapter, p.runtime)
+		}
+	}
+}
+
+// Round-trips the exact bytes the adapter would write, proving the runtime
+// reconstructs the same bindings and wires an SDK option for each role.
+func TestProviderBindingsSurviveTheEnvVarRoundTrip(t *testing.T) {
+	adapterSide := []agentcore.ResolvedProvider{
+		{Name: "default", Role: agentcore.RoleLLM, Type: "claude", Model: "claude-sonnet-4", Primary: true},
+		{Name: "embed", Role: agentcore.RoleEmbedding, Type: "titan", Model: "titan-embed-text-v2"},
+		{Name: "voice", Role: agentcore.RoleTTS, Type: "polly", Model: "neural"},
+		{Name: "ears", Role: agentcore.RoleSTT, Type: "transcribe", Model: "standard"},
+		{Name: "pics", Role: agentcore.RoleImage, Type: "titan-image", Model: "v2"},
+	}
+	encoded, err := json.Marshal(adapterSide)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	setMinimalPack(t)
+	t.Setenv(envProviders, string(encoded))
+
+	cfg, err := loadConfig()
+	if err != nil {
+		t.Fatalf("loadConfig: %v", err)
+	}
+	if !reflect.DeepEqual(cfg.Providers, adapterSide) {
+		t.Fatalf("round trip changed the bindings:\n adapter: %+v\n runtime: %+v",
+			adapterSide, cfg.Providers)
+	}
+
+	primary := cfg.primaryProvider()
+	if primary == nil || primary.Name != "default" {
+		t.Fatalf("primary = %+v, want the binding named default", primary)
+	}
+
+	// One WithBedrock for the primary plus one WithXProvider for each of the
+	// four other roles; every role must map to a real SDK option.
+	cfg.AWSRegion = "us-west-2"
+	opts := providerOptions(cfg)
+	if len(opts) != len(adapterSide) {
+		t.Errorf("providerOptions returned %d options for %d bindings — a role was dropped",
+			len(opts), len(adapterSide))
+	}
+}
+
+// Every role the adapter can emit must map to an SDK option, or bindings the
+// adapter happily writes would be silently dropped at runtime.
+func TestEveryAdapterRoleMapsToAnSDKOption(t *testing.T) {
+	roles := []string{
+		agentcore.RoleLLM, agentcore.RoleEmbedding, agentcore.RoleTTS,
+		agentcore.RoleSTT, agentcore.RoleImage, agentcore.RoleInference,
+	}
+	for _, role := range roles {
+		t.Run(role, func(t *testing.T) {
+			p := agentcore.ResolvedProvider{Name: "x", Role: role, Type: "claude", Model: "m"}
+			if _, ok := roleOption(p, "us-west-2"); !ok {
+				t.Errorf("role %q has no SDK option — the adapter accepts it but the runtime drops it", role)
+			}
+		})
+	}
 }
 
 func TestLoadConfig_ParsesProvidersJSON(t *testing.T) {

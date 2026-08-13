@@ -38,6 +38,40 @@ func DiagnoseConfig(cfg *Config) []DiagnosticWarning {
 	warnings = append(warnings, diagnoseRoleARN(cfg)...)
 	warnings = append(warnings, diagnoseA2AConfig(cfg)...)
 	warnings = append(warnings, diagnoseMemory(cfg)...)
+	warnings = append(warnings, diagnoseProviders(cfg)...)
+	return warnings
+}
+
+// diagnoseProviders warns about provider bindings the deployed runtime is
+// unlikely to be able to construct.
+//
+// As of PromptKit v1.5.10 the only role with a Bedrock-native provider is
+// "llm". Embedding on the bedrock platform is explicitly unimplemented, and
+// the tts/stt/image/inference registries have no Bedrock-hosted types — they
+// construct only for direct-API providers such as "openai", which need an API
+// key this adapter does not inject.
+//
+// This matters because the runtime applies provider options eagerly when it
+// opens a conversation: a binding that cannot construct fails every request
+// rather than failing the deploy. Surfacing it at validate time is the only
+// early signal the user gets.
+func diagnoseProviders(cfg *Config) []DiagnosticWarning {
+	var warnings []DiagnosticWarning
+	for i := range cfg.Providers {
+		b := &cfg.Providers[i]
+		if b.role() == RoleLLM {
+			continue
+		}
+		warnings = append(warnings, DiagnosticWarning{
+			Category: ErrCategoryConfiguration,
+			Message: fmt.Sprintf(
+				"provider binding %q uses role %q, which has no Bedrock-native provider in PromptKit",
+				b.Name, b.role()),
+			Hint: "the runtime applies provider options when it opens a conversation, so if the " +
+				"type cannot be constructed every request fails; only direct-API types (e.g. " +
+				"\"openai\") construct today, and they need an API key the adapter does not inject",
+		})
+	}
 	return warnings
 }
 

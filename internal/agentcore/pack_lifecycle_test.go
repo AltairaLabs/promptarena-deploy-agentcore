@@ -6,7 +6,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -42,35 +41,124 @@ func integrationDeployConfig(t *testing.T) string {
 	if binaryPath == "" {
 		t.Skip("AGENTCORE_TEST_BINARY_PATH must be set")
 	}
-	cfg := map[string]string{
+	cfg := map[string]any{
 		"region":              region,
 		"runtime_role_arn":    roleARN,
 		"runtime_binary_path": binaryPath,
 		"memory_store":        "semantic",
+		// Declare an explicit primary binding rather than relying on the
+		// deprecated arena-derived fallback, so the deployed runtime is
+		// exercised through the same path real deploys should use.
+		"providers": []map[string]string{
+			{
+				"name":           "default",
+				"role":           RoleLLM,
+				"arena_provider": integrationProviderName,
+			},
+		},
 	}
 	b, _ := json.Marshal(cfg)
 	return string(b)
+}
+
+// integrationProviderName is the arena provider the integration deploy config
+// binds as its primary.
+const integrationProviderName = "integration-llm"
+
+// integrationModel is the Bedrock model the integration tests deploy. Override
+// with AGENTCORE_TEST_MODEL.
+func integrationModel() string {
+	if m := os.Getenv("AGENTCORE_TEST_MODEL"); m != "" {
+		return m
+	}
+	return "claude-3-5-haiku-20241022"
 }
 
 // integrationArenaConfig returns an arena config JSON string. When
 // AGENTCORE_TEST_LAMBDA_ARN is set, the "search" tool spec includes a
 // lambda_arn so the gateway uses an McpLambdaTargetConfiguration with
 // an inline tool schema (required for Cedar policy actions to resolve).
+// The config always declares a provider under integrationProviderName so the
+// deploy config's primary binding has something to resolve against.
 func integrationArenaConfig(t *testing.T) string {
 	t.Helper()
-	lambdaARN := os.Getenv("AGENTCORE_TEST_LAMBDA_ARN")
-	if lambdaARN == "" {
-		return `{"tool_specs":{}}`
+	cfg := map[string]any{
+		"tool_specs": map[string]any{},
+		"loaded_providers": map[string]any{
+			integrationProviderName: map[string]string{
+				"type":  "claude",
+				"model": integrationModel(),
+			},
+		},
 	}
-	return fmt.Sprintf(`{
-		"tool_specs": {
-			"search": {
-				"name": "search",
+
+	if lambdaARN := os.Getenv("AGENTCORE_TEST_LAMBDA_ARN"); lambdaARN != "" {
+		cfg["tool_specs"] = map[string]any{
+			"search": map[string]string{
+				"name":        "search",
 				"description": "Search the web for information",
-				"lambda_arn": %q
-			}
+				"lambda_arn":  lambdaARN,
+			},
 		}
-	}`, lambdaARN)
+	}
+
+	b, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("marshal arena config: %v", err)
+	}
+	return string(b)
+}
+
+// assertProviderEnvVars checks that the resolved bindings actually reach the
+// runtime's environment. This is the contract the deployed container depends
+// on, and it is invisible from the resource list alone.
+func assertProviderEnvVars(t *testing.T, cfg *Config) {
+	t.Helper()
+	env := buildRuntimeEnvVars(cfg)
+
+	raw := env[EnvProviders]
+	if raw == "" {
+		t.Fatalf("%s not injected into the runtime environment", EnvProviders)
+	}
+	var got []ResolvedProvider
+	if err := json.Unmarshal([]byte(raw), &got); err != nil {
+		t.Fatalf("%s is not valid JSON: %v", EnvProviders, err)
+	}
+	if len(got) != 1 || got[0].Name != "default" || !got[0].Primary {
+		t.Fatalf("%s = %s, want a single primary binding named default", EnvProviders, raw)
+	}
+	if got[0].Model != integrationModel() {
+		t.Errorf("deployed model = %q, want %q — the binding did not resolve from the arena provider",
+			got[0].Model, integrationModel())
+	}
+	if env[EnvProviderModel] != integrationModel() {
+		t.Errorf("legacy %s = %q, want %q", EnvProviderModel, env[EnvProviderModel], integrationModel())
+	}
+	t.Logf("provider env: %s=%s", EnvProviders, raw)
+}
+
+// TestIntegration_ProviderBindingsReachRuntimeEnv checks the binding actually
+// resolves and lands in the runtime environment, using the same deploy and
+// arena config the deploying tests use. Needs no AWS calls, so it fails fast
+// before a 20-minute deploy if the wiring is wrong.
+func TestIntegration_ProviderBindingsReachRuntimeEnv(t *testing.T) {
+	deployConfig := integrationDeployConfig(t)
+	arenaConfig := integrationArenaConfig(t)
+
+	cfg, err := parseConfig(deployConfig)
+	if err != nil {
+		t.Fatalf("parseConfig: %v", err)
+	}
+	arena, err := parseArenaConfig(arenaConfig)
+	if err != nil {
+		t.Fatalf("parseArenaConfig: %v", err)
+	}
+	cfg.ArenaConfig = arena
+
+	if errs := cfg.validate(); len(errs) != 0 {
+		t.Fatalf("integration deploy config does not validate: %v", errs)
+	}
+	assertProviderEnvVars(t, cfg)
 }
 
 // loadMessaroundPack reads the compiled pack JSON from the sibling repo.

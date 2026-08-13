@@ -60,15 +60,30 @@ deploy:
       - name: default              # "default" is the primary provider
         role: llm
         arena_provider: sonnet     # inherit type + model from the arena config
-      - name: embed
-        role: embedding
-        type: titan                # or declare inline
-        model: titan-embed-text-v2
+      - name: fast
+        role: llm
+        type: claude               # or declare inline
+        model: claude-3-5-haiku-20241022
 ```
 
 A binding resolves either by naming an arena provider (deploy what you tested) or by declaring `type`/`model` inline (keeping the deploy config self-contained). When both are given, the inline fields win field by field.
 
 Exactly one binding is the primary — the runtime's main LLM. A binding named `default` always wins. Otherwise the first `llm`-role binding in declaration order is used and the adapter logs a warning naming it.
+
+### Which roles actually work today
+
+:::caution[Only `llm` is usable on AgentCore right now]
+The schema accepts all six roles, but as of **PromptKit v1.5.10** only `llm` has a Bedrock-native provider:
+
+| Role | Status on AgentCore |
+|------|---------------------|
+| `llm` | Works — served through Bedrock with the runtime role's credential chain. |
+| `embedding` | Not available. PromptKit rejects the bedrock platform for embeddings outright ("requires a platform-native embedding provider type… not implemented"). |
+| `tts`, `stt`, `image` | No Bedrock-hosted types (`polly`, `transcribe`, `titan-image` are all unregistered). They construct only for direct-API types such as `openai`, which need an API key this adapter does not inject. |
+| `inference` | No Bedrock-hosted types registered. |
+
+This matters because the runtime applies provider options **when it opens a conversation**, not at startup. A binding that cannot be constructed therefore fails *every request* rather than failing the deploy. `promptarena deploy validate` emits a warning for any non-`llm` binding so you find out before shipping.
+:::
 
 **Omitting `providers` is deprecated.** With no bindings the adapter derives a single LLM provider from the arena config and logs a deprecation warning naming the provider it chose. Arena configs routinely declare several providers — comparing them is the point of an arena — so relying on this fallback means the deploy config does not state which model actually ships.
 
@@ -445,12 +460,6 @@ A complete configuration with all optional fields:
       "name": "default",
       "role": "llm",
       "arena_provider": "sonnet"
-    },
-    {
-      "name": "embed",
-      "role": "embedding",
-      "type": "titan",
-      "model": "titan-embed-text-v2"
     }
   ]
 }

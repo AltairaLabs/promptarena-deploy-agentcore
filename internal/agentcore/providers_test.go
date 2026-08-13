@@ -271,6 +271,82 @@ func TestValidateProviderBindings(t *testing.T) {
 	}
 }
 
+// --- diagnostics ---
+
+// PromptKit v1.5.10 has no Bedrock-native provider for any role but llm, and
+// options are applied eagerly when the runtime opens a conversation — so a
+// binding that cannot construct breaks every request with no deploy-time
+// signal. Warn at validate time instead.
+func TestDiagnoseProviders_WarnsOnRolesBedrockCannotServe(t *testing.T) {
+	tests := []struct {
+		name     string
+		bindings []ProviderBinding
+		wantWarn bool
+		mentions string
+	}{
+		{
+			name:     "llm role is fine",
+			bindings: []ProviderBinding{{Name: "default", Role: RoleLLM, Type: "claude", Model: "m"}},
+			wantWarn: false,
+		},
+		{
+			name:     "role defaulting to llm is fine",
+			bindings: []ProviderBinding{{Name: "default", Type: "claude", Model: "m"}},
+			wantWarn: false,
+		},
+		{
+			name:     "embedding role warns",
+			bindings: []ProviderBinding{{Name: "embed", Role: RoleEmbedding, Type: "titan", Model: "m"}},
+			wantWarn: true,
+			mentions: "embed",
+		},
+		{
+			name:     "tts role warns",
+			bindings: []ProviderBinding{{Name: "voice", Role: RoleTTS, Type: "polly", Model: "m"}},
+			wantWarn: true,
+			mentions: "voice",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := diagnoseProviders(&Config{Providers: tt.bindings})
+			if !tt.wantWarn {
+				if len(got) != 0 {
+					t.Fatalf("expected no warnings, got %v", got)
+				}
+				return
+			}
+			if len(got) == 0 {
+				t.Fatal("expected a warning, got none")
+			}
+			joined := got[0].String()
+			if !strings.Contains(joined, tt.mentions) {
+				t.Errorf("warning %q does not name the binding %q", joined, tt.mentions)
+			}
+		})
+	}
+}
+
+func TestDiagnoseConfig_IncludesProviderWarnings(t *testing.T) {
+	cfg := &Config{
+		Region:         "us-west-2",
+		RuntimeRoleARN: "arn:aws:iam::123456789012:role/Test",
+		Providers: []ProviderBinding{
+			{Name: "embed", Role: RoleEmbedding, Type: "titan", Model: "m"},
+		},
+	}
+	var found bool
+	for _, w := range DiagnoseConfig(cfg) {
+		if strings.Contains(w.String(), "embed") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("DiagnoseConfig should surface provider-role warnings")
+	}
+}
+
 // --- env var wiring ---
 
 func TestBuildRuntimeEnvVars_EmitsProvidersJSON(t *testing.T) {
