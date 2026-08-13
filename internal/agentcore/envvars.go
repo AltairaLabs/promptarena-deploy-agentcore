@@ -2,6 +2,7 @@ package agentcore
 
 import (
 	"encoding/json"
+	"log"
 	"strconv"
 
 	"github.com/AltairaLabs/PromptKit/runtime/prompt"
@@ -23,6 +24,12 @@ const (
 	EnvProviderType    = "PROMPTPACK_PROVIDER_TYPE"
 	EnvProviderModel   = "PROMPTPACK_PROVIDER_MODEL"
 	EnvProtocol        = "PROMPTPACK_PROTOCOL"
+
+	// EnvProviders carries the full set of resolved provider bindings as a
+	// JSON array. PROMPTPACK_PROVIDER_TYPE/MODEL cannot express a list with
+	// roles, so they remain populated from the primary binding only, for
+	// runtimes built before provider bindings existed.
+	EnvProviders = "PROMPTPACK_PROVIDERS"
 )
 
 // buildRuntimeEnvVars constructs the environment variable map that will be
@@ -66,23 +73,40 @@ func buildRuntimeEnvVars(cfg *Config) map[string]string {
 		env[EnvProtocol] = cfg.Protocol
 	}
 
-	injectProviderEnvVars(env, cfg.ArenaConfig)
+	injectProviderEnvVars(env, cfg)
 
 	return env
 }
 
-// injectProviderEnvVars sets provider type and model env vars from the
-// arena config's loaded providers.
-func injectProviderEnvVars(env map[string]string, arena *ArenaConfig) {
-	p := arena.firstProvider()
-	if p == nil {
+// injectProviderEnvVars serializes the resolved provider bindings into
+// PROMPTPACK_PROVIDERS, and mirrors the primary binding into the legacy
+// PROMPTPACK_PROVIDER_TYPE/MODEL pair.
+func injectProviderEnvVars(env map[string]string, cfg *Config) {
+	resolved, warns := resolveProviderBindings(cfg)
+	for _, w := range warns {
+		log.Printf("agentcore: %s", w)
+	}
+	if len(resolved) == 0 {
 		return
 	}
-	if p.Type != "" {
-		env[EnvProviderType] = p.Type
+
+	if b, err := json.Marshal(resolved); err == nil {
+		env[EnvProviders] = string(b)
+	} else {
+		log.Printf("agentcore: could not encode provider bindings: %v", err)
 	}
-	if p.Model != "" {
-		env[EnvProviderModel] = p.Model
+
+	for i := range resolved {
+		if !resolved[i].Primary {
+			continue
+		}
+		if resolved[i].Type != "" {
+			env[EnvProviderType] = resolved[i].Type
+		}
+		if resolved[i].Model != "" {
+			env[EnvProviderModel] = resolved[i].Model
+		}
+		return
 	}
 }
 

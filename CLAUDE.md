@@ -145,6 +145,7 @@ Editing an **existing mapped page** (e.g. `how-to/configure.md`, `reference/conf
 | `internal/agentcore/status.go` | Destroy + Status — teardown and health checks |
 | `internal/agentcore/state.go` | `AdapterState` and `ResourceState` type definitions |
 | `internal/agentcore/envvars.go` | Runtime environment variable generation |
+| `internal/agentcore/providers.go` | Provider bindings — roles, resolution, validation |
 | `internal/agentcore/gateway.go` | Tool gateway resource management |
 | `internal/agentcore/cedar.go` | Cedar policy resource management |
 | `internal/agentcore/aws_client.go` | `awsClient`, `resourceDestroyer`, `resourceChecker` interfaces |

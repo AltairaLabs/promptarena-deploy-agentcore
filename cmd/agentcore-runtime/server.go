@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	pkgconfig "github.com/AltairaLabs/PromptKit/pkg/config"
 	"github.com/AltairaLabs/PromptKit/runtime/a2a"
 	"github.com/AltairaLabs/PromptKit/runtime/prompt"
 	"github.com/AltairaLabs/PromptKit/runtime/prompt/agentcard"
@@ -42,11 +43,7 @@ func resolveAgentName(cfg *runtimeConfig, pack *prompt.Pack) (string, error) {
 func buildSDKOptions(cfg *runtimeConfig) []sdk.Option {
 	var opts []sdk.Option
 
-	if cfg.AWSRegion != "" {
-		// Provider type and model come from the arena config via env vars.
-		opts = append(opts, sdk.WithBedrock(cfg.AWSRegion, cfg.ProviderType, cfg.Model))
-	}
-
+	opts = append(opts, providerOptions(cfg)...)
 	opts = append(opts, sdk.WithStateStore(buildStateStore(cfg)))
 
 	if len(cfg.AgentEndpoints) > 0 {
@@ -56,6 +53,81 @@ func buildSDKOptions(cfg *runtimeConfig) []sdk.Option {
 	}
 
 	return opts
+}
+
+// providerOptions builds one SDK option per provider binding. The primary
+// LLM binding goes through WithBedrock so it keeps the platform credential
+// chain; the remaining roles are wired through the capability-specific
+// WithXProvider options.
+func providerOptions(cfg *runtimeConfig) []sdk.Option {
+	if cfg.AWSRegion == "" {
+		return nil
+	}
+
+	primary := cfg.primaryProvider()
+
+	// No bindings at all: preserve the historical behavior of configuring
+	// Bedrock from the (possibly empty) legacy provider fields.
+	if primary == nil && len(cfg.Providers) == 0 {
+		return []sdk.Option{sdk.WithBedrock(cfg.AWSRegion, cfg.ProviderType, cfg.Model)}
+	}
+
+	var opts []sdk.Option
+	if primary != nil {
+		opts = append(opts, sdk.WithBedrock(cfg.AWSRegion, primary.Type, primary.Model))
+	}
+
+	for i := range cfg.Providers {
+		p := cfg.Providers[i]
+		if primary != nil && p.Name == primary.Name {
+			continue
+		}
+		opt, ok := roleOption(p, cfg.AWSRegion)
+		if !ok {
+			slog.Warn("ignoring provider binding with unrecognized role",
+				"binding", p.Name, "role", p.Role)
+			continue
+		}
+		opts = append(opts, opt)
+	}
+	return opts
+}
+
+// roleOption maps a resolved binding to the SDK option for its capability.
+// Returns false for a role the SDK has no provider option for.
+func roleOption(p agentcore.ResolvedProvider, region string) (sdk.Option, bool) {
+	spec := bedrockProviderSpec(p, region)
+	switch p.Role {
+	case agentcore.RoleLLM:
+		return sdk.WithLLMProvider(spec), true
+	case agentcore.RoleEmbedding:
+		return sdk.WithEmbeddingProvider(spec), true
+	case agentcore.RoleTTS:
+		return sdk.WithTTSProvider(spec), true
+	case agentcore.RoleSTT:
+		return sdk.WithSTTProvider(spec), true
+	case agentcore.RoleImage:
+		return sdk.WithImageProvider(spec), true
+	case agentcore.RoleInference:
+		return sdk.WithInferenceProvider(spec), true
+	default:
+		return nil, false
+	}
+}
+
+// bedrockProviderSpec builds the SDK provider spec for a binding, carrying
+// the Bedrock platform config so the provider uses the AWS credential chain
+// rather than expecting an API key.
+func bedrockProviderSpec(p agentcore.ResolvedProvider, region string) sdk.ProviderSpec {
+	return sdk.ProviderSpec{
+		ID:    p.Name,
+		Type:  p.Type,
+		Model: p.Model,
+		Platform: &pkgconfig.PlatformConfig{
+			Type:   "bedrock",
+			Region: region,
+		},
+	}
 }
 
 // buildStateStore creates the appropriate state store based on config.

@@ -94,6 +94,43 @@ const configSchema = `{
       "type": "string",
       "enum": ["http", "a2a", "both"],
       "description": "Server protocol mode: http (port 8080), a2a (port 9000), or both (default)"
+    },
+    "tool_targets": {
+      "type": "object",
+      "additionalProperties": { "type": "object" },
+      "description": "Per-tool provider-specific target config (lambda_arn, api_gateway, openapi, smithy, credential)"
+    },
+    "providers": {
+      "type": "array",
+      "description": "What the runtime uses, in what role. Omit to derive one from the arena config (deprecated).",
+      "items": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Unique binding name. The binding named \"default\" is the primary provider."
+          },
+          "role": {
+            "type": "string",
+            "enum": ["llm", "embedding", "tts", "stt", "image", "inference"],
+            "description": "Capability this provider serves (default: llm)"
+          },
+          "arena_provider": {
+            "type": "string",
+            "description": "Name of a provider in the arena config to inherit type and model from"
+          },
+          "type": {
+            "type": "string",
+            "description": "Provider type, overriding anything inherited from arena_provider"
+          },
+          "model": {
+            "type": "string",
+            "description": "Model identifier, overriding anything inherited from arena_provider"
+          }
+        },
+        "additionalProperties": false
+      }
     }
   },
   "additionalProperties": false

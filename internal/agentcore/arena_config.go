@@ -84,19 +84,50 @@ type ArenaMCPServer struct {
 	Args    []string `json:"args,omitempty"`
 }
 
-// firstProvider returns the first provider found in the arena config,
-// checking LoadedProviders first, then ProviderSpecs. Returns nil if none.
-func (a *ArenaConfig) firstProvider() *ArenaProvider {
+// firstProvider returns the lowest-keyed provider found in the arena config,
+// checking LoadedProviders first, then ProviderSpecs, along with its key.
+// Returns ("", nil) if there are none.
+//
+// Selection is sorted rather than map-iteration order: arena configs routinely
+// declare several providers, and picking whichever the map yielded made the
+// deployed model vary run to run.
+func (a *ArenaConfig) firstProvider() (string, *ArenaProvider) {
 	if a == nil {
+		return "", nil
+	}
+	for _, m := range []map[string]*ArenaProvider{a.LoadedProviders, a.ProviderSpecs} {
+		if name := lowestKey(m); name != "" {
+			return name, m[name]
+		}
+	}
+	return "", nil
+}
+
+// providerByName looks a provider up by key in LoadedProviders, then
+// ProviderSpecs. Returns nil for an empty name or no match.
+func (a *ArenaConfig) providerByName(name string) *ArenaProvider {
+	if a == nil || name == "" {
 		return nil
 	}
-	for _, p := range a.LoadedProviders {
+	if p, ok := a.LoadedProviders[name]; ok {
 		return p
 	}
-	for _, p := range a.ProviderSpecs {
-		return p
+	return a.ProviderSpecs[name]
+}
+
+// lowestKey returns the lexicographically smallest key of m whose value is
+// non-nil, or "" if there is none.
+func lowestKey(m map[string]*ArenaProvider) string {
+	best := ""
+	for k, v := range m {
+		if v == nil {
+			continue
+		}
+		if best == "" || k < best {
+			best = k
+		}
 	}
-	return nil
+	return best
 }
 
 // toolSpecForName returns the tool spec with the given name, or nil if
