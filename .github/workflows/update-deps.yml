@@ -34,41 +34,14 @@ jobs:
         go mod edit -require="github.com/AltairaLabs/PromptKit/server/a2a@$VERSION"
         go mod edit -require="github.com/AltairaLabs/PromptKit/pkg@$VERSION"
 
-        # Drop all replace directives — the published modules are now available
-        go mod edit -dropreplace=github.com/AltairaLabs/PromptKit/runtime
-        go mod edit -dropreplace=github.com/AltairaLabs/PromptKit/pkg
-        go mod edit -dropreplace=github.com/AltairaLabs/PromptKit/sdk
-        go mod edit -dropreplace=github.com/AltairaLabs/PromptKit/server/a2a
-
         # Tidy to resolve dependencies
         go mod tidy
 
         echo "✓ Updated go.mod"
 
-    - name: Remove sibling checkout from CI
-      env:
-        VERSION: ${{ github.event.client_payload.version }}
-      run: |
-        # Check if CI still has the sibling checkout step
-        if grep -q 'Checkout PromptKit' .github/workflows/ci.yml; then
-          echo "Removing sibling PromptKit checkout from CI..."
-
-          # Use sed to remove the checkout step from ci.yml
-          # Remove the 3-line block: "- name: Checkout PromptKit (sibling)\n      run: git clone..."
-          sed -i '/- name: Checkout PromptKit (sibling)/,/\.\.\/promptkit/d' .github/workflows/ci.yml
-
-          echo "✓ Removed sibling checkout from ci.yml"
-        fi
-
-        if grep -q 'Checkout PromptKit' .github/workflows/release.yml; then
-          echo "Removing sibling PromptKit checkout from release.yml..."
-          sed -i '/- name: Checkout PromptKit (sibling)/,/\.\.\/promptkit/d' .github/workflows/release.yml
-          echo "✓ Removed sibling checkout from release.yml"
-        fi
-
     - name: Verify build
       run: |
-        echo "Verifying build without replace directives..."
+        echo "Verifying build..."
         go build -o promptarena-deploy-agentcore .
         echo "✓ Build succeeded"
 
@@ -89,31 +62,32 @@ jobs:
 
         git checkout -b "$BRANCH"
         git add -A
-        git commit -m "deps: update PromptKit runtime to $VERSION
-
-        Drop replace directives — published module is now available on
-        the Go proxy. Remove sibling PromptKit checkout from CI workflows."
+        git commit -s -m "deps: update PromptKit modules to $VERSION" \
+          -m "Bump runtime, sdk, server/a2a and pkg to the newly published version."
 
         git push origin "$BRANCH"
 
-        gh pr create \
-          --title "deps: update PromptKit runtime to $VERSION" \
-          --body "$(cat <<'PREOF'
+        # Quoted heredoc so backticks are not evaluated; __VERSION__ is
+        # substituted afterwards.
+        cat <<'PREOF' > /tmp/pr-body.md
         ## Summary
 
-        - Update `github.com/AltairaLabs/PromptKit/runtime` to $VERSION
-        - Drop `replace` directives from `go.mod` (published module available)
-        - Remove sibling PromptKit checkout from CI workflows
+        - Update the `github.com/AltairaLabs/PromptKit/*` modules to `__VERSION__`
 
-        Triggered automatically by PromptKit release $VERSION.
+        Triggered automatically by PromptKit release `__VERSION__`.
 
         ## Verification
 
-        - [x] `go build` passes without replace directives
+        - [x] `go build` passes
         - [x] `go test ./... -race` passes
 
         🤖 Generated automatically by the update-deps workflow
         PREOF
-        )"
+
+        sed -i "s/__VERSION__/$VERSION/g" /tmp/pr-body.md
+
+        gh pr create \
+          --title "deps: update PromptKit modules to $VERSION" \
+          --body-file /tmp/pr-body.md
 
         echo "✓ Created PR for $BRANCH"

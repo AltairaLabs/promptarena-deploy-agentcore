@@ -113,10 +113,9 @@ All adapter lifecycle methods are implemented:
 
 ### Prerequisites
 
-- Go 1.25+
+- Go 1.26+
 - `golangci-lint`
 - `goimports` (`go install golang.org/x/tools/cmd/goimports@latest`)
-- Sibling `../promptkit` checkout (`git clone git@github.com:AltairaLabs/PromptKit.git ../promptkit`)
 
 ### Build & Test
 

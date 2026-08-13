@@ -8,3 +8,4 @@ coverage.out
 coverage_pkg.out
 .mcp.json
 .env
+.claude/settings.local.json
