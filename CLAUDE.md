@@ -96,11 +96,20 @@ The `docs/` directory is a Starlight site and is the **source of truth** for the
 
 ### How these docs get published
 
-This repo has **no docs deploy of its own**. The pages are published only through the parent **PromptKit docs site** (promptkit.altairalabs.ai). At build time, PromptKit's `docs/scripts/fetch-adapter-docs.mjs` (run as `prebuild`) fetches this repo's `docs/src/content/docs/**` from **`main`** over the GitHub API and writes them into `arena/.../deploy/agentcore/` (gitignored, generated). That PromptKit docs build **deploys on a PromptKit release** — so doc changes here go live on the **next PromptKit release**, not when they merge here.
+This repo has **no docs deploy of its own**. Its pages are pulled into a parent docs site at build time: `docs/scripts/fetch-adapter-docs.mjs` (run as `prebuild`) fetches this repo's `docs/src/content/docs/**` from **`main`** over the GitHub API and writes them into `arena/.../deploy/agentcore/` (gitignored, generated). Because the fetch is from `main`, doc changes go live on the **parent's next docs deploy**, not when they merge here.
+
+The deploy adapter is an **Arena** concern, so the correct parent is the **PromptArena** repo and site:
+
+| | Repo | Site |
+|---|---|---|
+| **Correct home** | `AltairaLabs/promptarena` | promptarena.altairalabs.ai |
+| **Leftover — should be removed** | `AltairaLabs/PromptKit` | promptkit.altairalabs.ai |
+
+**Both repos currently run the same fetch script against this repo**, so these pages are published to both sites — `promptkit.altairalabs.ai/arena/how-to/deploy/agentcore/configure/` serves them today as "Configure the Adapter | PromptKit". That is a leftover of the arena extraction (see PromptKit's `docs/local-backlog/2026-07-01-promptarena-repo-extraction.md`, which assigns arena's docs to the `promptarena.altairalabs.ai` subdomain), not the intended design. Tracked upstream — do not treat the PromptKit copy as a target to keep in sync.
 
 ### Arena YAML in docs must validate
 
-Adapter config goes under **`spec.deploy.config`** — an opaque block PromptKit passes straight to this adapter. `deploy.agentcore` is **not** a valid key: the arena schema declares `deploy` with `additionalProperties: false` and only `provider`, `config`, `environments`. Every doc example carried the wrong shape for a long time because nothing checked them.
+Adapter config goes under **`spec.deploy.config`** — an opaque block `promptarena deploy` passes straight to this adapter. `deploy.agentcore` is **not** a valid key: the arena schema declares `deploy` with `additionalProperties: false` and only `provider`, `config`, `environments`. Every doc example carried the wrong shape for a long time because nothing checked them.
 
 Before changing any ` ```yaml ` block containing `kind: Arena`, validate it:
 
@@ -108,13 +117,13 @@ Before changing any ` ```yaml ` block containing `kind: Arena`, validate it:
 env PROMPTKIT_SCHEMA_SOURCE=local promptarena validate <file.yaml> --type arena --schema-only
 ```
 
-Run it from a directory containing `schemas/` (i.e. the `../promptkit` checkout) — `PROMPTKIT_SCHEMA_SOURCE=local` resolves the schema relative to cwd. The published schemas lag and reject valid fields.
+Run it from a directory containing `schemas/` — `PROMPTKIT_SCHEMA_SOURCE=local` resolves the schema relative to cwd. Use the **`../promptarena`** checkout: arena owns and generates these schemas (they are still *served* from `promptkit.altairalabs.ai/schemas/` for URL stability, which is why the env var keeps the PromptKit name). The published schemas lag and reject valid fields, so always validate locally.
 
 A complete example needs the full envelope: `apiVersion`, `kind`, `metadata`, and a `spec` with **both** `providers` and `defaults` (the schema requires them).
 
 ### Adding a NEW doc page (important)
 
-The fetch script maps a **fixed list of files** and **silently skips anything not in the map** (it logs `no mapping … skipping`). A new page in this repo will **not** appear on the PromptKit site until it is added to the agentcore `extraFiles` map in PromptKit's `docs/scripts/fetch-adapter-docs.mjs`:
+The fetch script maps a **fixed list of files** and **silently skips anything not in the map** (it logs `no mapping … skipping`). A new page in this repo will **not** appear on the site until it is added to the agentcore `extraFiles` map in **promptarena**'s `docs/scripts/fetch-adapter-docs.mjs`:
 
 ```js
 "explanation/your-page.md": {
@@ -123,7 +132,9 @@ The fetch script maps a **fixed list of files** and **silently skips anything no
 },
 ```
 
-Editing an **existing mapped page** (e.g. `how-to/configure.md`, `reference/configuration.md`) needs no PromptKit change — it flows through on the next release automatically.
+Add it to the **promptarena** repo only. PromptKit carries a near-identical copy of this script, but that copy is the leftover described above — adding a mapping there entrenches a publish that should be going away.
+
+Editing an **existing mapped page** (e.g. `how-to/configure.md`, `reference/configuration.md`) needs no parent-side change — it flows through on the next docs deploy automatically.
 
 ## Go Code Standards
 
