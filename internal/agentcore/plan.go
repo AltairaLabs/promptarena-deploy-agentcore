@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/AltairaLabs/PromptKit/runtime/deploy"
 	"github.com/AltairaLabs/PromptKit/runtime/deploy/adaptersdk"
@@ -12,7 +13,7 @@ import (
 )
 
 // Plan generates a deployment plan for the given pack and config.
-func (p *Provider) Plan(_ context.Context, req *deploy.PlanRequest) (*deploy.PlanResponse, error) {
+func (p *Provider) Plan(ctx context.Context, req *deploy.PlanRequest) (*deploy.PlanResponse, error) {
 	// 1. Parse the pack.
 	pack, err := adaptersdk.ParsePack([]byte(req.PackJSON))
 	if err != nil {
@@ -50,14 +51,21 @@ func (p *Provider) Plan(_ context.Context, req *deploy.PlanRequest) (*deploy.Pla
 		return nil, fmt.Errorf("agentcore: invalid resource names: %s", formatNameErrors(nameErrs))
 	}
 
-	// 6. Generate desired resources.
+	// 6. Verify stored state against what the provider actually has, so the
+	// plan reflects reality rather than the last thing we wrote down.
+	prior, drift := p.verifiedPriorState(ctx, cfg, prior)
+
+	// 7. Generate desired resources.
 	desired := generateDesiredResources(pack, cfg)
 
-	// 7. Diff against prior state.
+	// 8. Diff against the verified prior state.
 	changes := diffResources(desired, prior)
 
-	// 8. Build summary.
+	// 9. Build summary.
 	summary := buildSummary(changes)
+	if len(drift) > 0 {
+		summary = fmt.Sprintf("%s\nDrift detected: %s", summary, strings.Join(drift, "; "))
+	}
 
 	return &deploy.PlanResponse{
 		Changes: changes,
