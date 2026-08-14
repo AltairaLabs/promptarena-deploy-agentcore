@@ -4,22 +4,39 @@ sidebar:
   order: 1
 ---
 
-The AgentCore adapter accepts configuration from two sources:
+The AgentCore adapter is configured from one place: the **`spec.deploy.config`** block of your arena config. PromptKit treats that block as opaque — it is serialized and handed to the adapter as the JSON-RPC `deploy_config` in every request, so the fields on this page are exactly the fields you write in YAML.
 
-1. **Arena config** (`deploy.agentcore` section in `arena.yaml`) — deployment settings like `region`, `runtime_binary_path`, and `model`.
-2. **JSON-RPC `deploy_config`** — adapter-specific settings passed in every JSON-RPC request.
+```yaml
+apiVersion: promptkit.altairalabs.ai/v1alpha1
+kind: Arena
+metadata:
+  name: my-agent
+spec:
+  providers:
+    - file: providers/sonnet.provider.yaml
+
+  defaults:
+    temperature: 0.1
+    max_tokens: 512
+
+  deploy:
+    provider: agentcore     # selects this adapter
+    config:                 # <- everything documented below goes here
+      region: us-west-2
+      runtime_role_arn: arn:aws:iam::123456789012:role/AgentCoreRuntime
+      runtime_binary_path: /path/to/promptkit-runtime
+```
+
+:::caution[`deploy.agentcore` is not a valid key]
+PromptKit's arena schema declares `deploy` with `additionalProperties: false` and only three keys — `provider`, `config` and `environments`. An adapter config written under `deploy.agentcore` fails validation:
+
+```
+spec.deploy: unknown property 'agentcore'
+    Valid keys: config, environments, provider
+```
+:::
 
 This page documents every field, its type, constraints, and validation behavior.
-
-## Arena config fields (`deploy.agentcore`)
-
-These fields are set in the `deploy.agentcore` section of your arena config:
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `region` | string | Yes | AWS region for the AgentCore deployment (e.g. `us-west-2`). |
-| `runtime_binary_path` | string | Yes | Path to the cross-compiled PromptKit runtime binary (Linux ARM64). Built with `make build-runtime-arm64`. |
-| `model` | string | No | Bedrock model ID (e.g. `claude-3-5-haiku-20241022`). Superseded by [`providers`](#providers) — prefer an explicit binding, which also lets you deploy more than one provider. |
 
 ## Top-level fields (deploy_config)
 
@@ -50,20 +67,24 @@ Each entry binds one provider to one capability role in the deployed runtime.
 | `model` | string | No | Model identifier, overriding anything inherited from `arena_provider`. |
 
 ```yaml
-deploy:
-  provider: agentcore
-  agentcore:
-    region: us-west-2
-    runtime_role_arn: arn:aws:iam::123456789012:role/my-agent-role
+spec:
+  providers:
+    - file: providers/sonnet.provider.yaml   # declares id: sonnet
 
-    providers:
-      - name: default              # "default" is the primary provider
-        role: llm
-        arena_provider: sonnet     # inherit type + model from the arena config
-      - name: fast
-        role: llm
-        type: claude               # or declare inline
-        model: claude-3-5-haiku-20241022
+  deploy:
+    provider: agentcore
+    config:
+      region: us-west-2
+      runtime_role_arn: arn:aws:iam::123456789012:role/my-agent-role
+
+      providers:
+        - name: default              # "default" is the primary provider
+          role: llm
+          arena_provider: sonnet     # id of a provider in spec.providers
+        - name: fast
+          role: llm
+          type: claude               # or declare inline
+          model: claude-3-5-haiku-20241022
 ```
 
 A binding resolves either by naming an arena provider (deploy what you tested) or by declaring `type`/`model` inline (keeping the deploy config self-contained). When both are given, the inline fields win field by field.
