@@ -189,6 +189,14 @@ func validateProviderBindings(cfg *Config) []string {
 // type, either from a named arena provider or from inline fields.
 func validateBindingSource(arena *ArenaConfig, b *ProviderBinding, label string) []string {
 	if b.ArenaProvider != "" {
+		// The reference can only be checked when an arena config is present.
+		// ValidateConfig legitimately has none — deploy.ValidateRequest carries
+		// only the deploy config — so an absent arena config means "unknown",
+		// not "invalid". Plan checks it for real once the arena config is
+		// parsed.
+		if arena == nil {
+			return nil
+		}
 		if arena.providerByName(b.ArenaProvider) == nil {
 			return []string{fmt.Sprintf(
 				"%s: arena_provider %q not found in the arena config", label, b.ArenaProvider)}

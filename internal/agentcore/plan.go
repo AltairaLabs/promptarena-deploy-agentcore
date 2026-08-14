@@ -24,14 +24,15 @@ func (p *Provider) Plan(_ context.Context, req *deploy.PlanRequest) (*deploy.Pla
 	if err != nil {
 		return nil, fmt.Errorf("agentcore: invalid deploy config: %w", err)
 	}
-	if errs := cfg.validate(); len(errs) > 0 {
-		return nil, fmt.Errorf("agentcore: config validation failed: %s", errs[0])
-	}
-
-	// 3. Parse the arena config.
+	// 3. Parse the arena config before validating: provider bindings that name
+	// an arena provider can only be checked once it is available.
 	cfg.ArenaConfig, err = parseArenaConfig(req.ArenaConfig)
 	if err != nil {
 		return nil, fmt.Errorf("agentcore: %w", err)
+	}
+
+	if errs := cfg.validate(); len(errs) > 0 {
+		return nil, fmt.Errorf("agentcore: config validation failed: %s", errs[0])
 	}
 	mergeToolTargets(cfg.ArenaConfig, cfg.ToolTargets)
 

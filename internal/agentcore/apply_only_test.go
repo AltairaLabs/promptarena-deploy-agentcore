@@ -19,11 +19,16 @@ func TestIntegration_ApplyOnly(t *testing.T) {
 	// --- Messaround pack (6 resources) ---
 	t.Log("=== Applying messaround pack ===")
 	messaroundPack := loadMessaroundPack(t)
-	_, messState := collectApplyEvents(t, ctx, provider, &deploy.PlanRequest{
+	_, messState, err := collectApplyEvents(t, ctx, provider, &deploy.PlanRequest{
 		PackJSON:     messaroundPack,
 		DeployConfig: deployConfig,
 		ArenaConfig:  arenaConfig,
 	})
+	// Report the error but keep going: this test leaves resources up on
+	// purpose, so the state below is how the operator finds what to destroy.
+	if err != nil {
+		t.Errorf("Apply returned error: %v", err)
+	}
 	state := unmarshalAdapterState(t, messState)
 	t.Logf("Messaround: %d resources", len(state.Resources))
 	for _, r := range state.Resources {
@@ -33,11 +38,14 @@ func TestIntegration_ApplyOnly(t *testing.T) {
 	// --- Multi-agent pack (5 resources) ---
 	t.Log("=== Applying multi-agent pack ===")
 	multiPack := integrationMultiAgentPackJSON()
-	_, multiState := collectApplyEvents(t, ctx, provider, &deploy.PlanRequest{
+	_, multiState, err := collectApplyEvents(t, ctx, provider, &deploy.PlanRequest{
 		PackJSON:     multiPack,
 		DeployConfig: deployConfig,
 		ArenaConfig:  arenaConfig,
 	})
+	if err != nil {
+		t.Errorf("Apply returned error: %v", err)
+	}
 	state2 := unmarshalAdapterState(t, multiState)
 	t.Logf("Multi-agent: %d resources", len(state2.Resources))
 	for _, r := range state2.Resources {
