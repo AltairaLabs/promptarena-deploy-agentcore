@@ -12,9 +12,34 @@ This guide covers every configuration option accepted by the AgentCore deploy ad
 - An IAM role ARN that the AgentCore runtime will assume at execution time.
 - The target AWS region must support Bedrock AgentCore (currently `us-east-1`, `us-west-2`, `eu-west-1`).
 
-## Arena config fields
+## Where the config goes
 
-These fields go in the `deploy.agentcore` section of your `arena.yaml` or `config.arena.yaml`:
+Adapter configuration lives under `spec.deploy.config` in your `arena.yaml` or `config.arena.yaml`. PromptKit treats that block as opaque and hands it to the adapter unchanged, so every field documented on this page goes inside it.
+
+```yaml
+apiVersion: promptkit.altairalabs.ai/v1alpha1
+kind: Arena
+metadata:
+  name: my-agent
+spec:
+  providers:
+    - file: providers/sonnet.provider.yaml
+
+  defaults:
+    temperature: 0.1
+    max_tokens: 512
+
+  deploy:
+    provider: agentcore     # selects this adapter
+    config:                 # everything below is adapter config
+      region: us-west-2
+      runtime_role_arn: arn:aws:iam::123456789012:role/AgentCoreRuntime
+      runtime_binary_path: /path/to/promptkit-runtime
+```
+
+:::caution[`deploy.agentcore` is not a valid key]
+PromptKit's arena schema accepts only `provider`, `config` and `environments` under `deploy`. Putting adapter settings in a `deploy.agentcore` block fails validation with `unknown property 'agentcore'`.
+:::
 
 ### `region`
 
@@ -23,7 +48,7 @@ The AWS region where all resources will be created.
 ```yaml
 deploy:
   provider: agentcore
-  agentcore:
+  config:
     region: us-west-2
 ```
 
@@ -33,19 +58,24 @@ Path to the cross-compiled PromptKit runtime binary (Linux ARM64). Build with `m
 
 ```yaml
 deploy:
-  agentcore:
+  config:
     runtime_binary_path: /path/to/promptkit-runtime
 ```
 
-### `model`
+### `providers`
 
-The Bedrock model ID the runtime will use for LLM invocations. Injected as `PROMPTPACK_PROVIDER_MODEL`.
+Which provider the runtime deploys, and in what role. A binding either names a provider from `spec.providers` or declares `type`/`model` inline.
 
 ```yaml
 deploy:
-  agentcore:
-    model: claude-3-5-haiku-20241022
+  config:
+    providers:
+      - name: default            # "default" is the primary provider
+        role: llm
+        arena_provider: sonnet   # id of a provider in spec.providers
 ```
+
+Declaring no `providers` is deprecated: the adapter then derives a single provider from the arena config and logs a warning naming the one it picked. See the [configuration reference](/reference/configuration/#providers) for the full field list and for which roles are usable today.
 
 ## Required fields (deploy_config)
 
@@ -176,35 +206,51 @@ a2a_auth:
 Arena config (`config.arena.yaml`):
 
 ```yaml
-deploy:
-  provider: agentcore
-  agentcore:
-    region: us-west-2
-    runtime_binary_path: /path/to/promptkit-runtime
-    model: claude-3-5-haiku-20241022
-    runtime_role_arn: arn:aws:iam::123456789012:role/AgentCoreExecutionRole
-    memory_store: persistent
-    protocol: both
-    dry_run: false
+apiVersion: promptkit.altairalabs.ai/v1alpha1
+kind: Arena
+metadata:
+  name: my-agent
+spec:
+  providers:
+    - file: providers/sonnet.provider.yaml
 
-    tags:
-      environment: staging
-      team: ml-platform
+  defaults:
+    temperature: 0.1
+    max_tokens: 512
 
-    tools:
-      code_interpreter: true
+  deploy:
+    provider: agentcore
+    config:
+      region: us-west-2
+      runtime_binary_path: /path/to/promptkit-runtime
+      runtime_role_arn: arn:aws:iam::123456789012:role/AgentCoreExecutionRole
+      memory_store: persistent
+      protocol: both
+      dry_run: false
 
-    observability:
-      cloudwatch_log_group: /aws/agentcore/my-agent
-      tracing_enabled: true
+      providers:
+        - name: default
+          role: llm
+          arena_provider: sonnet
 
-    a2a_auth:
-      mode: jwt
-      discovery_url: https://cognito-idp.us-west-2.amazonaws.com/us-west-2_abc123/.well-known/openid-configuration
-      allowed_audience:
-        - my-agent-audience
-      allowed_clients:
-        - client-id-1
+      tags:
+        environment: staging
+        team: ml-platform
+
+      tools:
+        code_interpreter: true
+
+      observability:
+        cloudwatch_log_group: /aws/agentcore/my-agent
+        tracing_enabled: true
+
+      a2a_auth:
+        mode: jwt
+        discovery_url: https://cognito-idp.us-west-2.amazonaws.com/us-west-2_abc123/.well-known/openid-configuration
+        allowed_audience:
+          - my-agent-audience
+        allowed_clients:
+          - client-id-1
 ```
 
 ## Validation errors

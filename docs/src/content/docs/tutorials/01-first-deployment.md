@@ -140,24 +140,36 @@ kind: Arena
 metadata:
   name: my-agent
 spec:
+  providers:
+    - file: providers/sonnet.provider.yaml
+
   prompt_configs:
     - id: main
       file: prompts/main.yaml
 
+  defaults:
+    temperature: 0.1
+    max_tokens: 512
+
   deploy:
     provider: agentcore
-    agentcore:
+    config:
       region: us-west-2
       runtime_role_arn: arn:aws:iam::123456789012:role/AgentCoreRuntime
       runtime_binary_path: /path/to/promptkit-runtime
-      model: claude-3-5-haiku-20241022
+      providers:
+        - name: default
+          role: llm
+          arena_provider: sonnet
 ```
 
 Replace the values:
 - **`region`** -- the AWS region where AgentCore is available (e.g., `us-west-2`, `us-east-1`).
 - **`runtime_role_arn`** -- the full ARN of the IAM role created in Step 1.
 - **`runtime_binary_path`** -- the path to the cross-compiled runtime binary from Step 2.
-- **`model`** -- the Bedrock model ID to use (e.g., `claude-3-5-haiku-20241022`).
+- **`arena_provider`** -- the `id` of a provider declared in `spec.providers`, whose type and model the deployed runtime inherits.
+
+Note that adapter settings go under `deploy.config`, not `deploy.agentcore` -- PromptKit accepts only `provider`, `config` and `environments` under `deploy`.
 
 The adapter supports additional options (memory, observability, tags) covered in the [Configuration Reference](/reference/configuration/).
 

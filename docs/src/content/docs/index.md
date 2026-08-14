@@ -39,13 +39,28 @@ The AgentCore adapter is a deploy provider plugin for PromptKit. It translates y
 
 ```yaml
 # arena.yaml
-deploy:
-  provider: agentcore
-  agentcore:
-    region: us-west-2
-    runtime_role_arn: arn:aws:iam::123456789012:role/AgentCoreRuntime
-    runtime_binary_path: /path/to/promptkit-runtime
-    model: claude-3-5-haiku-20241022
+apiVersion: promptkit.altairalabs.ai/v1alpha1
+kind: Arena
+metadata:
+  name: my-agent
+spec:
+  providers:
+    - file: providers/sonnet.provider.yaml
+
+  defaults:
+    temperature: 0.1
+    max_tokens: 512
+
+  deploy:
+    provider: agentcore
+    config:
+      region: us-west-2
+      runtime_role_arn: arn:aws:iam::123456789012:role/AgentCoreRuntime
+      runtime_binary_path: /path/to/promptkit-runtime
+      providers:
+        - name: default
+          role: llm
+          arena_provider: sonnet
 ```
 
 ```bash

@@ -32,23 +32,42 @@ make build-runtime-arm64
 
 ## Configuration
 
-The adapter reads configuration from your arena config's `deploy` section:
+The adapter reads configuration from your arena config's `spec.deploy` section. Everything under `deploy.config` is opaque to PromptKit and passed straight to this adapter:
 
 ```yaml
-deploy:
-  provider: agentcore
-  agentcore:
-    region: us-west-2
-    runtime_binary_path: /path/to/promptkit-runtime   # path to cross-compiled runtime binary
-    model: claude-3-5-haiku-20241022                  # Bedrock model ID
-    runtime_role_arn: arn:aws:iam::123456789012:role/my-agent-role
-    memory_store: session          # optional: "session", "persistent", or compound form
-    tools:                         # optional
-      code_interpreter: true
-    observability:                 # optional
-      cloudwatch_log_group: /aws/agentcore/my-agent
-      tracing_enabled: true
+apiVersion: promptkit.altairalabs.ai/v1alpha1
+kind: Arena
+metadata:
+  name: my-agent
+spec:
+  providers:
+    - file: providers/sonnet.provider.yaml
+
+  defaults:
+    temperature: 0.1
+    max_tokens: 512
+
+  deploy:
+    provider: agentcore
+    config:
+      region: us-west-2
+      runtime_binary_path: /path/to/promptkit-runtime   # cross-compiled runtime binary
+      runtime_role_arn: arn:aws:iam::123456789012:role/my-agent-role
+
+      providers:                   # what to deploy, and in what role
+        - name: default            # "default" is the primary provider
+          role: llm
+          arena_provider: sonnet   # id of a provider from spec.providers
+
+      memory_store: session        # optional: "session", "persistent", or compound form
+      tools:                       # optional
+        code_interpreter: true
+      observability:               # optional
+        cloudwatch_log_group: /aws/agentcore/my-agent
+        tracing_enabled: true
 ```
+
+> The adapter config goes under `deploy.config`. `deploy.agentcore` is not a valid key — PromptKit's arena schema accepts only `provider`, `config` and `environments` under `deploy`.
 
 ### Deployment Types
 

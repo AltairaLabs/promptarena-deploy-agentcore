@@ -156,6 +156,13 @@ kind: Arena
 metadata:
   name: content-team
 spec:
+  providers:
+    - file: providers/sonnet.provider.yaml
+
+  defaults:
+    temperature: 0.1
+    max_tokens: 512
+
   prompt_configs:
     - id: coordinator
       file: prompts/coordinator.yaml
@@ -209,17 +216,22 @@ Add a `deploy` section to your `config.arena.yaml`. For multi-agent packs, you s
 # Add this under spec: in config.arena.yaml
   deploy:
     provider: agentcore
-    agentcore:
+    config:
       region: us-west-2
       runtime_role_arn: arn:aws:iam::123456789012:role/AgentCoreRuntime
       runtime_binary_path: /path/to/promptkit-runtime
-      model: claude-3-5-haiku-20241022
+      providers:
+        - name: default
+          role: llm
+          arena_provider: sonnet   # id of a provider in spec.providers
       a2a_auth:
         mode: iam
       tags:
         team: content-platform
         environment: staging
 ```
+
+Adapter settings go under `deploy.config`. Every agent in the pack is deployed with the same provider bindings.
 
 The `a2a_auth` section is optional but recommended for multi-agent deployments:
 
