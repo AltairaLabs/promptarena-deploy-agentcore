@@ -19,6 +19,11 @@ type awsClient interface {
 	)
 	AssociatePolicyEngine(ctx context.Context, policyEngineARN string, cfg *Config) error
 	UploadCodePackage(ctx context.Context, zipData []byte, bucket, key string) error
+
+	// ListAvailableModels returns the set of Bedrock foundation model IDs
+	// offered in the configured region, used to pre-flight evaluator models.
+	// An error means availability is unknown, not that models are missing.
+	ListAvailableModels(ctx context.Context) (map[string]bool, error)
 }
 
 // resourceDestroyer abstracts resource deletion so that real AWS calls
