@@ -10,6 +10,13 @@ import (
 type simulatedAWSClient struct {
 	region    string
 	accountID string
+
+	// availableModels overrides the model set returned by
+	// ListAvailableModels. Nil means "availability unknown", which is what
+	// the real client reports when the lookup fails.
+	availableModels map[string]bool
+	// listModelsErr, when set, makes ListAvailableModels fail.
+	listModelsErr error
 }
 
 func newSimulatedAWSClient(region string) *simulatedAWSClient {
@@ -74,6 +81,13 @@ func (c *simulatedAWSClient) UploadCodePackage(
 ) error {
 	log.Printf("agentcore: simulated S3 upload")
 	return nil
+}
+
+func (c *simulatedAWSClient) ListAvailableModels(_ context.Context) (map[string]bool, error) {
+	if c.listModelsErr != nil {
+		return nil, c.listModelsErr
+	}
+	return c.availableModels, nil
 }
 
 // simulatedDestroyer is a placeholder that logs intent without calling AWS.

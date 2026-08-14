@@ -88,8 +88,16 @@ func (p *Provider) prepareApply(
 	cfg.PromptNames = extractPromptNames(pack)
 	cfg.RuntimeEnvVars = buildRuntimeEnvVars(cfg)
 	cfg.ResourceTags = buildResourceTags(pack.ID, pack.Version, "", cfg.Tags)
+	cfg.EvalDefs = buildEvalDefs(pack)
 	injectMetricsConfig(cfg, pack)
 	injectDashboardConfig(cfg, pack)
+
+	// Pre-flight eval models before anything is uploaded or created: an
+	// unavailable model otherwise fails at evaluator creation, several phases
+	// and minutes later, with resources already live to tear down.
+	if errs := preflightEvalModels(ctx, client, cfg); len(errs) > 0 {
+		return nil, fmt.Errorf("agentcore: eval model not available: %s", strings.Join(errs, "; "))
+	}
 
 	if err := uploadCodePackage(ctx, client, cfg, req.PackJSON); err != nil {
 		return nil, fmt.Errorf("agentcore: %w", err)

@@ -11,6 +11,7 @@ import (
 	"github.com/AltairaLabs/PromptKit/runtime/evals"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awscfg "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/bedrock"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockagentcorecontrol"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockagentcorecontrol/types"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs"
@@ -36,10 +37,11 @@ const adoptedPlaceholder = "adopted"
 // realAWSClient implements awsClient, resourceDestroyer, and resourceChecker
 // using the real AWS Bedrock AgentCore control-plane SDK.
 type realAWSClient struct {
-	client     *bedrockagentcorecontrol.Client
-	logsClient *cloudwatchlogs.Client
-	s3Client   *s3.Client
-	cfg        *Config
+	client        *bedrockagentcorecontrol.Client
+	logsClient    *cloudwatchlogs.Client
+	s3Client      *s3.Client
+	bedrockClient *bedrock.Client
+	cfg           *Config
 
 	// gatewayID caches the gateway identifier so that CreateGatewayTool can
 	// lazily create the parent gateway on the first tool and reuse it for
@@ -78,10 +80,28 @@ func newRealAWSClient(ctx context.Context, cfg *Config) (*realAWSClient, error) 
 	client := bedrockagentcorecontrol.NewFromConfig(awsCfg)
 	logsClient := cloudwatchlogs.NewFromConfig(awsCfg)
 	s3Client := s3.NewFromConfig(awsCfg)
+	bedrockClient := bedrock.NewFromConfig(awsCfg)
 	return &realAWSClient{
 		client: client, logsClient: logsClient,
-		s3Client: s3Client, cfg: cfg,
+		s3Client: s3Client, bedrockClient: bedrockClient, cfg: cfg,
 	}, nil
+}
+
+// ListAvailableModels returns the Bedrock foundation model IDs offered in the
+// configured region. Used to pre-flight evaluator models before Apply creates
+// anything; callers treat an error as "unknown", not "unavailable".
+func (c *realAWSClient) ListAvailableModels(ctx context.Context) (map[string]bool, error) {
+	out, err := c.bedrockClient.ListFoundationModels(ctx, &bedrock.ListFoundationModelsInput{})
+	if err != nil {
+		return nil, fmt.Errorf("ListFoundationModels: %w", err)
+	}
+	models := make(map[string]bool, len(out.ModelSummaries))
+	for i := range out.ModelSummaries {
+		if id := out.ModelSummaries[i].ModelId; id != nil {
+			models[*id] = true
+		}
+	}
+	return models, nil
 }
 
 // newRealAWSClientFactory is the awsClientFactory used by NewProvider.

@@ -43,7 +43,7 @@ This page documents every field, its type, constraints, and validation behavior.
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
 | `region` | string | Yes | -- | AWS region for the AgentCore deployment. Must match `^[a-z]{2}-[a-z]+-\d+$` (e.g. `us-west-2`). |
-| `runtime_role_arn` | string | Yes | -- | IAM role ARN assumed by the AgentCore runtime. Must match `^arn:aws:iam::\d{12}:role/.+$`. The role needs `AmazonBedrockFullAccess` and `CloudWatchLogsReadOnlyAccess` (required when the pack includes evals). |
+| `runtime_role_arn` | string | Yes | -- | IAM role ARN assumed by the AgentCore runtime. Must match `^arn:aws:iam::\d{12}:role/.+$`. The role needs `AmazonBedrockFullAccess` and `CloudWatchLogsReadOnlyAccess` (required when the pack includes evals). `bedrock:ListFoundationModels` is optional but lets Apply pre-flight evaluator models before creating anything. |
 | `memory_store` | string | No | -- | Memory store type. Allowed values: `"session"`, `"persistent"`, or compound/object forms. See [memory_store config](/how-to/configure#memory_store). |
 | `dry_run` | boolean | No | `false` | When `true`, Apply simulates resource creation without calling AWS APIs. Resources are emitted with status `"planned"`. |
 | `tags` | map[string]string | No | -- | User-defined tags applied to all created AWS resources. Maximum 50 tags. Keys max 128 characters, values max 256 characters. |
