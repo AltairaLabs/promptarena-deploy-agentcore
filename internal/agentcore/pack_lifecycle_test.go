@@ -225,9 +225,15 @@ func extractAdapterState(t *testing.T, resp jsonRPCResponse) string {
 }
 
 // collectApplyEvents runs Apply and collects all emitted events.
+//
+// It returns the Apply error rather than calling t.Fatalf so the caller can
+// register teardown for whatever was already created. Apply creates resources
+// in phases and can fail partway with earlier phases live; a t.Fatalf here
+// aborts the test goroutine immediately, so a t.Cleanup registered on the
+// caller's next line never runs and those resources leak.
 func collectApplyEvents(
 	t *testing.T, ctx context.Context, provider *Provider, req *deploy.PlanRequest,
-) ([]deploy.ApplyEvent, string) {
+) ([]deploy.ApplyEvent, string, error) {
 	t.Helper()
 	var events []deploy.ApplyEvent
 	callback := func(ev *deploy.ApplyEvent) error {
@@ -236,10 +242,7 @@ func collectApplyEvents(
 		return nil
 	}
 	state, err := provider.Apply(ctx, req, callback)
-	if err != nil {
-		t.Fatalf("Apply returned error: %v", err)
-	}
-	return events, state
+	return events, state, err
 }
 
 // destroyAndLog calls Destroy, logging events as they arrive.
@@ -310,13 +313,19 @@ func TestIntegration_Messaround_FullLifecycle(t *testing.T) {
 
 	// --- Apply ---
 	t.Log("=== Phase: Apply ===")
-	events, stateStr := collectApplyEvents(t, ctx, provider, req)
+	events, stateStr, applyErr := collectApplyEvents(t, ctx, provider, req)
 
-	// Register cleanup ASAP so resources are destroyed even if later assertions fail.
-	t.Cleanup(func() {
-		t.Log("=== Cleanup: Destroy ===")
-		destroyAndLog(t, provider, deployConfig, stateStr)
-	})
+	// Register cleanup before reacting to applyErr. A partial Apply leaves
+	// earlier phases live, and those must be torn down too.
+	if stateStr != "" {
+		t.Cleanup(func() {
+			t.Log("=== Cleanup: Destroy ===")
+			destroyAndLog(t, provider, deployConfig, stateStr)
+		})
+	}
+	if applyErr != nil {
+		t.Fatalf("Apply returned error: %v", applyErr)
+	}
 
 	state := unmarshalAdapterState(t, stateStr)
 	t.Logf("Apply state: pack_id=%s, %d resources", state.PackID, len(state.Resources))
@@ -433,17 +442,31 @@ func TestIntegration_Messaround_Redeploy(t *testing.T) {
 
 	// First apply.
 	t.Log("=== First Apply ===")
-	_, stateStr := collectApplyEvents(t, ctx, provider, req)
+	_, stateStr, applyErr := collectApplyEvents(t, ctx, provider, req)
 
-	t.Cleanup(func() {
-		t.Log("=== Cleanup: Destroy ===")
-		destroyAndLog(t, provider, deployConfig, stateStr)
-	})
+	// The closure reads teardownState when cleanup runs, so pointing it at the
+	// newer state after the redeploy also tears down anything that apply added.
+	teardownState := stateStr
+	if stateStr != "" {
+		t.Cleanup(func() {
+			t.Log("=== Cleanup: Destroy ===")
+			destroyAndLog(t, provider, deployConfig, teardownState)
+		})
+	}
+	if applyErr != nil {
+		t.Fatalf("first Apply returned error: %v", applyErr)
+	}
 
 	// Second apply with prior state (should trigger updates, not creates).
 	t.Log("=== Second Apply (redeploy) ===")
 	req.PriorState = stateStr
-	events, stateStr2 := collectApplyEvents(t, ctx, provider, req)
+	events, stateStr2, applyErr2 := collectApplyEvents(t, ctx, provider, req)
+	if stateStr2 != "" {
+		teardownState = stateStr2
+	}
+	if applyErr2 != nil {
+		t.Fatalf("redeploy Apply returned error: %v", applyErr2)
+	}
 
 	state2 := unmarshalAdapterState(t, stateStr2)
 	t.Logf("Redeploy state: %d resources", len(state2.Resources))
@@ -599,12 +622,17 @@ func TestIntegration_MultiAgent_FullLifecycle(t *testing.T) {
 
 	// --- Apply ---
 	t.Log("=== Phase: Apply ===")
-	events, stateStr := collectApplyEvents(t, ctx, provider, req)
+	events, stateStr, applyErr := collectApplyEvents(t, ctx, provider, req)
 
-	t.Cleanup(func() {
-		t.Log("=== Cleanup: Destroy ===")
-		destroyAndLog(t, provider, deployConfig, stateStr)
-	})
+	if stateStr != "" {
+		t.Cleanup(func() {
+			t.Log("=== Cleanup: Destroy ===")
+			destroyAndLog(t, provider, deployConfig, stateStr)
+		})
+	}
+	if applyErr != nil {
+		t.Fatalf("Apply returned error: %v", applyErr)
+	}
 
 	state := unmarshalAdapterState(t, stateStr)
 	t.Logf("Apply state: pack_id=%s, %d resources", state.PackID, len(state.Resources))

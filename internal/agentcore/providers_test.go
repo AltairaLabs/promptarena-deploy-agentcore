@@ -1,9 +1,12 @@
 package agentcore
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/AltairaLabs/PromptKit/runtime/deploy"
 )
 
 // arenaWith builds an ArenaConfig with the given loaded providers.
@@ -268,6 +271,85 @@ func TestValidateProviderBindings(t *testing.T) {
 				t.Errorf("errors %q do not mention %q", joined, tt.wantErr)
 			}
 		})
+	}
+}
+
+// ValidateConfig receives only the deploy config — deploy.ValidateRequest has
+// no arena config field — so an arena_provider reference cannot be resolved
+// there. Rejecting it outright would make every binding that names an arena
+// provider fail standalone validation.
+func TestValidateProviderBindings_ArenaRefSkippedWhenNoArenaConfig(t *testing.T) {
+	cfg := &Config{
+		Providers: []ProviderBinding{{Name: "default", ArenaProvider: "sonnet"}},
+	}
+	if errs := validateProviderBindings(cfg); len(errs) != 0 {
+		t.Errorf("arena_provider must not be rejected when there is no arena config to check against, got %v", errs)
+	}
+}
+
+// The reference is still checked when an arena config IS present, so a typo
+// is caught at plan time rather than deploying the wrong model.
+func TestValidateProviderBindings_ArenaRefStillCheckedWhenArenaConfigPresent(t *testing.T) {
+	cfg := &Config{
+		ArenaConfig: arenaWith(map[string]*ArenaProvider{"sonnet": {Type: "claude", Model: "m"}}),
+		Providers:   []ProviderBinding{{Name: "default", ArenaProvider: "typo"}},
+	}
+	errs := validateProviderBindings(cfg)
+	if len(errs) == 0 || !strings.Contains(strings.Join(errs, ";"), "not found") {
+		t.Errorf("expected an unknown arena_provider to be rejected, got %v", errs)
+	}
+}
+
+// Plan must parse the arena config before validating, or an arena_provider
+// binding is checked against a nil arena config and always fails. This is the
+// real end-to-end path and is not covered by tests that build Config directly.
+func TestPlan_ArenaProviderBindingResolves(t *testing.T) {
+	provider := NewProvider()
+
+	deployCfg := `{
+		"region":"us-west-2",
+		"runtime_role_arn":"arn:aws:iam::123456789012:role/test",
+		"runtime_binary_path":"/usr/local/bin/promptkit-runtime",
+		"providers":[{"name":"default","role":"llm","arena_provider":"sonnet"}]
+	}`
+	arenaCfg := `{"tool_specs":{},"loaded_providers":{"sonnet":{"type":"claude","model":"claude-sonnet-4"}}}`
+
+	resp, err := provider.Plan(context.Background(), &deploy.PlanRequest{
+		PackJSON:     singleAgentPackJSON(),
+		DeployConfig: deployCfg,
+		ArenaConfig:  arenaCfg,
+	})
+	if err != nil {
+		t.Fatalf("Plan rejected a valid arena_provider binding: %v", err)
+	}
+	if len(resp.Changes) == 0 {
+		t.Error("expected planned changes")
+	}
+}
+
+// A genuinely wrong reference must still be rejected once the arena config is
+// known, so a typo does not silently deploy the wrong model.
+func TestPlan_UnknownArenaProviderRejected(t *testing.T) {
+	provider := NewProvider()
+
+	deployCfg := `{
+		"region":"us-west-2",
+		"runtime_role_arn":"arn:aws:iam::123456789012:role/test",
+		"runtime_binary_path":"/usr/local/bin/promptkit-runtime",
+		"providers":[{"name":"default","role":"llm","arena_provider":"nope"}]
+	}`
+	arenaCfg := `{"tool_specs":{},"loaded_providers":{"sonnet":{"type":"claude","model":"claude-sonnet-4"}}}`
+
+	_, err := provider.Plan(context.Background(), &deploy.PlanRequest{
+		PackJSON:     singleAgentPackJSON(),
+		DeployConfig: deployCfg,
+		ArenaConfig:  arenaCfg,
+	})
+	if err == nil {
+		t.Fatal("expected Plan to reject an unknown arena_provider, got nil")
+	}
+	if !strings.Contains(err.Error(), "not found") {
+		t.Errorf("error %q should say the arena_provider was not found", err)
 	}
 }
 
