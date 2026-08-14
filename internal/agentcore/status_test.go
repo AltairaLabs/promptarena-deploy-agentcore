@@ -195,6 +195,50 @@ func TestDestroy_AlreadyDeletedResources(t *testing.T) {
 	}
 }
 
+// A resource whose creation failed is recorded in state with Status "failed"
+// and no ARN. There is nothing in AWS to delete, and asking AWS to delete it
+// by bare name fails its ID format validation — so Destroy must skip it.
+func TestDestroy_SkipsResourcesThatFailedToCreate(t *testing.T) {
+	p := newSimulatedProvider()
+	state := &AdapterState{
+		Resources: []ResourceState{
+			{Type: ResTypeEvaluator, Name: "quality", Status: ResStatusFailed},
+			{Type: ResTypeAgentRuntime, Name: "real-rt", ARN: "arn:aws:bedrock-agentcore:us-west-2:1:runtime/real-rt-abc",
+				Status: ResStatusCreated},
+		},
+	}
+
+	var events []*deploy.DestroyEvent
+	cb := func(e *deploy.DestroyEvent) error {
+		events = append(events, e)
+		return nil
+	}
+
+	if err := p.Destroy(context.Background(), &deploy.DestroyRequest{
+		DeployConfig: validDestroyConfig(),
+		PriorState:   mustJSON(t, state),
+	}, cb); err != nil {
+		t.Fatalf("Destroy returned error: %v", err)
+	}
+
+	for _, e := range events {
+		if e.Resource != nil && e.Resource.Name == "quality" {
+			t.Errorf("Destroy must not act on a resource that failed to create, got %+v", e.Resource)
+		}
+	}
+
+	// The genuinely created resource must still be deleted.
+	var deletedReal bool
+	for _, e := range events {
+		if e.Resource != nil && e.Resource.Name == "real-rt" && e.Resource.Status == ResStatusDeleted {
+			deletedReal = true
+		}
+	}
+	if !deletedReal {
+		t.Error("Destroy should still delete resources that were created")
+	}
+}
+
 func TestDestroy_InvalidState(t *testing.T) {
 	p := newSimulatedProvider()
 
