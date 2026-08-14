@@ -73,6 +73,13 @@ func destroyResourceGroup(
 	resources []ResourceState, callback deploy.DestroyCallback,
 ) {
 	for _, res := range resources {
+		// A resource recorded as failed was never created, so there is
+		// nothing in AWS to delete. Asking anyway sends its bare name where
+		// an AWS-generated ID is expected, which fails ID-format validation
+		// and reports a confusing error for a resource that never existed.
+		if res.Status == ResStatusFailed {
+			continue
+		}
 		if err := destroyer.DeleteResource(ctx, res); err != nil {
 			deployErr := newDeployError("delete", res.Type, res.Name, err)
 			_ = callback(&deploy.DestroyEvent{
@@ -105,6 +112,11 @@ func destroyUnorderedResources(
 ) {
 	for _, res := range resources {
 		if isInDestroyOrder(res.Type) {
+			continue
+		}
+		// Same reasoning as destroyResourceGroup: a failed create left
+		// nothing behind to delete.
+		if res.Status == ResStatusFailed {
 			continue
 		}
 		err := destroyer.DeleteResource(ctx, res)
