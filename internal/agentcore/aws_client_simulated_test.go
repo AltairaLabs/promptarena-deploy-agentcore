@@ -98,12 +98,28 @@ func (s *simulatedDestroyer) DeleteResource(_ context.Context, res ResourceState
 	return nil
 }
 
-// simulatedChecker is a placeholder that assumes all existing resources are healthy.
-type simulatedChecker struct{}
+// simulatedChecker is a placeholder that assumes all existing resources are
+// healthy unless a per-resource status or error is configured.
+type simulatedChecker struct {
+	// statusByName overrides the reported status, keyed by resource name.
+	statusByName map[string]string
+	// errByName makes CheckResource fail for the named resource.
+	errByName map[string]error
+	// calls records every resource checked, so tests can assert the checker
+	// was (or was not) consulted.
+	calls []string
+}
 
 func (s *simulatedChecker) CheckResource(_ context.Context, res ResourceState) (string, error) {
 	log.Printf("agentcore: simulated health check %s %q (arn=%s)", res.Type, res.Name, res.ARN)
-	return "healthy", nil
+	s.calls = append(s.calls, res.Name)
+	if err, ok := s.errByName[res.Name]; ok {
+		return "", err
+	}
+	if status, ok := s.statusByName[res.Name]; ok {
+		return status, nil
+	}
+	return StatusHealthy, nil
 }
 
 // newSimulatedProvider creates an Provider wired with simulated
