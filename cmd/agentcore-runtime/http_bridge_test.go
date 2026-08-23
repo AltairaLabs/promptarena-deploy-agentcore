@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -358,23 +360,7 @@ func TestHandleInvocation_SessionHeader(t *testing.T) {
 	}))
 	defer a2aMock.Close()
 
-	// Extract port from mock server URL.
-	parts := strings.Split(a2aMock.URL, ":")
-	port := 0
-	for _, p := range parts {
-		if n := 0; len(p) > 0 {
-			_, _ = json.Number(p).Int64()
-			// Simple port extraction
-			for _, c := range p {
-				if c >= '0' && c <= '9' {
-					n = n*10 + int(c-'0')
-				}
-			}
-			if n > 0 {
-				port = n
-			}
-		}
-	}
+	port := mockServerPort(t, a2aMock.URL)
 
 	b := &httpBridge{
 		a2aPort: port,
@@ -432,4 +418,18 @@ func TestHandleInvocation_InvalidJSON(t *testing.T) {
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
 	}
+}
+
+// mockServerPort returns the port an httptest server is listening on.
+func mockServerPort(t *testing.T, rawURL string) int {
+	t.Helper()
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		t.Fatalf("parse mock URL %q: %v", rawURL, err)
+	}
+	port, err := strconv.Atoi(u.Port())
+	if err != nil {
+		t.Fatalf("parse port from %q: %v", rawURL, err)
+	}
+	return port
 }

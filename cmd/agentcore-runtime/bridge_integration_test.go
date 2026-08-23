@@ -980,38 +980,8 @@ func TestIntegration_WS_ConcurrentConnections(t *testing.T) {
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
-			wsURL := "ws" + strings.TrimPrefix(baseURL, "http") + "/ws"
-			conn, resp, err := websocket.DefaultDialer.Dial(wsURL, nil)
-			if err != nil {
-				errs <- fmt.Errorf("conn %d dial: %w", idx, err)
-				return
-			}
-			defer func() {
-				_ = conn.Close()
-				if resp != nil && resp.Body != nil {
-					_ = resp.Body.Close()
-				}
-			}()
-
-			prompt := fmt.Sprintf("conn-%d", idx)
-			if writeErr := conn.WriteJSON(wsRequest{Prompt: prompt}); writeErr != nil {
-				errs <- fmt.Errorf("conn %d write: %w", idx, writeErr)
-				return
-			}
-
-			_, data, readErr := conn.ReadMessage()
-			if readErr != nil {
-				errs <- fmt.Errorf("conn %d read: %w", idx, readErr)
-				return
-			}
-			var wsResp wsResponse
-			if unmarshalErr := json.Unmarshal(data, &wsResp); unmarshalErr != nil {
-				errs <- fmt.Errorf("conn %d unmarshal: %w", idx, unmarshalErr)
-				return
-			}
-			expected := "echo: " + prompt
-			if wsResp.Content != expected {
-				errs <- fmt.Errorf("conn %d: got %q, want %q", idx, wsResp.Content, expected)
+			if err := echoOverWS(baseURL, fmt.Sprintf("conn-%d", idx)); err != nil {
+				errs <- fmt.Errorf("conn %d: %w", idx, err)
 			}
 		}(i)
 	}
@@ -1061,86 +1031,19 @@ func TestIntegration_MixedEndpoints(t *testing.T) {
 	var wg sync.WaitGroup
 	errs := make(chan error, 3)
 
-	// Blocking invocation.
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		resp, err := http.Post(baseURL+invocationsPath, "application/json",
-			strings.NewReader(`{"prompt":"blocking"}`))
-		if err != nil {
-			errs <- fmt.Errorf("blocking: %w", err)
-			return
-		}
-		defer resp.Body.Close()
-		var inv invocationResponse
-		if decErr := json.NewDecoder(resp.Body).Decode(&inv); decErr != nil {
-			errs <- fmt.Errorf("blocking decode: %w", decErr)
-			return
-		}
-		if inv.Status != "success" {
-			errs <- fmt.Errorf("blocking: status=%q", inv.Status)
-		}
-	}()
-
-	// SSE streaming.
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		req, _ := http.NewRequest(http.MethodPost, baseURL+invocationsPath,
-			strings.NewReader(`{"prompt":"streaming"}`))
-		req.Header.Set("Accept", sseContentType)
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			errs <- fmt.Errorf("sse: %w", err)
-			return
-		}
-		defer resp.Body.Close()
-		events := readSSEEvents(t, resp.Body)
-		hasDone := false
-		for _, evt := range events {
-			if evt.Type == "done" {
-				hasDone = true
-			}
-		}
-		if !hasDone {
-			errs <- fmt.Errorf("sse: missing done event")
-		}
-	}()
-
-	// WebSocket.
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		wsURL := "ws" + strings.TrimPrefix(baseURL, "http") + "/ws"
-		conn, resp, err := websocket.DefaultDialer.Dial(wsURL, nil)
-		if err != nil {
-			errs <- fmt.Errorf("ws dial: %w", err)
-			return
-		}
-		defer func() {
-			_ = conn.Close()
-			if resp != nil && resp.Body != nil {
-				_ = resp.Body.Close()
+	for _, exercise := range []func() error{
+		func() error { return blockingInvocation(baseURL) },
+		func() error { return sseInvocation(t, baseURL) },
+		func() error { return wsInvocation(baseURL) },
+	} {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := exercise(); err != nil {
+				errs <- err
 			}
 		}()
-		if writeErr := conn.WriteJSON(wsRequest{Prompt: "websocket"}); writeErr != nil {
-			errs <- fmt.Errorf("ws write: %w", writeErr)
-			return
-		}
-		_, data, readErr := conn.ReadMessage()
-		if readErr != nil {
-			errs <- fmt.Errorf("ws read: %w", readErr)
-			return
-		}
-		var wsResp wsResponse
-		if unmarshalErr := json.Unmarshal(data, &wsResp); unmarshalErr != nil {
-			errs <- fmt.Errorf("ws unmarshal: %w", unmarshalErr)
-			return
-		}
-		if wsResp.Type != "text" {
-			errs <- fmt.Errorf("ws: Type=%q, want text", wsResp.Type)
-		}
-	}()
+	}
 
 	wg.Wait()
 	close(errs)
@@ -1309,4 +1212,104 @@ func TestIntegration_WS_A2ATaskFailed(t *testing.T) {
 	if resp.Content != "task failed" {
 		t.Errorf("Content = %q, want %q", resp.Content, "task failed")
 	}
+}
+
+// echoOverWS opens one websocket connection, sends prompt and checks the echo
+// that comes back.
+func echoOverWS(baseURL, prompt string) error {
+	wsURL := "ws" + strings.TrimPrefix(baseURL, "http") + "/ws"
+	conn, resp, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		return fmt.Errorf("dial: %w", err)
+	}
+	defer func() {
+		_ = conn.Close()
+		if resp != nil && resp.Body != nil {
+			_ = resp.Body.Close()
+		}
+	}()
+
+	if err := conn.WriteJSON(wsRequest{Prompt: prompt}); err != nil {
+		return fmt.Errorf("write: %w", err)
+	}
+	_, data, err := conn.ReadMessage()
+	if err != nil {
+		return fmt.Errorf("read: %w", err)
+	}
+	var wsResp wsResponse
+	if err := json.Unmarshal(data, &wsResp); err != nil {
+		return fmt.Errorf("unmarshal: %w", err)
+	}
+	if expected := "echo: " + prompt; wsResp.Content != expected {
+		return fmt.Errorf("got %q, want %q", wsResp.Content, expected)
+	}
+	return nil
+}
+
+// blockingInvocation exercises the plain POST /invocations path.
+func blockingInvocation(baseURL string) error {
+	resp, err := http.Post(baseURL+invocationsPath, "application/json",
+		strings.NewReader(`{"prompt":"blocking"}`))
+	if err != nil {
+		return fmt.Errorf("blocking: %w", err)
+	}
+	defer resp.Body.Close()
+	var inv invocationResponse
+	if err := json.NewDecoder(resp.Body).Decode(&inv); err != nil {
+		return fmt.Errorf("blocking decode: %w", err)
+	}
+	if inv.Status != "success" {
+		return fmt.Errorf("blocking: status=%q", inv.Status)
+	}
+	return nil
+}
+
+// sseInvocation exercises the same endpoint with an SSE Accept header and
+// checks the stream terminates with a done event.
+func sseInvocation(t *testing.T, baseURL string) error {
+	t.Helper()
+	req, _ := http.NewRequest(http.MethodPost, baseURL+invocationsPath,
+		strings.NewReader(`{"prompt":"streaming"}`))
+	req.Header.Set("Accept", sseContentType)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("sse: %w", err)
+	}
+	defer resp.Body.Close()
+	for _, evt := range readSSEEvents(t, resp.Body) {
+		if evt.Type == "done" {
+			return nil
+		}
+	}
+	return fmt.Errorf("sse: missing done event")
+}
+
+// wsInvocation exercises the websocket endpoint.
+func wsInvocation(baseURL string) error {
+	wsURL := "ws" + strings.TrimPrefix(baseURL, "http") + "/ws"
+	conn, resp, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		return fmt.Errorf("ws dial: %w", err)
+	}
+	defer func() {
+		_ = conn.Close()
+		if resp != nil && resp.Body != nil {
+			_ = resp.Body.Close()
+		}
+	}()
+	if err := conn.WriteJSON(wsRequest{Prompt: "websocket"}); err != nil {
+		return fmt.Errorf("ws write: %w", err)
+	}
+	_, data, err := conn.ReadMessage()
+	if err != nil {
+		return fmt.Errorf("ws read: %w", err)
+	}
+	var wsResp wsResponse
+	if err := json.Unmarshal(data, &wsResp); err != nil {
+		return fmt.Errorf("ws unmarshal: %w", err)
+	}
+	if wsResp.Type != "text" {
+		return fmt.Errorf("ws: Type=%q, want text", wsResp.Type)
+	}
+	return nil
 }

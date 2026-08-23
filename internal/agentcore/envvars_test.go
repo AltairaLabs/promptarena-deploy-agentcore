@@ -202,26 +202,7 @@ func TestBuildA2AEndpointMap(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := buildA2AEndpointMap(tt.resources)
-			if tt.wantMap == nil {
-				if got != "" {
-					t.Errorf("expected empty string, got %q", got)
-				}
-				return
-			}
-
-			var gotMap map[string]string
-			if err := json.Unmarshal([]byte(got), &gotMap); err != nil {
-				t.Fatalf("failed to parse JSON: %v (raw=%q)", err, got)
-			}
-			if len(gotMap) != len(tt.wantMap) {
-				t.Fatalf("got %d entries, want %d", len(gotMap), len(tt.wantMap))
-			}
-			for k, wantV := range tt.wantMap {
-				if gotMap[k] != wantV {
-					t.Errorf("key %q = %q, want %q", k, gotMap[k], wantV)
-				}
-			}
+			assertJSONStringMap(t, buildA2AEndpointMap(tt.resources), tt.wantMap)
 		})
 	}
 }
@@ -319,15 +300,7 @@ func TestInjectDashboardConfig(t *testing.T) {
 
 		injectDashboardConfig(cfg, pack)
 
-		raw, ok := cfg.RuntimeEnvVars[EnvDashboardConfig]
-		if !ok {
-			t.Fatal("expected PROMPTPACK_DASHBOARD_CONFIG to be set")
-		}
-
-		var dc DashboardConfig
-		if err := json.Unmarshal([]byte(raw), &dc); err != nil {
-			t.Fatalf("failed to parse dashboard config JSON: %v", err)
-		}
+		dc := decodeDashboardEnv(t, cfg)
 		if len(dc.Widgets) != 2 {
 			t.Fatalf("got %d widgets, want 2 (1 agent + 1 eval)", len(dc.Widgets))
 		}
@@ -350,15 +323,7 @@ func TestInjectDashboardConfig(t *testing.T) {
 
 		injectDashboardConfig(cfg, pack)
 
-		raw, ok := cfg.RuntimeEnvVars[EnvDashboardConfig]
-		if !ok {
-			t.Fatal("expected PROMPTPACK_DASHBOARD_CONFIG to be set")
-		}
-
-		var dc DashboardConfig
-		if err := json.Unmarshal([]byte(raw), &dc); err != nil {
-			t.Fatalf("failed to parse dashboard config JSON: %v", err)
-		}
+		dc := decodeDashboardEnv(t, cfg)
 		if len(dc.Widgets) != 1 {
 			t.Fatalf("got %d widgets, want 1 (agent widget)", len(dc.Widgets))
 		}
@@ -373,14 +338,7 @@ func TestInjectDashboardConfig(t *testing.T) {
 
 		injectDashboardConfig(cfg, pack)
 
-		raw, ok := cfg.RuntimeEnvVars[EnvDashboardConfig]
-		if !ok {
-			t.Fatal("expected PROMPTPACK_DASHBOARD_CONFIG to be set")
-		}
-		var dc DashboardConfig
-		if err := json.Unmarshal([]byte(raw), &dc); err != nil {
-			t.Fatalf("failed to parse dashboard config JSON: %v", err)
-		}
+		dc := decodeDashboardEnv(t, cfg)
 		if len(dc.Widgets) != 1 {
 			t.Fatalf("got %d widgets, want 1", len(dc.Widgets))
 		}
@@ -408,15 +366,7 @@ func TestInjectDashboardConfig(t *testing.T) {
 
 		injectDashboardConfig(cfg, pack)
 
-		raw, ok := cfg.RuntimeEnvVars[EnvDashboardConfig]
-		if !ok {
-			t.Fatal("expected PROMPTPACK_DASHBOARD_CONFIG to be set")
-		}
-
-		var dc DashboardConfig
-		if err := json.Unmarshal([]byte(raw), &dc); err != nil {
-			t.Fatalf("failed to parse dashboard config JSON: %v", err)
-		}
+		dc := decodeDashboardEnv(t, cfg)
 		// 2 agent widgets + 1 A2A latency widget.
 		if len(dc.Widgets) != 3 {
 			t.Fatalf("got %d widgets, want 3", len(dc.Widgets))
@@ -475,4 +425,43 @@ func TestRuntimeEnvVarsForAgent(t *testing.T) {
 			t.Errorf("agent B: PROMPTPACK_AGENT = %q, want %q", envB[EnvAgentName], "worker")
 		}
 	})
+}
+
+// assertJSONStringMap checks a JSON-encoded map against want. A nil want means
+// the encoder should have produced nothing at all.
+func assertJSONStringMap(t *testing.T, got string, want map[string]string) {
+	t.Helper()
+	if want == nil {
+		if got != "" {
+			t.Errorf("expected empty string, got %q", got)
+		}
+		return
+	}
+	var gotMap map[string]string
+	if err := json.Unmarshal([]byte(got), &gotMap); err != nil {
+		t.Fatalf("failed to parse JSON: %v (raw=%q)", err, got)
+	}
+	if len(gotMap) != len(want) {
+		t.Fatalf("got %d entries, want %d", len(gotMap), len(want))
+	}
+	for k, wantV := range want {
+		if gotMap[k] != wantV {
+			t.Errorf("key %q = %q, want %q", k, gotMap[k], wantV)
+		}
+	}
+}
+
+// decodeDashboardEnv reads the dashboard config the injector wrote onto the
+// runtime env and parses it.
+func decodeDashboardEnv(t *testing.T, cfg *Config) DashboardConfig {
+	t.Helper()
+	raw, ok := cfg.RuntimeEnvVars[EnvDashboardConfig]
+	if !ok {
+		t.Fatal("expected PROMPTPACK_DASHBOARD_CONFIG to be set")
+	}
+	var dc DashboardConfig
+	if err := json.Unmarshal([]byte(raw), &dc); err != nil {
+		t.Fatalf("failed to parse dashboard config JSON: %v", err)
+	}
+	return dc
 }
