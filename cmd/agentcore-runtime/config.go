@@ -27,12 +27,15 @@ const (
 	envDashboardConfig = "PROMPTPACK_DASHBOARD_CONFIG"
 	envLogGroup        = "PROMPTPACK_LOG_GROUP"
 	envOTLPEndpoint    = "OTEL_EXPORTER_OTLP_ENDPOINT"
-	envTracingEnabled  = "OTEL_TRACING_ENABLED"
-	envAgentEndpoints  = "PROMPTPACK_AGENTS"
-	envProviderType    = "PROMPTPACK_PROVIDER_TYPE"
-	envProviderModel   = "PROMPTPACK_PROVIDER_MODEL"
-	envProviders       = "PROMPTPACK_PROVIDERS"
-	envProtocol        = "PROMPTPACK_PROTOCOL"
+	// envTracingEnabled must match the name the adapter injects
+	// (agentcore.EnvTracingEnabled). TestTracingEnvNamesMatchTheAdapter pins
+	// the two together; they silently disagreed once already.
+	envTracingEnabled = "PROMPTPACK_TRACING_ENABLED"
+	envAgentEndpoints = "PROMPTPACK_AGENTS"
+	envProviderType   = "PROMPTPACK_PROVIDER_TYPE"
+	envProviderModel  = "PROMPTPACK_PROVIDER_MODEL"
+	envProviders      = "PROMPTPACK_PROVIDERS"
+	envProtocol       = "PROMPTPACK_PROTOCOL"
 )
 
 const defaultPort = 9000

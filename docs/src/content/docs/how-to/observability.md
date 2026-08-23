@@ -39,7 +39,24 @@ observability:
   tracing_enabled: true
 ```
 
-When enabled, the adapter sets the `PROMPTPACK_TRACING_ENABLED` environment variable to `"true"` on the runtime. The agent runtime SDK uses this to enable X-Ray trace propagation, which provides end-to-end visibility into request flows across agent invocations, tool calls, and A2A communication.
+When enabled, the adapter sets `PROMPTPACK_TRACING_ENABLED` to `"true"` on the runtime, and the runtime installs the trace propagator. That gives end-to-end visibility across agent invocations, tool calls and A2A communication, because the trace context travels with each request.
+
+### Exporting spans to your own collector
+
+Propagation alone does not send spans anywhere. To export them over OTLP, also set an endpoint:
+
+```yaml
+observability:
+  cloudwatch_log_group: /aws/agentcore/my-agent
+  tracing_enabled: true
+  otlp_endpoint: http://collector.example.com:4318
+```
+
+The adapter injects this as the standard `OTEL_EXPORTER_OTLP_ENDPOINT`, and the runtime registers an exporter against it.
+
+The endpoint must be a full URL including the scheme. A bare `host:port` is rejected at deploy time rather than at runtime, because the exporter would build the target `http:///v1/traces` — with no host — and silently fail every export while the deployment looked healthy.
+
+Without `otlp_endpoint`, tracing is still on: the propagator goes in and the runtime logs that spans are not being exported.
 
 ### Required IAM permissions for tracing
 
@@ -160,7 +177,8 @@ With a pack that defines two agents and an eval with a metric, this configuratio
 | Variable | Set when | Description |
 |----------|----------|-------------|
 | `PROMPTPACK_LOG_GROUP` | `cloudwatch_log_group` is set | CloudWatch Logs group name for agent logs. |
-| `PROMPTPACK_TRACING_ENABLED` | `tracing_enabled` is `true` | Enables X-Ray trace propagation in the runtime. |
+| `PROMPTPACK_TRACING_ENABLED` | `tracing_enabled` is `true` | Turns on trace propagation in the runtime. |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | `otlp_endpoint` is set | OTLP endpoint the runtime exports spans to. Standard OpenTelemetry variable, not a `PROMPTPACK_` one. |
 | `PROMPTPACK_METRICS_CONFIG` | Pack evals define metrics | JSON-encoded metrics config (namespace, dimensions, metric entries, alarms). |
 | `PROMPTPACK_DASHBOARD_CONFIG` | Pack has agents or eval metrics | JSON-encoded CloudWatch dashboard body (widgets with layout). |
 
@@ -172,4 +190,6 @@ With a pack that defines two agents and an eval with a metric, this configuratio
 
 **Log group not found errors at runtime** -- The adapter injects the log group name but does not create the CloudWatch Logs group. Create it manually or via your infrastructure-as-code tool before deploying.
 
-**X-Ray traces not appearing** -- Confirm that `tracing_enabled: true` is set in the `observability` block and that the runtime role has the required X-Ray permissions. Also verify that the X-Ray service is available in your target region.
+**Traces not appearing** -- Check the runtime logs first; they say which part is active. `tracing disabled` means `tracing_enabled` never reached the runtime. `trace propagation enabled; no OTLP endpoint set` means propagation is on but nothing is being exported — set `otlp_endpoint` if you want spans in your own collector. `tracing enabled` with an endpoint means spans are being exported, so look at the collector next.
+
+For X-Ray specifically, also confirm the runtime role has the required X-Ray permissions and that X-Ray is available in your target region.

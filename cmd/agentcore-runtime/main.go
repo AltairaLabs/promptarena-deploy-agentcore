@@ -61,14 +61,14 @@ func run(log *slog.Logger) error {
 		"provider_type", cfg.ProviderType, "model", cfg.Model,
 		"aws_region", cfg.AWSRegion, "agent_name_env", cfg.AgentName)
 
-	shutdownTracing := setupTracing(cfg, log)
+	shutdownTracing, traceOpts := setupTracing(cfg, log)
 	defer func() {
 		ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 		defer cancel()
 		_ = shutdownTracing(ctx)
 	}()
 
-	sdkOpts := buildSDKOptions(cfg)
+	sdkOpts := append(buildSDKOptions(cfg), traceOpts...)
 	opener := sdk.A2AOpener(cfg.PackFile, agentName, sdkOpts...)
 
 	card := buildAgentCard(pack, agentName)

@@ -282,6 +282,10 @@ type ToolsConfig struct {
 type ObservabilityConfig struct {
 	CloudWatchLogGroup string `json:"cloudwatch_log_group,omitempty"`
 	TracingEnabled     bool   `json:"tracing_enabled,omitempty"`
+	// OTLPEndpoint is optional. Tracing without it still installs the X-Ray
+	// propagator, which is what AgentCore itself collects; the endpoint only
+	// adds OTLP export to a collector you run.
+	OTLPEndpoint string `json:"otlp_endpoint,omitempty"`
 }
 
 var (
@@ -325,6 +329,7 @@ func (c *Config) validate() []string {
 			c.Protocol, ProtocolHTTP, ProtocolA2A, ProtocolBoth))
 	}
 
+	errs = append(errs, validateObservability(c.Observability)...)
 	errs = append(errs, validateMemory(&c.Memory)...)
 	errs = append(errs, validateA2AAuth(c.A2AAuth)...)
 	errs = append(errs, validateTags(c.Tags)...)
@@ -367,6 +372,29 @@ func validateTags(tags map[string]string) []string {
 }
 
 // validateMemory checks the memory configuration for errors.
+// validateObservability checks the OTLP endpoint if one is given.
+//
+// Unlike the vertex adapter, an endpoint is NOT required when tracing is
+// enabled: on AgentCore, tracing_enabled also turns on X-Ray propagation,
+// which is useful on its own. The endpoint is only needed to additionally
+// export spans over OTLP.
+func validateObservability(o *ObservabilityConfig) []string {
+	if o == nil || o.OTLPEndpoint == "" {
+		return nil
+	}
+	// The exporter builds its target with otlptracehttp.WithEndpointURL, which
+	// needs a full URL. A host:port value yields "http:///v1/traces" — no host —
+	// and every export fails at runtime while the deployment looks healthy.
+	if !strings.HasPrefix(o.OTLPEndpoint, "http://") &&
+		!strings.HasPrefix(o.OTLPEndpoint, "https://") {
+		return []string{fmt.Sprintf(
+			"observability.otlp_endpoint %q must be a full URL including scheme "+
+				"(for example http://collector:4318), not host:port",
+			o.OTLPEndpoint)}
+	}
+	return nil
+}
+
 func validateMemory(m *MemoryConfig) []string {
 	if len(m.Strategies) == 0 {
 		return nil
