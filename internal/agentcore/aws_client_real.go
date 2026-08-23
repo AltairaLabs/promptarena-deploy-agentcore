@@ -1465,6 +1465,9 @@ func (c *realAWSClient) checkMemory(ctx context.Context, res ResourceState) (str
 		}
 		return StatusUnhealthy, fmt.Errorf("GetMemory %q: %w", res.Name, err)
 	}
+	if out.Memory != nil && out.Memory.Status == types.MemoryStatusDeleting {
+		return StatusMissing, nil
+	}
 	if out.Memory != nil && out.Memory.Status == types.MemoryStatusActive {
 		return StatusHealthy, nil
 	}
@@ -1484,6 +1487,13 @@ func (c *realAWSClient) checkRuntime(ctx context.Context, res ResourceState) (st
 			return StatusMissing, nil
 		}
 		return StatusUnhealthy, fmt.Errorf("GetAgentRuntime %q: %w", res.Name, err)
+	}
+	// A deleting resource still answers Get for a while after Destroy returns.
+	// Reporting it as present makes Plan offer an UPDATE that Apply cannot
+	// perform against a resource on its way out, so it counts as absent: the
+	// honest plan is to create it again.
+	if out.Status == types.AgentRuntimeStatusDeleting {
+		return StatusMissing, nil
 	}
 	if out.Status == types.AgentRuntimeStatusReady {
 		return StatusHealthy, nil
