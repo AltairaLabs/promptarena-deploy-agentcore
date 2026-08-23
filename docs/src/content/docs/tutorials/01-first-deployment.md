@@ -87,6 +87,28 @@ aws iam attach-role-policy \
   --policy-arn arn:aws:iam::aws:policy/CloudWatchLogsReadOnlyAccess
 ```
 
+If your deployment enables **memory**, the runtime role needs to read and write conversation events. Without this the agent still deploys and reports ready, and then every turn fails with an `AccessDeniedException` that only appears in CloudWatch:
+
+```bash
+aws iam put-role-policy \
+  --role-name AgentCoreRuntime \
+  --policy-name AgentCoreMemoryAccess \
+  --policy-document '{
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "AgentCoreMemoryEvents",
+        "Effect": "Allow",
+        "Action": [
+          "bedrock-agentcore:CreateEvent",
+          "bedrock-agentcore:ListEvents"
+        ],
+        "Resource": "arn:aws:bedrock-agentcore:*:YOUR_ACCOUNT_ID:memory/*"
+      }
+    ]
+  }'
+```
+
 If your pack uses **Cedar policies** (tool blocklist), the gateway role also needs permission to read the policy engine. Add an inline policy:
 
 ```bash
