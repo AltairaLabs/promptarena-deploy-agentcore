@@ -10,8 +10,14 @@ import (
 
 // Environment variable keys injected into AgentCore runtimes.
 const (
-	EnvLogGroup        = "PROMPTPACK_LOG_GROUP"
-	EnvTracingEnabled  = "PROMPTPACK_TRACING_ENABLED"
+	EnvLogGroup       = "PROMPTPACK_LOG_GROUP"
+	EnvTracingEnabled = "PROMPTPACK_TRACING_ENABLED"
+
+	// EnvOTLPEndpoint is the standard OpenTelemetry variable, not a
+	// PROMPTPACK_ one, because the exporter in the runtime reads it by that
+	// name.
+	EnvOTLPEndpoint = "OTEL_EXPORTER_OTLP_ENDPOINT"
+
 	EnvMemoryStore     = "PROMPTPACK_MEMORY_STORE"
 	EnvMemoryID        = "PROMPTPACK_MEMORY_ID"
 	EnvA2AAgents       = "PROMPTPACK_AGENTS"
@@ -44,6 +50,9 @@ func buildRuntimeEnvVars(cfg *Config) map[string]string {
 		}
 		if cfg.Observability.TracingEnabled {
 			env[EnvTracingEnabled] = strconv.FormatBool(cfg.Observability.TracingEnabled)
+		}
+		if cfg.Observability.OTLPEndpoint != "" {
+			env[EnvOTLPEndpoint] = cfg.Observability.OTLPEndpoint
 		}
 	}
 

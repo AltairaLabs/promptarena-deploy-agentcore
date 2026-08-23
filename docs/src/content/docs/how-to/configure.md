@@ -146,12 +146,14 @@ Observability settings for logging and tracing. See [Set Up Observability](../ob
 | Field | Type | Description |
 |-------|------|-------------|
 | `cloudwatch_log_group` | `string` | CloudWatch Logs group name for agent runtime logs. Injected as `PROMPTPACK_LOG_GROUP`. |
-| `tracing_enabled` | `bool` | Enable AWS X-Ray tracing. Injected as `PROMPTPACK_TRACING_ENABLED`. |
+| `tracing_enabled` | `bool` | Turn on trace propagation in the runtime. Injected as `PROMPTPACK_TRACING_ENABLED`. |
+| `otlp_endpoint` | `string` | Optional. Full URL of an OTLP collector to export spans to, for example `http://collector:4318`. Injected as `OTEL_EXPORTER_OTLP_ENDPOINT`. Without it, propagation is still enabled but no spans are exported. |
 
 ```yaml
 observability:
   cloudwatch_log_group: /aws/agentcore/my-agent
   tracing_enabled: true
+  otlp_endpoint: http://collector.example.com:4318
 ```
 
 ### `protocol`

@@ -465,3 +465,36 @@ func decodeDashboardEnv(t *testing.T, cfg *Config) DashboardConfig {
 	}
 	return dc
 }
+
+// The adapter never set the OTLP endpoint variable at all, so the runtime's
+// exporter had no target and export could not happen however it was configured.
+func TestBuildRuntimeEnvVars_InjectsOTLPEndpoint(t *testing.T) {
+	cfg := &Config{Observability: &ObservabilityConfig{
+		TracingEnabled: true,
+		OTLPEndpoint:   "http://collector:4318",
+	}}
+
+	env := buildRuntimeEnvVars(cfg)
+
+	if got := env[EnvOTLPEndpoint]; got != "http://collector:4318" {
+		t.Errorf("%s = %q, want the configured endpoint", EnvOTLPEndpoint, got)
+	}
+	if got := env[EnvTracingEnabled]; got != "true" {
+		t.Errorf("%s = %q, want true", EnvTracingEnabled, got)
+	}
+}
+
+// Tracing without an endpoint is a supported configuration on AgentCore: the
+// propagator still goes in, the platform collects X-Ray traces itself.
+func TestBuildRuntimeEnvVars_TracingWithoutEndpoint(t *testing.T) {
+	cfg := &Config{Observability: &ObservabilityConfig{TracingEnabled: true}}
+
+	env := buildRuntimeEnvVars(cfg)
+
+	if got := env[EnvTracingEnabled]; got != "true" {
+		t.Errorf("%s = %q, want true", EnvTracingEnabled, got)
+	}
+	if _, present := env[EnvOTLPEndpoint]; present {
+		t.Errorf("%s should be absent when no endpoint is configured", EnvOTLPEndpoint)
+	}
+}

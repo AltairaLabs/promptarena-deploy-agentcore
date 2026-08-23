@@ -818,14 +818,19 @@ func TestValidate_Protocol(t *testing.T) {
 	})
 }
 
-// hasProtocolError reports whether validation complained about the protocol.
-func hasProtocolError(errs []string) bool {
+// hasErrorContaining reports whether any validation error mentions want.
+func hasErrorContaining(errs []string, want string) bool {
 	for _, e := range errs {
-		if contains(e, "protocol") {
+		if contains(e, want) {
 			return true
 		}
 	}
 	return false
+}
+
+// hasProtocolError reports whether validation complained about the protocol.
+func hasProtocolError(errs []string) bool {
+	return hasErrorContaining(errs, "protocol")
 }
 
 func TestResolveServerProtocol(t *testing.T) {
@@ -876,4 +881,39 @@ func searchString(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+func TestValidateObservability(t *testing.T) {
+	tests := []struct {
+		name      string
+		obs       *ObservabilityConfig
+		wantError string // substring; "" = expect no error
+	}{
+		{"nil block is valid", nil, ""},
+		{"tracing without an endpoint is valid",
+			&ObservabilityConfig{TracingEnabled: true}, ""},
+		{"full URL accepted",
+			&ObservabilityConfig{TracingEnabled: true, OTLPEndpoint: "http://collector:4318"}, ""},
+		{"https accepted",
+			&ObservabilityConfig{OTLPEndpoint: "https://collector.example.com"}, ""},
+		// host:port yields "http:///v1/traces" — no host — and every export
+		// fails at runtime while the deployment looks healthy.
+		{"host:port rejected",
+			&ObservabilityConfig{OTLPEndpoint: "collector:4318"}, "must be a full URL"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			errs := validateObservability(tt.obs)
+			if tt.wantError == "" {
+				if len(errs) != 0 {
+					t.Errorf("expected no errors, got %v", errs)
+				}
+				return
+			}
+			if !hasErrorContaining(errs, tt.wantError) {
+				t.Errorf("expected an error containing %q, got %v", tt.wantError, errs)
+			}
+		})
+	}
 }

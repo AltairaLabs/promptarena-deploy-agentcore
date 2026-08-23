@@ -49,7 +49,8 @@ const configSchema = `{
       "type": "object",
       "properties": {
         "cloudwatch_log_group": { "type": "string" },
-        "tracing_enabled": { "type": "boolean" }
+        "tracing_enabled": { "type": "boolean" },
+        "otlp_endpoint": { "type": "string" }
       }
     },
     "tags": {
