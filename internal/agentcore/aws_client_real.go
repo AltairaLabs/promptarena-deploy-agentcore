@@ -355,8 +355,12 @@ func (c *realAWSClient) CreateGatewayTool(
 	}
 
 	input := &bedrockagentcorecontrol.CreateGatewayTargetInput{
-		GatewayIdentifier:   aws.String(c.gatewayID),
-		Name:                aws.String(name),
+		GatewayIdentifier: aws.String(c.gatewayID),
+		// Sanitized for the same reason as the parent gateway: a target name
+		// rejects underscores too, so a tool called "lookup_order" is refused
+		// here one call after the gateway refused it. Destroy purges targets by
+		// listing them rather than by name, so renaming breaks no lookup.
+		Name:                aws.String(sanitizeGatewayTargetName(name)),
 		TargetConfiguration: buildTargetConfig(name, cfg),
 	}
 	if creds := buildCredentialProviderConfigs(name, cfg); len(creds) > 0 {
@@ -379,7 +383,11 @@ func (c *realAWSClient) CreateGatewayTool(
 func (c *realAWSClient) createParentGateway(
 	ctx context.Context, name string, cfg *Config,
 ) error {
-	gwName := name + "-gw"
+	// Sanitized because a Gateway name rejects underscores, which every other
+	// AgentCore resource accepts and tool names routinely contain. Unchanged
+	// for a name that was already valid, so no gateway that deploys today is
+	// renamed by this.
+	gwName := sanitizeGatewayName(name) + gatewaySuffix
 	gwInput := &bedrockagentcorecontrol.CreateGatewayInput{
 		Name:           aws.String(gwName),
 		RoleArn:        aws.String(cfg.RuntimeRoleARN),

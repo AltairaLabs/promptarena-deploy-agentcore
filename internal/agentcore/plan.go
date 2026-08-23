@@ -134,7 +134,7 @@ func generateAgentResources(pack *prompt.Pack) []deploy.ResourceChange {
 		for _, tn := range toolNames {
 			desired = append(desired, deploy.ResourceChange{
 				Type:   ResTypeToolGateway,
-				Name:   tn + toolGatewaySuffix,
+				Name:   tn,
 				Action: deploy.ActionCreate,
 				Detail: fmt.Sprintf("Create tool gateway for %s", tn),
 			})
@@ -153,7 +153,7 @@ func generateMultiAgentResources(pack *prompt.Pack) []deploy.ResourceChange {
 		for _, name := range toolNames {
 			desired = append(desired, deploy.ResourceChange{
 				Type:   ResTypeToolGateway,
-				Name:   name + toolGatewaySuffix,
+				Name:   name,
 				Action: deploy.ActionCreate,
 				Detail: fmt.Sprintf("Create tool gateway for %s", name),
 			})

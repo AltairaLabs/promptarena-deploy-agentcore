@@ -372,7 +372,8 @@ func TestValidate_WithInvalidToolTargets(t *testing.T) {
 		RuntimeRoleARN:    "arn:aws:iam::123456789012:role/test",
 		RuntimeBinaryPath: "/path/to/binary",
 		ToolTargets: map[string]*ArenaToolSpec{
-			"web-search": {LambdaARN: "arn:aws:lambda:us-west-2:123456789012:function:search"},
+			// No alphanumerics at all, so it sanitises to an empty gateway name.
+			"___": {LambdaARN: "arn:aws:lambda:us-west-2:123456789012:function:search"},
 		},
 	}
 	errs := cfg.validate()
@@ -381,7 +382,7 @@ func TestValidate_WithInvalidToolTargets(t *testing.T) {
 	}
 	found := false
 	for _, e := range errs {
-		if contains(e, "web-search") && contains(e, "tool_targets") {
+		if contains(e, "___") && contains(e, "tool_targets") {
 			found = true
 		}
 	}

@@ -34,10 +34,86 @@ func validateAWSName(name, resourceType string) error {
 	return nil
 }
 
-// toolGatewaySuffix is the suffix appended to tool names when creating
-// tool gateway resources. This constant ensures plan and apply use the
-// same naming convention.
-const toolGatewaySuffix = "_tool_gw"
+// gatewayNamePattern is what AWS accepts for a Gateway name:
+// alphanumerics with optional single hyphens, up to 48 characters.
+//
+// It is NOT awsNamePattern. Every other AgentCore resource takes underscores —
+// runtime and memory names rely on them — but a Gateway rejects them outright.
+// Validating gateway names against the permissive pattern is what let
+// "lookup_order-gw" reach the API and come back a ValidationException.
+// AWS states this as ^([0-9a-zA-Z][-]?){1,48}$; the bracket around the hyphen
+// is redundant and dropped here, so the two read slightly differently while
+// matching exactly the same names.
+const gatewayNamePattern = `^([0-9a-zA-Z]-?){1,48}$`
+
+var gatewayNameRe = regexp.MustCompile(gatewayNamePattern)
+
+// gatewaySuffix is appended to the parent gateway's name.
+//
+// Hyphen rather than underscore because of the pattern above, and this is the
+// suffix the API actually receives — the old toolGatewaySuffix ("_tool_gw")
+// was only ever used for plan output and validation, never for a call, so the
+// two disagreed about the name of the same resource.
+const gatewaySuffix = "-gw"
+
+// maxGatewayNameLen is the longest name a Gateway accepts.
+const maxGatewayNameLen = 48
+
+// maxGatewayTargetNameLen is the longest name a Gateway *target* accepts.
+//
+// Same character rule as the gateway, different limit — 100 rather than 48.
+// Both reject underscores, which is the part that matters: a tool name goes
+// into the target name directly, so "lookup_order" is refused there too, one
+// call after the parent gateway that refused it first.
+const maxGatewayTargetNameLen = 100
+
+// sanitizeGatewayName makes a name the Gateway API will accept.
+//
+// Anything outside [0-9a-zA-Z] becomes a hyphen, runs of hyphens collapse, and
+// leading and trailing hyphens go — the pattern allows a hyphen only after an
+// alphanumeric, so "--" and a trailing "-" are both rejected.
+//
+// A name that is already valid comes back unchanged. That is the property that
+// makes this safe to introduce: every gateway that deploys today has a name
+// with no underscores, so no existing deployment is renamed by this. The only
+// names that change are the ones that could never have been created.
+func sanitizeGatewayName(name string) string {
+	// Room for the suffix the caller appends.
+	return sanitizeGatewayIdent(name, maxGatewayNameLen-len(gatewaySuffix))
+}
+
+// sanitizeGatewayTargetName makes a tool name acceptable as a gateway target.
+//
+// Targets take no suffix, and allow 100 characters rather than 48.
+func sanitizeGatewayTargetName(name string) string {
+	return sanitizeGatewayIdent(name, maxGatewayTargetNameLen)
+}
+
+// sanitizeGatewayIdent is the shared rule behind both.
+func sanitizeGatewayIdent(name string, limit int) string {
+	var b strings.Builder
+	lastHyphen := false
+	for _, r := range name {
+		switch {
+		case (r >= '0' && r <= '9') || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z'):
+			b.WriteRune(r)
+			lastHyphen = false
+		case !lastHyphen && b.Len() > 0:
+			b.WriteRune('-')
+			lastHyphen = true
+		}
+	}
+
+	out := strings.TrimRight(b.String(), "-")
+
+	// The cap has to cover the whole name the API receives. Truncating a
+	// gateway stem to the full 48 and then appending "-gw" produces 51
+	// characters, which AWS rejects — so callers pass the room they need.
+	if len(out) > limit {
+		out = strings.TrimRight(out[:limit], "-")
+	}
+	return out
+}
 
 // collectDerivedNames builds a map of all derived resource names to their
 // resource types, simulating the same naming patterns used by
@@ -79,9 +155,13 @@ func collectEvalNames(names map[string]string, pack *prompt.Pack) {
 }
 
 // collectToolNames adds tool gateway names.
+//
+// The tool name itself, because that is what apply records in state: the
+// gateway target carries the tool's own name. Deriving a different name here
+// meant plan and state never agreed on the same resource.
 func collectToolNames(names map[string]string, pack *prompt.Pack) {
 	for toolName := range pack.Tools {
-		names[toolName+toolGatewaySuffix] = ResTypeToolGateway
+		names[toolName] = ResTypeToolGateway
 	}
 }
 
@@ -119,11 +199,33 @@ func validateResourceNames(pack *prompt.Pack, cfg *Config) []string {
 
 	var errs []string
 	for _, name := range keys {
-		if err := validateAWSName(name, derived[name]); err != nil {
+		if err := validateDerivedName(name, derived[name]); err != nil {
 			errs = append(errs, err.Error())
 		}
 	}
 	return errs
+}
+
+// validateDerivedName applies the rule that belongs to the resource type.
+//
+// Tool gateways are the exception, and the reason this function exists. A tool
+// name becomes a gateway *target* name, and the parent Gateway name is derived
+// from it — and Gateway names take hyphens but not underscores, the opposite of
+// every other AgentCore resource. Applying the general rule here rejected
+// "web-search", which AWS accepts, while passing "lookup_order", which it
+// rejects with a ValidationException at apply.
+//
+// The gateway name that AWS actually validates is checked by
+// validateToolTargetNames, against the pattern AWS actually uses.
+func validateDerivedName(name, resourceType string) error {
+	if resourceType == ResTypeToolGateway {
+		if name == "" {
+			return fmt.Errorf("resource name %q (%s) is invalid: must not be empty",
+				name, resourceType)
+		}
+		return nil
+	}
+	return validateAWSName(name, resourceType)
 }
 
 // validateToolTargetNames checks that tool target map keys will produce valid
@@ -141,11 +243,13 @@ func validateToolTargetNames(targets map[string]*ArenaToolSpec) []string {
 
 	var errs []string
 	for _, name := range keys {
-		gwName := name + toolGatewaySuffix
-		if err := validateAWSName(gwName, "tool_gateway"); err != nil {
+		// The parent gateway is the name AWS validates strictly, and it is
+		// derived rather than given, so check what will actually be sent.
+		gwName := sanitizeGatewayName(name) + gatewaySuffix
+		if !gatewayNameRe.MatchString(gwName) {
 			errs = append(errs, fmt.Sprintf(
 				"tool_targets: tool %q produces invalid gateway name %q: must match %s",
-				name, gwName, awsNamePattern,
+				name, gwName, gatewayNamePattern,
 			))
 		}
 	}
