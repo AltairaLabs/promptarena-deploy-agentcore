@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/AltairaLabs/PromptKit/runtime/evals"
@@ -249,7 +248,7 @@ func (p *Provider) executeApplyPhases(
 	// Step 1 — Tool Gateway entries (no update support yet).
 	phase := applyPhase(ctx, ac, phaseSpec{
 		create:    ac.client.CreateGatewayTool,
-		names:     sortedKeys(ac.pack.Tools),
+		names:     gatewayToolNames(ac.pack, ac.cfg),
 		resType:   ResTypeToolGateway,
 		stepIndex: stepTools,
 	})
@@ -736,16 +735,6 @@ func agentRuntimeNames(pack *prompt.Pack) []string {
 		return names // already sorted by ExtractAgents
 	}
 	return []string{pack.ID}
-}
-
-// sortedKeys returns the keys of a map in sorted order.
-func sortedKeys[V any](m map[string]V) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
 }
 
 // createMemoryResource creates a memory resource if configured, injecting

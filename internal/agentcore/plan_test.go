@@ -13,7 +13,23 @@ import (
 const validDeployConfig = `{"region":"us-west-2","runtime_role_arn":"arn:aws:iam::123456789012:role/test","runtime_binary_path":"/usr/local/bin/promptkit-runtime"}`
 
 // validArenaConfigJSON is a minimal valid arena config for tests.
-const validArenaConfigJSON = `{"tool_specs":{}}`
+// validArenaConfigJSON gives the fixture packs' tools a Lambda to point at.
+//
+// Only a tool with somewhere in AWS to route to becomes a Gateway resource, so
+// an empty tool_specs here would mean the gateway tests silently assert nothing.
+const validArenaConfigJSON = `{"tool_specs":{
+	"search":{"name":"search","lambda_arn":"arn:aws:lambda:us-west-2:123456789012:function:search"},
+	"calc":{"name":"calc","lambda_arn":"arn:aws:lambda:us-west-2:123456789012:function:calc"},
+	"lookup":{"name":"lookup","lambda_arn":"arn:aws:lambda:us-west-2:123456789012:function:lookup"}
+}}`
+
+// arenaConfigNoAWSTargetsJSON declares the same tools with no AWS target, which
+// is what a mock or plain-HTTP tool looks like: the runtime executes it and the
+// Gateway never hears about it.
+const arenaConfigNoAWSTargetsJSON = `{"tool_specs":{
+	"search":{"name":"search","mode":"mock"},
+	"calc":{"name":"calc","mode":"mock"}
+}}`
 
 // singleAgentPackJSON returns a minimal single-agent pack JSON.
 func singleAgentPackJSON() string {

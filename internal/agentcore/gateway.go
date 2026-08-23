@@ -3,12 +3,44 @@ package agentcore
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockagentcorecontrol/types"
 
 	"github.com/AltairaLabs/PromptKit/runtime/prompt"
 )
+
+// hasAWSTarget reports whether a tool declares somewhere in AWS for the Gateway
+// to route to.
+//
+// These four are the only shapes a Gateway target can take. A tool declaring
+// none of them — a mock, or a plain HTTP call — has nothing to point a target
+// at, and asking AWS to create one fails the whole apply with "The MCP server
+// endpoint URL is malformed or has no extractable host". Such tools run inside
+// the runtime instead, so they are not the Gateway's business.
+func hasAWSTarget(spec *ArenaToolSpec) bool {
+	return spec != nil && (spec.LambdaARN != "" ||
+		spec.APIGateway != nil ||
+		spec.OpenAPI != nil ||
+		spec.Smithy != nil)
+}
+
+// gatewayToolNames returns the pack's tools that belong in the Gateway, sorted.
+//
+// Plan and apply must both use this. Deriving the set twice is how the tool
+// gateway resources came to disagree before (#116), and a mismatch here shows
+// up as a delete-and-create for every tool on every re-apply.
+func gatewayToolNames(pack *prompt.Pack, cfg *Config) []string {
+	var names []string
+	for name := range pack.Tools {
+		if hasAWSTarget(cfg.ArenaConfig.toolSpecForName(name)) {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	return names
+}
 
 // buildTargetConfig returns the SDK TargetConfiguration for a gateway tool.
 // When the arena config provides a Lambda ARN for the tool, it builds a

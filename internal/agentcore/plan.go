@@ -104,7 +104,7 @@ func generateDesiredResources(pack *prompt.Pack, cfg *Config) []deploy.ResourceC
 		})
 	}
 
-	desired = append(desired, generateAgentResources(pack)...)
+	desired = append(desired, generateAgentResources(pack, cfg)...)
 	desired = append(desired, generateEvalResources(pack)...)
 	desired = append(desired, generateOnlineEvalConfigResources(pack)...)
 
@@ -113,9 +113,9 @@ func generateDesiredResources(pack *prompt.Pack, cfg *Config) []deploy.ResourceC
 
 // generateAgentResources returns agent_runtime and tool_gateway resource changes
 // for the pack. Tool gateways are created for any pack that defines tools.
-func generateAgentResources(pack *prompt.Pack) []deploy.ResourceChange {
+func generateAgentResources(pack *prompt.Pack, cfg *Config) []deploy.ResourceChange {
 	if adaptersdk.IsMultiAgent(pack) {
-		return generateMultiAgentResources(pack)
+		return generateMultiAgentResources(pack, cfg)
 	}
 
 	name := pack.ID
@@ -129,35 +129,31 @@ func generateAgentResources(pack *prompt.Pack) []deploy.ResourceChange {
 		Detail: fmt.Sprintf("Create AgentCore runtime for %s", name),
 	}}
 
-	if len(pack.Tools) > 0 {
-		toolNames := sortedKeys(pack.Tools)
-		for _, tn := range toolNames {
-			desired = append(desired, deploy.ResourceChange{
-				Type:   ResTypeToolGateway,
-				Name:   tn,
-				Action: deploy.ActionCreate,
-				Detail: fmt.Sprintf("Create tool gateway for %s", tn),
-			})
-		}
+	// Only tools with somewhere in AWS to point at; the rest run in the
+	// runtime and have no Gateway resource.
+	for _, tn := range gatewayToolNames(pack, cfg) {
+		desired = append(desired, deploy.ResourceChange{
+			Type:   ResTypeToolGateway,
+			Name:   tn,
+			Action: deploy.ActionCreate,
+			Detail: fmt.Sprintf("Create tool gateway for %s", tn),
+		})
 	}
 
 	return desired
 }
 
 // generateMultiAgentResources returns SDK-generated resources plus tool_gateways.
-func generateMultiAgentResources(pack *prompt.Pack) []deploy.ResourceChange {
+func generateMultiAgentResources(pack *prompt.Pack, cfg *Config) []deploy.ResourceChange {
 	desired := adaptersdk.GenerateAgentResourcePlan(pack)
 
-	if len(pack.Tools) > 0 {
-		toolNames := sortedKeys(pack.Tools)
-		for _, name := range toolNames {
-			desired = append(desired, deploy.ResourceChange{
-				Type:   ResTypeToolGateway,
-				Name:   name,
-				Action: deploy.ActionCreate,
-				Detail: fmt.Sprintf("Create tool gateway for %s", name),
-			})
-		}
+	for _, name := range gatewayToolNames(pack, cfg) {
+		desired = append(desired, deploy.ResourceChange{
+			Type:   ResTypeToolGateway,
+			Name:   name,
+			Action: deploy.ActionCreate,
+			Detail: fmt.Sprintf("Create tool gateway for %s", name),
+		})
 	}
 
 	return desired

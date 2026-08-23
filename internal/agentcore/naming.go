@@ -122,7 +122,7 @@ func collectDerivedNames(pack *prompt.Pack, cfg *Config) map[string]string {
 	names := make(map[string]string)
 	collectPackLevelNames(names, pack, cfg)
 	collectEvalNames(names, pack)
-	collectToolNames(names, pack)
+	collectToolNames(names, pack, cfg)
 	collectAgentNames(names, pack)
 	return names
 }
@@ -159,8 +159,11 @@ func collectEvalNames(names map[string]string, pack *prompt.Pack) {
 // The tool name itself, because that is what apply records in state: the
 // gateway target carries the tool's own name. Deriving a different name here
 // meant plan and state never agreed on the same resource.
-func collectToolNames(names map[string]string, pack *prompt.Pack) {
-	for toolName := range pack.Tools {
+// Only tools bound for the Gateway are named here. A mock tool runs in the
+// runtime and never becomes a Gateway resource, so holding its name to the
+// Gateway's character rules would reject a pack that deploys perfectly well.
+func collectToolNames(names map[string]string, pack *prompt.Pack, cfg *Config) {
+	for _, toolName := range gatewayToolNames(pack, cfg) {
 		names[toolName] = ResTypeToolGateway
 	}
 }
