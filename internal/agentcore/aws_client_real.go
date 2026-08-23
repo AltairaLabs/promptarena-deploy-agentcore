@@ -49,6 +49,16 @@ type realAWSClient struct {
 	gatewayID   string
 	gatewayARN  string
 	gatewayName string
+	// gatewayURL is the MCP endpoint an agent calls to reach these tools.
+	// Provisioning the gateway without carrying this anywhere leaves the
+	// targets reachable by nothing.
+	gatewayURL string
+	// gatewayAuthorizer records how the gateway authenticates callers, so an
+	// update can put back what the gateway already had. UpdateGateway is a
+	// full replace and requires this field, so sending a fixed value silently
+	// rewrites it — on an adopted gateway that means stripping its auth.
+	gatewayAuthorizer     types.AuthorizerType
+	gatewayAuthorizerConf types.AuthorizerConfiguration
 }
 
 // newRealAWSClient builds a realAWSClient from the Config.
@@ -143,28 +153,45 @@ func (c *realAWSClient) findRuntimeByName(ctx context.Context, name string) (str
 	return "", fmt.Errorf("runtime %q not found", name)
 }
 
-// findGatewayByName lists gateways and returns the ID and ARN of one matching name.
-func (c *realAWSClient) findGatewayByName(ctx context.Context, name string) (id, arn string, err error) {
+// findGatewayByName lists gateways and returns the ID, ARN and MCP endpoint of
+// one matching name.
+func (c *realAWSClient) findGatewayByName(
+	ctx context.Context, name string,
+) (found gatewayDetails, err error) {
 	out, err := c.client.ListGateways(ctx, &bedrockagentcorecontrol.ListGatewaysInput{
 		MaxResults: aws.Int32(listPageSize),
 	})
 	if err != nil {
-		return "", "", err
+		return gatewayDetails{}, err
 	}
 	for _, gw := range out.Items {
 		if aws.ToString(gw.Name) == name {
 			gwID := aws.ToString(gw.GatewayId)
-			// Get full details to retrieve ARN.
+			// Full details for the ARN, the MCP endpoint, and how this
+			// gateway authenticates its callers.
 			detail, getErr := c.client.GetGateway(ctx, &bedrockagentcorecontrol.GetGatewayInput{
 				GatewayIdentifier: aws.String(gwID),
 			})
 			if getErr != nil {
-				return gwID, "", getErr
+				return gatewayDetails{id: gwID}, getErr
 			}
-			return gwID, aws.ToString(detail.GatewayArn), nil
+			return gatewayDetails{
+				id:             gwID,
+				arn:            aws.ToString(detail.GatewayArn),
+				url:            aws.ToString(detail.GatewayUrl),
+				authorizer:     detail.AuthorizerType,
+				authorizerConf: detail.AuthorizerConfiguration,
+			}, nil
 		}
 	}
-	return "", "", fmt.Errorf("gateway %q not found", name)
+	return gatewayDetails{}, fmt.Errorf("gateway %q not found", name)
+}
+
+// gatewayDetails is what an existing gateway tells us about itself.
+type gatewayDetails struct {
+	id, arn, url   string
+	authorizer     types.AuthorizerType
+	authorizerConf types.AuthorizerConfiguration
 }
 
 // findEvaluatorByName lists evaluators and returns the ARN of one matching name.
@@ -401,20 +428,26 @@ func (c *realAWSClient) createParentGateway(
 	if err != nil {
 		if isConflictError(err) {
 			log.Printf("agentcore: gateway %q already exists, adopting", gwName)
-			id, arn, findErr := c.findGatewayByName(ctx, gwName)
+			found, findErr := c.findGatewayByName(ctx, gwName)
 			if findErr != nil {
 				return fmt.Errorf("CreateGateway for tool %q (adopt): %w", name, findErr)
 			}
-			c.gatewayID = id
-			c.gatewayARN = arn
+			c.gatewayID = found.id
+			c.gatewayARN = found.arn
+			c.gatewayURL = found.url
 			c.gatewayName = gwName
+			c.gatewayAuthorizer = found.authorizer
+			c.gatewayAuthorizerConf = found.authorizerConf
 			return nil
 		}
 		return fmt.Errorf("CreateGateway for tool %q: %w", name, err)
 	}
 	c.gatewayID = aws.ToString(gwOut.GatewayId)
 	c.gatewayARN = aws.ToString(gwOut.GatewayArn)
+	c.gatewayURL = aws.ToString(gwOut.GatewayUrl)
 	c.gatewayName = gwName
+	c.gatewayAuthorizer = gwOut.AuthorizerType
+	c.gatewayAuthorizerConf = gwOut.AuthorizerConfiguration
 
 	if err := c.waitForGatewayReady(ctx, c.gatewayID); err != nil {
 		return fmt.Errorf("gateway for tool %q created but not ready: %w", name, err)
@@ -436,7 +469,10 @@ func (c *realAWSClient) AssociatePolicyEngine(
 		Name:              aws.String(c.gatewayName),
 		RoleArn:           aws.String(cfg.RuntimeRoleARN),
 		ProtocolType:      types.GatewayProtocolTypeMcp,
-		AuthorizerType:    types.AuthorizerTypeNone,
+		// What the gateway already uses, not a fixed value: this call is a
+		// full replace, and an adopted gateway may authenticate its callers.
+		AuthorizerType:          c.gatewayAuthorizer,
+		AuthorizerConfiguration: c.gatewayAuthorizerConf,
 		PolicyEngineConfiguration: &types.GatewayPolicyEngineConfiguration{
 			Arn:  aws.String(policyEngineARN),
 			Mode: types.GatewayPolicyEngineModeEnforce,
