@@ -191,6 +191,7 @@ func collectAgentNames(names map[string]string, pack *prompt.Pack) {
 // against the AWS naming pattern. Returns a list of validation errors, or nil
 // if all names are valid.
 func validateResourceNames(pack *prompt.Pack, cfg *Config) []string {
+	errs := validateToolTargetKinds(pack, cfg)
 	derived := collectDerivedNames(pack, cfg)
 
 	// Sort keys for deterministic error ordering.
@@ -200,7 +201,6 @@ func validateResourceNames(pack *prompt.Pack, cfg *Config) []string {
 	}
 	sort.Strings(keys)
 
-	var errs []string
 	for _, name := range keys {
 		if err := validateDerivedName(name, derived[name]); err != nil {
 			errs = append(errs, err.Error())
@@ -263,4 +263,42 @@ func validateToolTargetNames(targets map[string]*ArenaToolSpec) []string {
 // joined string suitable for returning in an error response.
 func formatNameErrors(errs []string) string {
 	return strings.Join(errs, "; ")
+}
+
+// validateToolTargetKinds rejects Gateway target types the runtime cannot call.
+//
+// A Lambda target carries the pack's own tool name into the Gateway, so the
+// runtime can address it. OpenAPI, Smithy and API Gateway targets take their
+// tool names from the schema or from path and method, so the name the pack
+// uses is not the name the Gateway knows — the target would be created and
+// every call would miss.
+//
+// Refused at plan rather than left to fail later: the deploy would otherwise
+// succeed and produce an agent whose tool never answers.
+func validateToolTargetKinds(pack *prompt.Pack, cfg *Config) []string {
+	if pack == nil || cfg == nil {
+		return nil
+	}
+
+	var names []string
+	for name := range pack.Tools {
+		spec := cfg.ArenaConfig.toolSpecForName(name)
+		if spec != nil && spec.LambdaARN == "" && hasAWSTarget(spec) {
+			names = append(names, name)
+		}
+	}
+	if len(names) == 0 {
+		return nil
+	}
+	sort.Strings(names)
+
+	errs := make([]string, 0, len(names))
+	for _, name := range names {
+		errs = append(errs, fmt.Sprintf(
+			"tool %q uses an openapi, smithy or api_gateway target, which is not "+
+				"supported yet: the Gateway names those tools from the schema rather "+
+				"than from the pack, so the runtime cannot call them. Use lambda_arn, "+
+				"or run the tool in the runtime with a mock or http config.", name))
+	}
+	return errs
 }

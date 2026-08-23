@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"sort"
+	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
@@ -28,48 +30,58 @@ func buildToolRegistry(
 	pack *prompt.Pack, specs map[string]toolSpec,
 	region string, creds aws.CredentialsProvider,
 	gatewayURL, gatewayAuth string, log *slog.Logger,
-) *tools.Registry {
+) (*tools.Registry, error) {
 	if pack == nil || len(pack.Tools) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	registry := tools.NewRegistry()
+
+	// Mock executors come with every registry; the HTTP one does not, and a
+	// live tool routes to it by name. Without this a tool with a url fails
+	// every call with "executor http not available".
+	registry.RegisterExecutor(tools.NewHTTPExecutor())
+
 	targets := gatewayTargets(specs)
 
 	if len(targets) > 0 {
 		if gatewayURL == "" {
-			log.Error("tools are deployed behind a gateway but no gateway endpoint was provided",
-				"tools", len(targets))
-		} else {
-			registry.RegisterExecutor(newGatewayExecutor(
-				gatewayURL, region, gatewayAuth, creds, targets))
+			return nil, fmt.Errorf(
+				"%d tools are deployed behind a gateway but no gateway endpoint was provided",
+				len(targets))
 		}
+		registry.RegisterExecutor(newGatewayExecutor(
+			gatewayURL, region, gatewayAuth, creds, targets))
 	}
 
-	var wired, skipped int
+	// Every tool or none. Supplying a registry detaches the pack's own, so a
+	// tool dropped here is one the model is never offered — with nothing to
+	// see at runtime except an agent that quietly cannot do something. An
+	// agent missing a tool it was deployed with is not a working agent, so
+	// say so at startup instead.
+	var unwired []string
 	for name := range pack.Tools {
 		spec := specs[name]
 		desc, err := descriptorFor(name, pack.Tools[name], &spec)
 		if err != nil {
-			// Named rather than dropped: a tool that silently disappears
-			// looks to an operator like the model choosing not to call it.
-			log.Error("tool will not be available to the agent",
-				"tool", name, "error", err)
-			skipped++
+			unwired = append(unwired, fmt.Sprintf("%s (%v)", name, err))
 			continue
 		}
 		if err := registry.Register(desc); err != nil {
-			log.Error("tool will not be available to the agent",
-				"tool", name, "error", err)
-			skipped++
+			unwired = append(unwired, fmt.Sprintf("%s (%v)", name, err))
 			continue
 		}
-		wired++
 	}
 
-	log.Info("tools registered", "wired", wired, "skipped", skipped,
+	if len(unwired) > 0 {
+		sort.Strings(unwired)
+		return nil, fmt.Errorf("cannot execute %d of the pack's %d tools: %s",
+			len(unwired), len(pack.Tools), strings.Join(unwired, "; "))
+	}
+
+	log.Info("tools registered", "count", len(pack.Tools),
 		"gateway_backed", len(targets))
-	return registry
+	return registry, nil
 }
 
 // gatewayTargets maps pack tool names to their Gateway target names.
@@ -178,9 +190,12 @@ func withToolRegistry(
 		return nil, fmt.Errorf("tool specs: %w", err)
 	}
 
-	reg := buildToolRegistry(pack, specs, cfg.AWSRegion,
+	reg, err := buildToolRegistry(pack, specs, cfg.AWSRegion,
 		awsCredentials(context.Background(), cfg, log),
 		cfg.ToolGatewayURL, cfg.ToolGatewayAuth, log)
+	if err != nil {
+		return nil, err
+	}
 	if reg == nil {
 		return opts, nil
 	}

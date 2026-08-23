@@ -3,15 +3,38 @@ package agentcore
 import (
 	"encoding/json"
 	"fmt"
+
+	sigsyaml "sigs.k8s.io/yaml"
 )
 
 // ArenaConfig holds the subset of the PromptKit arena config that the
 // adapter needs for infrastructure decisions.
 type ArenaConfig struct {
-	ToolSpecs       map[string]*ArenaToolSpec `json:"tool_specs,omitempty"`
+	ToolSpecs map[string]*ArenaToolSpec `json:"tool_specs,omitempty"`
+
+	// LoadedTools carries tools declared as file references rather than
+	// inline. The arena writes an inline tool_specs entry into both places,
+	// but a `tools: [./x.tool.yaml]` reference lands only here — so reading
+	// tool_specs alone makes those tools invisible, and a tool the adapter
+	// cannot see is one the deployed agent cannot use.
+	LoadedTools     []ArenaToolData           `json:"loaded_tools,omitempty"`
 	MCPServers      []ArenaMCPServer          `json:"mcp_servers,omitempty"`
 	LoadedProviders map[string]*ArenaProvider `json:"loaded_providers,omitempty"`
 	ProviderSpecs   map[string]*ArenaProvider `json:"provider_specs,omitempty"`
+}
+
+// ArenaToolData is a tool manifest the arena loaded from a file.
+type ArenaToolData struct {
+	FilePath string `json:"file_path,omitempty"`
+	Data     []byte `json:"data,omitempty"`
+}
+
+// arenaToolManifest is the envelope of a `kind: Tool` YAML manifest.
+type arenaToolManifest struct {
+	Metadata struct {
+		Name string `json:"name"`
+	} `json:"metadata"`
+	Spec ArenaToolSpec `json:"spec"`
 }
 
 // ArenaProvider describes a provider from the arena config.
@@ -139,10 +162,58 @@ func lowestKey(m map[string]*ArenaProvider) string {
 // toolSpecForName returns the tool spec with the given name, or nil if
 // not found.
 func (a *ArenaConfig) toolSpecForName(name string) *ArenaToolSpec {
-	if a == nil || a.ToolSpecs == nil {
+	if a == nil {
 		return nil
 	}
-	return a.ToolSpecs[name]
+	if spec, ok := a.ToolSpecs[name]; ok {
+		return spec
+	}
+	// Inline specs win: the arena copies them into loaded_tools as well, so
+	// reaching here means the tool was declared only as a file reference.
+	return a.loadedToolSpec(name)
+}
+
+// loadedToolSpec finds a file-declared tool by name.
+func (a *ArenaConfig) loadedToolSpec(name string) *ArenaToolSpec {
+	for i := range a.LoadedTools {
+		toolName, spec := parseToolManifest(a.LoadedTools[i].Data)
+		if toolName == name && spec != nil {
+			return spec
+		}
+	}
+	return nil
+}
+
+// parseToolManifest reads a `kind: Tool` YAML manifest.
+//
+// A manifest that does not parse, or that names no tool, is skipped rather
+// than failing: one malformed tool file should not take a deploy with it.
+func parseToolManifest(data []byte) (name string, spec *ArenaToolSpec) {
+	if len(data) == 0 {
+		return "", nil
+	}
+	asJSON, err := sigsyaml.YAMLToJSON(data)
+	if err != nil {
+		return "", nil
+	}
+
+	var manifest arenaToolManifest
+	if json.Unmarshal(asJSON, &manifest) != nil {
+		return "", nil
+	}
+
+	name = manifest.Spec.Name
+	if name == "" {
+		name = manifest.Metadata.Name
+	}
+	if name == "" {
+		return "", nil
+	}
+	out := manifest.Spec
+	if out.Name == "" {
+		out.Name = name
+	}
+	return name, &out
 }
 
 // parseArenaConfig deserializes the arena config JSON string.

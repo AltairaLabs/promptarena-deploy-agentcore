@@ -33,6 +33,12 @@ const (
 	toolModeMock    = "mock"
 	toolModeLive    = "live"
 	toolModeGateway = "gateway"
+
+	// toolModeSchemaGateway marks a Gateway tool whose name comes from a
+	// schema rather than from the pack — OpenAPI, Smithy or API Gateway. The
+	// target is created and the tool is reachable through the Gateway, but
+	// the runtime cannot yet map the pack's name onto the Gateway's.
+	toolModeSchemaGateway = "gateway_schema"
 )
 
 // RuntimeToolSpec is the executable half of a tool definition.
@@ -89,11 +95,21 @@ func buildToolSpecs(pack *prompt.Pack, cfg *Config) map[string]RuntimeToolSpec {
 func runtimeSpecFor(name string, cfg *Config) RuntimeToolSpec {
 	spec := cfg.ArenaConfig.toolSpecForName(name)
 
-	if hasAWSTarget(spec) {
+	// Only a Lambda target carries the pack's own tool name into the Gateway:
+	// its inline schema is built from the pack tool, so the Gateway lists it
+	// as <target>___<tool name>. An OpenAPI, Smithy or API Gateway target
+	// takes its tool names from the schema or from path and method instead,
+	// so the pack name is not what the Gateway knows it by and calling it
+	// that way would miss. Those need their names discovered from the
+	// Gateway, which this does not yet do.
+	if spec != nil && spec.LambdaARN != "" {
 		return RuntimeToolSpec{
 			Mode:          toolModeGateway,
 			GatewayTarget: sanitizeGatewayTargetName(name),
 		}
+	}
+	if hasAWSTarget(spec) {
+		return RuntimeToolSpec{Mode: toolModeSchemaGateway}
 	}
 
 	if spec == nil {

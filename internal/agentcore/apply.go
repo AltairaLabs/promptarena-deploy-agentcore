@@ -447,8 +447,15 @@ func createPolicyForPrompt(
 
 	// Associate the policy engine with the gateway so the Cedar schema
 	// includes the gateway's registered tool actions.
-	if err := ac.client.AssociatePolicyEngine(ctx, engineARN, ac.cfg); err != nil {
-		return nil, fmt.Errorf("associate policy engine with gateway: %w", err)
+	//
+	// Only when a gateway exists. A pack whose tools all run in the runtime
+	// creates none, and a tool policy over them is still worth enforcing —
+	// failing here would refuse the deploy and strand the engine just
+	// created, since a failed resource records no id for destroy to use.
+	if gatewayURL, _ := ac.client.GatewayEndpoint(); gatewayURL != "" {
+		if err := ac.client.AssociatePolicyEngine(ctx, engineARN, ac.cfg); err != nil {
+			return nil, fmt.Errorf("associate policy engine with gateway: %w", err)
+		}
 	}
 
 	var lastPolicyARN, lastPolicyID string

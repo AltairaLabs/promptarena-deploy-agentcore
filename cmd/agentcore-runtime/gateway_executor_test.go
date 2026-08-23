@@ -183,16 +183,80 @@ func TestBuildToolRegistry_CoversEveryPackTool(t *testing.T) {
 		"http_tool": {Mode: toolModeLive, URL: "https://api.example.com/x"},
 	}
 
-	reg := buildToolRegistry(pack, specs, "us-west-2", testCreds(),
+	reg, err := buildToolRegistry(pack, specs, "us-west-2", testCreds(),
 		"https://gw.example.com", "AWS_IAM", slog.Default())
+	if err != nil {
+		t.Fatalf("buildToolRegistry: %v", err)
+	}
 	if reg == nil {
 		t.Fatal("expected a registry")
 	}
 
+	// Presence is not enough: a descriptor whose mode has no executor is a
+	// tool the model is offered and cannot call, which reads to a user as the
+	// agent refusing rather than as a deployment fault.
+	wantMode := map[string]string{
+		"gw_tool":   gatewayExecutorName,
+		"mock_tool": toolModeMock,
+		"http_tool": toolModeLive,
+	}
 	for name := range pack.Tools {
-		if reg.Get(name) == nil {
+		desc := reg.Get(name)
+		if desc == nil {
 			t.Errorf("tool %q is not in the registry; the model would never see it", name)
+			continue
 		}
+		if desc.Mode != wantMode[name] {
+			t.Errorf("tool %q has mode %q, want %q", name, desc.Mode, wantMode[name])
+		}
+		// Executing proves an executor exists for the mode. A descriptor whose
+		// mode nothing serves fails with "executor ... not available", which
+		// is the shape this asserts against — the call itself may fail for
+		// its own reasons and that is fine.
+		if _, execErr := reg.Execute(context.Background(), name, json.RawMessage(`{}`)); execErr != nil &&
+			strings.Contains(execErr.Error(), "not available") {
+			t.Errorf("tool %q (mode %q) has no executor: %v", name, desc.Mode, execErr)
+		}
+	}
+}
+
+// TestBuildToolRegistry_RefusesToDeployAToollessAgent covers the input that
+// used to produce one silently.
+//
+// A pack whose tools the runtime cannot place — no specs at all, which is what
+// an adapter blind to a tool source produces — must fail loudly. Returning an
+// empty registry would replace the pack's own and offer the model nothing,
+// with no error anywhere.
+func TestBuildToolRegistry_RefusesToDeployAToollessAgent(t *testing.T) {
+	pack := &prompt.Pack{
+		Tools: map[string]*prompt.PackTool{
+			"orphan": {Name: "orphan", Description: "no spec anywhere"},
+		},
+	}
+
+	reg, err := buildToolRegistry(pack, nil, "us-west-2", nil, "", "", slog.Default())
+	if err == nil {
+		t.Fatal("expected an error rather than an agent with no tools")
+	}
+	if reg != nil {
+		t.Error("no registry should be returned when a tool cannot be wired")
+	}
+	if !strings.Contains(err.Error(), "orphan") {
+		t.Errorf("error should name the tool, got %v", err)
+	}
+}
+
+// TestBuildToolRegistry_GatewayToolsNeedAnEndpoint covers a gateway-backed
+// tool with nowhere to call.
+func TestBuildToolRegistry_GatewayToolsNeedAnEndpoint(t *testing.T) {
+	pack := &prompt.Pack{
+		Tools: map[string]*prompt.PackTool{"t": {Name: "t"}},
+	}
+	specs := map[string]toolSpec{"t": {Mode: toolModeGateway, GatewayTarget: "target"}}
+
+	if _, err := buildToolRegistry(pack, specs, "us-west-2", testCreds(),
+		"", "AWS_IAM", slog.Default()); err == nil {
+		t.Error("expected an error when gateway tools have no endpoint")
 	}
 }
 
@@ -200,7 +264,11 @@ func TestBuildToolRegistry_CoversEveryPackTool(t *testing.T) {
 // not change: a pack without tools should get the SDK's own registry, built
 // from the pack, rather than an empty one from here.
 func TestBuildToolRegistry_NoToolsKeepsThePackRegistry(t *testing.T) {
-	if reg := buildToolRegistry(&prompt.Pack{}, nil, "us-west-2", nil, "", "", slog.Default()); reg != nil {
+	reg, err := buildToolRegistry(&prompt.Pack{}, nil, "us-west-2", nil, "", "", slog.Default())
+	if err != nil {
+		t.Fatalf("buildToolRegistry: %v", err)
+	}
+	if reg != nil {
 		t.Error("a pack with no tools should not get a replacement registry")
 	}
 }
