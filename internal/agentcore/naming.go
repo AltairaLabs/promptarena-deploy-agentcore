@@ -6,8 +6,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/AltairaLabs/PromptKit/runtime/deploy/adaptersdk"
 	"github.com/AltairaLabs/PromptKit/runtime/prompt"
+	"github.com/AltairaLabs/promptarena/deploy/adaptersdk"
 )
 
 // awsNamePattern is the regex pattern for valid AWS Bedrock AgentCore resource

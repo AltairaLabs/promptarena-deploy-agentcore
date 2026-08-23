@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/AltairaLabs/PromptKit/runtime/deploy"
+	"github.com/AltairaLabs/promptarena/deploy"
 )
 
 func priorWith(res ...ResourceState) *AdapterState {
@@ -31,8 +31,11 @@ func TestReconcilePriorState_DropsResourcesThatNoLongerExist(t *testing.T) {
 	if len(got.Resources) != 1 || got.Resources[0].Name != "kept" {
 		t.Fatalf("expected only the surviving resource, got %+v", got.Resources)
 	}
-	if len(drifted) != 1 || !strings.Contains(drifted[0], "gone") {
-		t.Errorf("expected drift naming the deleted resource, got %v", drifted)
+	if len(drifted) != 1 {
+		t.Fatalf("expected drift for exactly the deleted resource, got %+v", drifted)
+	}
+	if drifted[0].Name != "gone" || drifted[0].Action != deploy.ActionDrift {
+		t.Errorf("expected a DRIFT change naming %q, got %+v", "gone", drifted[0])
 	}
 }
 
@@ -112,14 +115,21 @@ func TestPlan_DriftedResourceIsPlannedForCreation(t *testing.T) {
 		t.Fatalf("Plan: %v", err)
 	}
 
-	var runtimeAction deploy.Action
+	// Two changes for the one resource: the DRIFT that explains what happened
+	// and the CREATE that replaces it. Drift travels as a change so it is
+	// counted and rendered like everything else rather than as summary prose.
+	var actions []deploy.Action
 	for _, c := range resp.Changes {
 		if c.Type == ResTypeAgentRuntime {
-			runtimeAction = c.Action
+			actions = append(actions, c.Action)
 		}
 	}
-	if runtimeAction != deploy.ActionCreate {
-		t.Errorf("a resource deleted out of band should be planned as CREATE, got %q", runtimeAction)
+	if len(actions) != 2 || actions[0] != deploy.ActionDrift || actions[1] != deploy.ActionCreate {
+		t.Errorf("expected DRIFT then CREATE for a resource deleted out of band, got %v from %+v",
+			actions, resp.Changes)
+	}
+	if !strings.Contains(resp.Summary, "1 drifted") {
+		t.Errorf("summary should report the drift, got %q", resp.Summary)
 	}
 	if len(checker.calls) == 0 {
 		t.Error("Plan should have verified prior state against the live provider")
