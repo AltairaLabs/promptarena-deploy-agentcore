@@ -1,8 +1,12 @@
-name: Update PromptKit Dependency
+name: Update upstream dependencies
 
+# Two upstreams now, not one. The deploy contract (runtime/deploy and
+# adaptersdk) moved out of PromptKit into promptarena, so a release there
+# reaches this adapter only if we listen for it — which nothing did, leaving the
+# module that defines the adapter's own interface with no update path at all.
 on:
   repository_dispatch:
-    types: [promptkit-release]
+    types: [promptkit-release, promptarena-release]
 
 permissions:
   contents: write
@@ -10,7 +14,7 @@ permissions:
 
 jobs:
   update:
-    name: Update PromptKit to ${{ github.event.client_payload.version }}
+    name: Update ${{ github.event.action }} to ${{ github.event.client_payload.version }}
     runs-on: ubuntu-latest
 
     steps:
@@ -25,14 +29,20 @@ jobs:
     - name: Update go.mod
       env:
         VERSION: ${{ github.event.client_payload.version }}
+        # Read from the environment rather than interpolated into the script:
+        # a dispatch payload is attacker-controlled input to a shell otherwise.
+        EVENT: ${{ github.event.action }}
       run: |
-        echo "Updating PromptKit runtime to $VERSION..."
-
-        # Update required versions for all PromptKit modules
-        go mod edit -require="github.com/AltairaLabs/PromptKit/runtime@$VERSION"
-        go mod edit -require="github.com/AltairaLabs/PromptKit/sdk@$VERSION"
-        go mod edit -require="github.com/AltairaLabs/PromptKit/server/a2a@$VERSION"
-        go mod edit -require="github.com/AltairaLabs/PromptKit/pkg@$VERSION"
+        if [ "$EVENT" = "promptarena-release" ]; then
+          echo "Updating promptarena to $VERSION..."
+          go mod edit -require="github.com/AltairaLabs/promptarena@$VERSION"
+        else
+          echo "Updating PromptKit modules to $VERSION..."
+          go mod edit -require="github.com/AltairaLabs/PromptKit/runtime@$VERSION"
+          go mod edit -require="github.com/AltairaLabs/PromptKit/sdk@$VERSION"
+          go mod edit -require="github.com/AltairaLabs/PromptKit/server/a2a@$VERSION"
+          go mod edit -require="github.com/AltairaLabs/PromptKit/pkg@$VERSION"
+        fi
 
         # Tidy to resolve dependencies
         go mod tidy
@@ -54,16 +64,22 @@ jobs:
     - name: Create pull request
       env:
         VERSION: ${{ github.event.client_payload.version }}
+        EVENT: ${{ github.event.action }}
         GH_TOKEN: ${{ github.token }}
       run: |
-        BRANCH="deps/promptkit-$VERSION"
+        if [ "$EVENT" = "promptarena-release" ]; then
+          UPSTREAM="promptarena"
+        else
+          UPSTREAM="PromptKit"
+        fi
+        BRANCH="deps/$UPSTREAM-$VERSION"
         git config user.name "github-actions[bot]"
         git config user.email "github-actions[bot]@users.noreply.github.com"
 
         git checkout -b "$BRANCH"
         git add -A
-        git commit -s -m "deps: update PromptKit modules to $VERSION" \
-          -m "Bump runtime, sdk, server/a2a and pkg to the newly published version."
+        git commit -s -m "deps: update $UPSTREAM to $VERSION" \
+          -m "Triggered by the $UPSTREAM release of $VERSION."
 
         git push origin "$BRANCH"
 
@@ -72,9 +88,9 @@ jobs:
         cat <<'PREOF' > /tmp/pr-body.md
         ## Summary
 
-        - Update the `github.com/AltairaLabs/PromptKit/*` modules to `__VERSION__`
+        - Update `__UPSTREAM__` to `__VERSION__`
 
-        Triggered automatically by PromptKit release `__VERSION__`.
+        Triggered automatically by the `__UPSTREAM__` release of `__VERSION__`.
 
         ## Verification
 
@@ -84,10 +100,10 @@ jobs:
         🤖 Generated automatically by the update-deps workflow
         PREOF
 
-        sed -i "s/__VERSION__/$VERSION/g" /tmp/pr-body.md
+        sed -i "s/__VERSION__/$VERSION/g;s/__UPSTREAM__/$UPSTREAM/g" /tmp/pr-body.md
 
         gh pr create \
-          --title "deps: update PromptKit modules to $VERSION" \
+          --title "deps: update $UPSTREAM to $VERSION" \
           --body-file /tmp/pr-body.md
 
         echo "✓ Created PR for $BRANCH"
