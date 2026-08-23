@@ -189,6 +189,8 @@ func (p *Provider) Status(
 			Type:   res.Type,
 			Name:   res.Name,
 			Status: health,
+			Detail: detailWithInvokeHint(res.Type, res.ARN),
+			Links:  consoleLinks(cfg.Region),
 		})
 	}
 
