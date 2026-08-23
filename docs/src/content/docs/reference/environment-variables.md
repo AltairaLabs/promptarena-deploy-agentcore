@@ -50,8 +50,10 @@ When the deploy config declares no `providers`, the adapter falls back to derivi
 
 The provider type of the primary binding, duplicated here so a runtime built before provider bindings existed keeps working.
 
+This is the model's vendor, not the platform hosting it. Bedrock is the platform, and the runtime applies it separately — a Claude model served through Bedrock has the type `claude`. `bedrock` is not a provider type and the runtime rejects it.
+
 ```
-PROMPTPACK_PROVIDER_TYPE=bedrock
+PROMPTPACK_PROVIDER_TYPE=claude
 ```
 
 Prefer `PROMPTPACK_PROVIDERS` — this variable cannot express more than one provider or any role other than `llm`.

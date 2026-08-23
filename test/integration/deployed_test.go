@@ -118,11 +118,16 @@ const toolPack = `{
 }`
 
 // featureArena is the arena config the CLI would hand the adapter.
+//
+// The type is the model's vendor, not Bedrock. Bedrock is a hosting platform
+// and the runtime applies it separately, from the deployment region — writing
+// "bedrock" here yields an agent that deploys, reaches ready, and then fails
+// its first turn with "unsupported provider type".
 const featureArena = `{
   "loaded_providers": {
     "integration-llm": {
       "id": "integration-llm",
-      "type": "bedrock",
+      "type": "claude",
       "model": "` + defaultModel + `"
     }
   }
@@ -134,7 +139,7 @@ func toolArena(lambdaARN string) string {
   "loaded_providers": {
     "integration-llm": {
       "id": "integration-llm",
-      "type": "bedrock",
+      "type": "claude",
       "model": "` + defaultModel + `"
     }
   },
