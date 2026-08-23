@@ -36,6 +36,12 @@ const (
 	envProviderModel  = "PROMPTPACK_PROVIDER_MODEL"
 	envProviders      = "PROMPTPACK_PROVIDERS"
 	envProtocol       = "PROMPTPACK_PROTOCOL"
+
+	// Tool execution config. The compiled pack carries only a tool's schema,
+	// so how to run one arrives here.
+	envToolSpecs       = "PROMPTPACK_TOOL_SPECS"
+	envToolGatewayURL  = "PROMPTPACK_TOOL_GATEWAY_URL"
+	envToolGatewayAuth = "PROMPTPACK_TOOL_GATEWAY_AUTH"
 )
 
 const defaultPort = 9000
@@ -58,6 +64,9 @@ type runtimeConfig struct {
 	LogGroup        string
 	OTLPEndpoint    string
 	TracingEnabled  bool
+	ToolSpecsJSON   string
+	ToolGatewayURL  string
+	ToolGatewayAuth string
 	AgentEndpoints  map[string]string
 	ProviderType    string
 	Model           string
@@ -122,6 +131,9 @@ func loadConfig() (*runtimeConfig, error) {
 		OTLPEndpoint:    os.Getenv(envOTLPEndpoint),
 		ProviderType:    os.Getenv(envProviderType),
 		Model:           os.Getenv(envProviderModel),
+		ToolSpecsJSON:   os.Getenv(envToolSpecs),
+		ToolGatewayURL:  os.Getenv(envToolGatewayURL),
+		ToolGatewayAuth: os.Getenv(envToolGatewayAuth),
 		Port:            defaultPort,
 	}
 

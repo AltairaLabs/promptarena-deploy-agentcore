@@ -34,6 +34,10 @@ func (c *simulatedAWSClient) UpdateRuntime(_ context.Context, arn string, _ stri
 	return arn, nil
 }
 
+func (c *simulatedAWSClient) GatewayEndpoint() (url, authorizer string) {
+	return fmt.Sprintf("https://gw-sim.gateway.bedrock-agentcore.%s.amazonaws.com", c.region), "AWS_IAM"
+}
+
 func (c *simulatedAWSClient) CreateGatewayTool(_ context.Context, name string, _ *Config) (string, error) {
 	return fmt.Sprintf("arn:aws:bedrock:%s:%s:gateway-tool/%s", c.region, c.accountID, name), nil
 }

@@ -38,14 +38,8 @@ func run(log *slog.Logger) error {
 		return fmt.Errorf("config: %w", err)
 	}
 
-	if cfg.PackJSON != "" && cfg.PackFile == "" {
-		// tmpPackPath is a fixed, compile-time constant path (not derived from
-		// user input), so this write is not a path-traversal risk.
-		//nolint:gosec // G703: constant path, no taint.
-		if writeErr := os.WriteFile(tmpPackPath, []byte(cfg.PackJSON), tmpPackPerm); writeErr != nil {
-			return fmt.Errorf("write pack JSON to temp file: %w", writeErr)
-		}
-		cfg.PackFile = tmpPackPath
+	if packErr := materializePack(cfg); packErr != nil {
+		return packErr
 	}
 
 	pack, err := prompt.LoadPack(cfg.PackFile)
@@ -69,6 +63,12 @@ func run(log *slog.Logger) error {
 	}()
 
 	sdkOpts := append(buildSDKOptions(cfg), traceOpts...)
+
+	sdkOpts, err = withToolRegistry(sdkOpts, cfg, pack, log)
+	if err != nil {
+		return err
+	}
+
 	opener := sdk.A2AOpener(cfg.PackFile, agentName, sdkOpts...)
 
 	card := buildAgentCard(pack, agentName)
@@ -159,5 +159,22 @@ func runWithShutdown(
 	}
 
 	log.Info("shutdown complete")
+	return nil
+}
+
+// materializePack writes an inline pack to disk so the loader has a file.
+//
+// A pack arrives either as a path or as JSON in the environment; everything
+// downstream wants a path.
+func materializePack(cfg *runtimeConfig) error {
+	if cfg.PackJSON == "" || cfg.PackFile != "" {
+		return nil
+	}
+	// tmpPackPath is a fixed, compile-time constant path (not derived from
+	// user input), so this write is not a path-traversal risk.
+	if err := os.WriteFile(tmpPackPath, []byte(cfg.PackJSON), tmpPackPerm); err != nil {
+		return fmt.Errorf("write pack JSON to temp file: %w", err)
+	}
+	cfg.PackFile = tmpPackPath
 	return nil
 }

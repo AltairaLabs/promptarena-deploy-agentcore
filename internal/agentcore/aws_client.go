@@ -7,6 +7,11 @@ type awsClient interface {
 	CreateRuntime(ctx context.Context, name string, cfg *Config) (arn string, err error)
 	UpdateRuntime(ctx context.Context, arn string, name string, cfg *Config) (string, error)
 	CreateGatewayTool(ctx context.Context, name string, cfg *Config) (arn string, err error)
+
+	// GatewayEndpoint reports the MCP endpoint of the gateway these tools
+	// live behind, and how it authenticates callers. Empty when no gateway
+	// was created. The runtime cannot call its own tools without both.
+	GatewayEndpoint() (url, authorizer string)
 	CreateA2AWiring(ctx context.Context, name string, cfg *Config) (arn string, err error)
 	CreateEvaluator(ctx context.Context, name string, cfg *Config) (arn string, err error)
 	CreateOnlineEvalConfig(ctx context.Context, name string, cfg *Config) (arn string, err error)

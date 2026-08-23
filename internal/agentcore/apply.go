@@ -85,7 +85,7 @@ func (p *Provider) prepareApply(
 	cfg.PackJSON = req.PackJSON
 	cfg.PackTools = pack.Tools
 	cfg.PromptNames = extractPromptNames(pack)
-	cfg.RuntimeEnvVars = buildRuntimeEnvVars(cfg)
+	cfg.RuntimeEnvVars = buildRuntimeEnvVars(cfg, pack)
 	cfg.ResourceTags = buildResourceTags(pack.ID, pack.Version, "", cfg.Tags)
 	cfg.EvalDefs = buildEvalDefs(pack)
 	injectMetricsConfig(cfg, pack)
@@ -259,6 +259,12 @@ func (p *Provider) executeApplyPhases(
 
 	// Capture gateway ARN for Cedar tool policies that need a specific resource.
 	ac.cfg.GatewayARN = findGatewayARN(resources)
+
+	// The gateway's endpoint only exists once it has been created, and the
+	// runtime is created after this point, so its environment is completed
+	// here rather than up front.
+	ac.cfg.GatewayURL, ac.cfg.GatewayAuth = ac.client.GatewayEndpoint()
+	injectToolEnvVars(ac.cfg.RuntimeEnvVars, ac.pack, ac.cfg)
 
 	// Step 2 — Cedar Policies (policy engine + policy per prompt with validators/tool_policy).
 	policyRes, policyErr, policyCbErr := applyPoliciesPhase(ctx, ac)

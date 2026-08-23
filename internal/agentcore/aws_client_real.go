@@ -455,6 +455,11 @@ func (c *realAWSClient) createParentGateway(
 	return nil
 }
 
+// GatewayEndpoint reports the gateway's MCP endpoint and authorizer.
+func (c *realAWSClient) GatewayEndpoint() (url, authorizer string) {
+	return c.gatewayURL, string(c.gatewayAuthorizer)
+}
+
 // AssociatePolicyEngine updates the gateway to reference a policy engine.
 // This must be called after both the gateway and policy engine exist so the
 // engine's Cedar schema includes the gateway's registered tools/actions.

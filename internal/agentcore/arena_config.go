@@ -33,6 +33,12 @@ type ArenaToolSpec struct {
 	OpenAPI     *ArenaSchemaConfig     `json:"openapi,omitempty"`
 	Smithy      *ArenaSchemaConfig     `json:"smithy,omitempty"`
 	Credential  *ArenaCredentialConfig `json:"credential,omitempty"`
+
+	// MockResult and MockTemplate hold what a mock tool answers with. They
+	// are not in the compiled pack — it carries only a tool's schema — so
+	// they reach a deployed agent through here or not at all.
+	MockResult   any    `json:"mock_result,omitempty"`
+	MockTemplate string `json:"mock_template,omitempty"`
 }
 
 // ArenaCredentialConfig specifies the credential provider for a gateway

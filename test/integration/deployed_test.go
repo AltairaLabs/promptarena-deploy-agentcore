@@ -139,6 +139,27 @@ const featureArena = `{
   }
 }`
 
+// mockToolArena gives the tool a canned answer and no AWS target, so the
+// runtime executes it and the Gateway never hears about it.
+func mockToolArena() string {
+	return `{
+  "loaded_providers": {
+    "integration-llm": {
+      "id": "integration-llm",
+      "type": "claude",
+      "model": "` + defaultModel + `"
+    }
+  },
+  "tool_specs": {
+    "lookup_order": {
+      "name": "lookup_order",
+      "mode": "mock",
+      "mock_result": {"order_id": "A-4471", "status": "shipped"}
+    }
+  }
+}`
+}
+
 // toolArena points the tool at a real Lambda, supplied by the environment.
 func toolArena(lambdaARN string) string {
 	return `{
@@ -494,17 +515,55 @@ func TestDeployed_UnaryInvocation(t *testing.T) {
 	}
 }
 
-// TestDeployed_ToolCalling needs somewhere real for the gateway target to
-// point. Set AGENTCORE_TEST_LAMBDA_ARN to a Lambda the runtime role can invoke.
+// TestDeployed_ToolCalling exercises a tool the runtime executes itself.
 //
-// Unlike vertex and foundry, this cannot be faked: a Gateway target is external
-// infrastructure by definition, so there is no mock to substitute.
+// A mock tool needs no AWS tool infrastructure: it declares no Lambda, so no
+// Gateway target is created for it and the runtime answers the call in
+// process. That makes tool calling testable on every run rather than only
+// where someone has staged a Lambda.
+//
+// TestDeployed_GatewayToolCalling covers the other path, which does need one.
 func TestDeployed_ToolCalling(t *testing.T) {
+	env := requireEnv(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), applyTimeout)
+	defer cancel()
+
+	cfgJSON := deployConfig(t, env)
+	state, err := agentcore.NewProvider().Apply(ctx, &deploy.PlanRequest{
+		PackJSON:     packFrom(t, toolPack),
+		DeployConfig: cfgJSON,
+		ArenaConfig:  mockToolArena(),
+	}, nil)
+	if err != nil {
+		if state != "" {
+			destroyQuietly(t, cfgJSON, state)
+		}
+		t.Fatalf("Apply with a tool: %v", err)
+	}
+	t.Cleanup(func() { destroyQuietly(t, cfgJSON, state) })
+
+	answer := ask(t, env, runtimeARN(t, state), newSession("tool"),
+		"What is the status of order A-4471? Use the lookup_order tool.")
+	t.Logf("answer: %s", answer)
+
+	// The mock answers "shipped", so a turn that used the tool says so and a
+	// turn that ignored it cannot.
+	if !strings.Contains(strings.ToLower(answer), "shipped") {
+		t.Errorf("answer %q does not carry the tool result; the tool was not called", answer)
+	}
+}
+
+// TestDeployed_GatewayToolCalling exercises a tool behind an AgentCore Gateway.
+//
+// This one cannot be faked — a Gateway target points at real infrastructure by
+// definition — so it needs a Lambda the runtime role can invoke.
+func TestDeployed_GatewayToolCalling(t *testing.T) {
 	env := requireEnv(t)
 
 	lambdaARN := os.Getenv(envLambdaARN)
 	if lambdaARN == "" {
-		t.Skipf("set %s to a Lambda the runtime role can invoke to exercise tool calling",
+		t.Skipf("set %s to a Lambda the runtime role can invoke to exercise the gateway path",
 			envLambdaARN)
 	}
 
@@ -521,16 +580,16 @@ func TestDeployed_ToolCalling(t *testing.T) {
 		if state != "" {
 			destroyQuietly(t, cfgJSON, state)
 		}
-		t.Fatalf("Apply with a tool: %v", err)
+		t.Fatalf("Apply with a gateway tool: %v", err)
 	}
 	t.Cleanup(func() { destroyQuietly(t, cfgJSON, state) })
 
-	answer := ask(t, env, runtimeARN(t, state), newSession("tool"),
+	answer := ask(t, env, runtimeARN(t, state), newSession("gwtool"),
 		"What is the status of order A-4471? Use the lookup_order tool.")
 	t.Logf("answer: %s", answer)
 
 	if answer == "" {
-		t.Error("no answer from a tool-calling turn")
+		t.Error("no answer from a gateway tool-calling turn")
 	}
 }
 
