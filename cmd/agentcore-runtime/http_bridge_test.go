@@ -150,15 +150,8 @@ func TestBuildA2ARequest_WithMetadata(t *testing.T) {
 
 func TestExtractArtifactText(t *testing.T) {
 	resp := &a2aResponse{}
-	resp.Result.Artifacts = []struct {
-		Parts []struct {
-			Text string `json:"text"`
-		} `json:"parts"`
-		Metadata map[string]any `json:"metadata,omitempty"`
-	}{
-		{Parts: []struct {
-			Text string `json:"text"`
-		}{
+	resp.Result.Artifacts = []a2aArtifact{
+		{Parts: []a2aArtifactPart{
 			{Text: "hello "},
 			{Text: "world"},
 		}},
@@ -178,16 +171,8 @@ func TestExtractFailedMessage_Default(t *testing.T) {
 func TestExtractFailedMessage_WithMessage(t *testing.T) {
 	errText := "something went wrong"
 	resp := &a2aResponse{}
-	resp.Result.Status.Message = &struct {
-		Parts []struct {
-			Text *string `json:"text"`
-		} `json:"parts"`
-	}{
-		Parts: []struct {
-			Text *string `json:"text"`
-		}{
-			{Text: &errText},
-		},
+	resp.Result.Status.Message = &a2aMessage{
+		Parts: []a2aMessagePart{{Text: &errText}},
 	}
 	if got := extractFailedMessage(resp); got != errText {
 		t.Errorf("extractFailedMessage = %q, want %q", got, errText)

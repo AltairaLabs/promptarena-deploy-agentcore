@@ -9,6 +9,88 @@ import (
 
 func floatPtr(f float64) *float64 { return &f }
 
+// The per-case checks live outside the table so each one stands on its own
+// and the test body stays a plain loop.
+
+func checkGaugeEntry(t *testing.T, mc *MetricsConfig) {
+	t.Helper()
+	m := mc.Metrics[0]
+	assertStr(t, "EvalID", m.EvalID, "accuracy")
+	assertStr(t, "MetricName", m.MetricName, "accuracy_score")
+	assertStr(t, "MetricType", m.MetricType, "gauge")
+	assertStr(t, "Unit", m.Unit, unitNone)
+}
+
+func checkCounterAlarm(t *testing.T, mc *MetricsConfig) {
+	t.Helper()
+	assertStr(t, "Unit", mc.Metrics[0].Unit, unitCount)
+	a := mc.Alarms[0]
+	assertStr(t, "AlarmMetricName", a.MetricName, "retry_count")
+	if a.Min == nil || *a.Min != 0 {
+		t.Errorf("alarm Min = %v, want 0", a.Min)
+	}
+	if a.Max == nil || *a.Max != 10 {
+		t.Errorf("alarm Max = %v, want 10", a.Max)
+	}
+}
+
+func checkHistogramUnit(t *testing.T, mc *MetricsConfig) {
+	t.Helper()
+	assertStr(t, "Unit", mc.Metrics[0].Unit, unitMilliseconds)
+}
+
+func checkOnlyMetricEvalKept(t *testing.T, mc *MetricsConfig) {
+	t.Helper()
+	assertStr(t, "EvalID", mc.Metrics[0].EvalID, "eval-with-metric")
+	assertStr(t, "Unit", mc.Metrics[0].Unit, unitNone)
+}
+
+func checkAllUnits(t *testing.T, mc *MetricsConfig) {
+	t.Helper()
+	wantUnits := []string{unitNone, unitCount, unitMilliseconds, unitNone}
+	for i, want := range wantUnits {
+		assertStr(t, mc.Metrics[i].MetricName, mc.Metrics[i].Unit, want)
+	}
+}
+
+func checkMinOnlyAlarm(t *testing.T, mc *MetricsConfig) {
+	t.Helper()
+	a := mc.Alarms[0]
+	if a.Min == nil || *a.Min != 0.5 {
+		t.Errorf("alarm Min = %v, want 0.5", a.Min)
+	}
+	if a.Max != nil {
+		t.Errorf("alarm Max = %v, want nil", a.Max)
+	}
+}
+
+func checkMaxOnlyAlarm(t *testing.T, mc *MetricsConfig) {
+	t.Helper()
+	a := mc.Alarms[0]
+	if a.Min != nil {
+		t.Errorf("alarm Min = %v, want nil", a.Min)
+	}
+	if a.Max == nil || *a.Max != 100 {
+		t.Errorf("alarm Max = %v, want 100", a.Max)
+	}
+}
+
+// assertDimensions checks that every wanted dimension is present with the
+// wanted value. Dimensions beyond the wanted set are not the test's concern.
+func assertDimensions(t *testing.T, got, want map[string]string) {
+	t.Helper()
+	for k, wantVal := range want {
+		gotVal, ok := got[k]
+		if !ok {
+			t.Errorf("missing dimension %q", k)
+			continue
+		}
+		if gotVal != wantVal {
+			t.Errorf("dimension %q = %q, want %q", k, gotVal, wantVal)
+		}
+	}
+}
+
 func TestBuildMetricsConfig(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -36,14 +118,7 @@ func TestBuildMetricsConfig(t *testing.T) {
 			wantCount:  1,
 			wantAlarms: 0,
 			wantDims:   map[string]string{"pack_id": "test-pack"},
-			checkFunc: func(t *testing.T, mc *MetricsConfig) {
-				t.Helper()
-				m := mc.Metrics[0]
-				assertStr(t, "EvalID", m.EvalID, "accuracy")
-				assertStr(t, "MetricName", m.MetricName, "accuracy_score")
-				assertStr(t, "MetricType", m.MetricType, "gauge")
-				assertStr(t, "Unit", m.Unit, unitNone)
-			},
+			checkFunc:  checkGaugeEntry,
 		},
 		{
 			name: "counter with range produces alarm",
@@ -65,18 +140,7 @@ func TestBuildMetricsConfig(t *testing.T) {
 			},
 			wantCount:  1,
 			wantAlarms: 1,
-			checkFunc: func(t *testing.T, mc *MetricsConfig) {
-				t.Helper()
-				assertStr(t, "Unit", mc.Metrics[0].Unit, unitCount)
-				a := mc.Alarms[0]
-				assertStr(t, "AlarmMetricName", a.MetricName, "retry_count")
-				if a.Min == nil || *a.Min != 0 {
-					t.Errorf("alarm Min = %v, want 0", a.Min)
-				}
-				if a.Max == nil || *a.Max != 10 {
-					t.Errorf("alarm Max = %v, want 10", a.Max)
-				}
-			},
+			checkFunc:  checkCounterAlarm,
 		},
 		{
 			name: "no evals with metrics returns nil",
@@ -110,10 +174,7 @@ func TestBuildMetricsConfig(t *testing.T) {
 			},
 			wantCount: 1,
 			wantDims:  map[string]string{"pack_id": "multi-pack", "agent": "multi"},
-			checkFunc: func(t *testing.T, mc *MetricsConfig) {
-				t.Helper()
-				assertStr(t, "Unit", mc.Metrics[0].Unit, unitMilliseconds)
-			},
+			checkFunc: checkHistogramUnit,
 		},
 		{
 			name: "mixed evals only includes those with metrics",
@@ -129,11 +190,7 @@ func TestBuildMetricsConfig(t *testing.T) {
 				},
 			},
 			wantCount: 1,
-			checkFunc: func(t *testing.T, mc *MetricsConfig) {
-				t.Helper()
-				assertStr(t, "EvalID", mc.Metrics[0].EvalID, "eval-with-metric")
-				assertStr(t, "Unit", mc.Metrics[0].Unit, unitNone)
-			},
+			checkFunc: checkOnlyMetricEvalKept,
 		},
 		{
 			name: "all four metric types map to correct units",
@@ -147,13 +204,7 @@ func TestBuildMetricsConfig(t *testing.T) {
 				},
 			},
 			wantCount: 4,
-			checkFunc: func(t *testing.T, mc *MetricsConfig) {
-				t.Helper()
-				wantUnits := []string{unitNone, unitCount, unitMilliseconds, unitNone}
-				for i, want := range wantUnits {
-					assertStr(t, mc.Metrics[i].MetricName, mc.Metrics[i].Unit, want)
-				}
-			},
+			checkFunc: checkAllUnits,
 		},
 		{
 			name: "alarm with only min",
@@ -171,16 +222,7 @@ func TestBuildMetricsConfig(t *testing.T) {
 				},
 			},
 			wantAlarms: 1,
-			checkFunc: func(t *testing.T, mc *MetricsConfig) {
-				t.Helper()
-				a := mc.Alarms[0]
-				if a.Min == nil || *a.Min != 0.5 {
-					t.Errorf("alarm Min = %v, want 0.5", a.Min)
-				}
-				if a.Max != nil {
-					t.Errorf("alarm Max = %v, want nil", a.Max)
-				}
-			},
+			checkFunc:  checkMinOnlyAlarm,
 		},
 		{
 			name: "alarm with only max",
@@ -198,16 +240,7 @@ func TestBuildMetricsConfig(t *testing.T) {
 				},
 			},
 			wantAlarms: 1,
-			checkFunc: func(t *testing.T, mc *MetricsConfig) {
-				t.Helper()
-				a := mc.Alarms[0]
-				if a.Min != nil {
-					t.Errorf("alarm Min = %v, want nil", a.Min)
-				}
-				if a.Max == nil || *a.Max != 100 {
-					t.Errorf("alarm Max = %v, want 100", a.Max)
-				}
-			},
+			checkFunc:  checkMaxOnlyAlarm,
 		},
 	}
 
@@ -233,16 +266,7 @@ func TestBuildMetricsConfig(t *testing.T) {
 			if tt.wantAlarms > 0 && len(mc.Alarms) != tt.wantAlarms {
 				t.Fatalf("got %d alarms, want %d", len(mc.Alarms), tt.wantAlarms)
 			}
-			if tt.wantDims != nil {
-				for k, want := range tt.wantDims {
-					got, ok := mc.Dimensions[k]
-					if !ok {
-						t.Errorf("missing dimension %q", k)
-					} else if got != want {
-						t.Errorf("dimension %q = %q, want %q", k, got, want)
-					}
-				}
-			}
+			assertDimensions(t, mc.Dimensions, tt.wantDims)
 			if tt.checkFunc != nil {
 				tt.checkFunc(t, mc)
 			}

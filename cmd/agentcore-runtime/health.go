@@ -25,7 +25,7 @@ func (h *healthHandler) setUnhealthy() {
 
 // ServeHTTP returns 200 when ready or 503 when draining.
 func (h *healthHandler) ServeHTTP(w http.ResponseWriter, _ *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set(headerContentType, contentTypeJSON)
 
 	status := "healthy"
 	code := http.StatusOK
