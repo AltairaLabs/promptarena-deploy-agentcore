@@ -5,7 +5,7 @@ package agentcore
 import (
 	"testing"
 
-	"github.com/AltairaLabs/PromptKit/runtime/deploy"
+	"github.com/AltairaLabs/promptarena/deploy"
 )
 
 // TestIntegration_ApplyOnly creates resources and leaves them running for inspection.

@@ -3,9 +3,9 @@ package agentcore
 import (
 	"sort"
 
-	"github.com/AltairaLabs/PromptKit/runtime/deploy/adaptersdk"
 	"github.com/AltairaLabs/PromptKit/runtime/evals"
 	"github.com/AltairaLabs/PromptKit/runtime/prompt"
+	"github.com/AltairaLabs/promptarena/deploy/adaptersdk"
 )
 
 // CloudWatch dashboard layout constants.

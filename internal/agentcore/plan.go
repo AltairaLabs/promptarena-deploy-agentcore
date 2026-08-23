@@ -5,11 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
-	"strings"
 
-	"github.com/AltairaLabs/PromptKit/runtime/deploy"
-	"github.com/AltairaLabs/PromptKit/runtime/deploy/adaptersdk"
 	"github.com/AltairaLabs/PromptKit/runtime/prompt"
+	"github.com/AltairaLabs/promptarena/deploy"
+	"github.com/AltairaLabs/promptarena/deploy/adaptersdk"
 )
 
 // Plan generates a deployment plan for the given pack and config.
@@ -61,15 +60,13 @@ func (p *Provider) Plan(ctx context.Context, req *deploy.PlanRequest) (*deploy.P
 	// 8. Diff against the verified prior state.
 	changes := diffResources(desired, prior)
 
-	// 9. Build summary.
-	summary := buildSummary(changes)
-	if len(drift) > 0 {
-		summary = fmt.Sprintf("%s\nDrift detected: %s", summary, strings.Join(drift, "; "))
-	}
+	// 9. Drift joins the plan ahead of the changes it explains: each entry
+	// says why the resource below it is being created rather than updated.
+	changes = append(drift, changes...)
 
 	return &deploy.PlanResponse{
 		Changes: changes,
-		Summary: summary,
+		Summary: buildSummary(changes),
 	}, nil
 }
 
@@ -272,8 +269,13 @@ func diffResources(desired []deploy.ResourceChange, prior *AdapterState) []deplo
 
 // buildSummary produces a human-readable summary line such as
 // "Plan: 3 to create, 1 to update, 0 to delete".
+//
+// The three fixed counts are documented in the tutorials, so they stay
+// unconditional. Drift is appended only when there is some, which keeps every
+// published example exact while still surfacing the case an operator most
+// needs to see: resources that vanished outside promptarena.
 func buildSummary(changes []deploy.ResourceChange) string {
-	var create, update, del int
+	var create, update, del, drifted int
 	for _, c := range changes {
 		switch c.Action {
 		case deploy.ActionCreate:
@@ -285,8 +287,12 @@ func buildSummary(changes []deploy.ResourceChange) string {
 		case deploy.ActionNoChange:
 			// counted but not shown
 		case deploy.ActionDrift:
-			// drift detected but not tallied separately
+			drifted++
 		}
 	}
-	return fmt.Sprintf("Plan: %d to create, %d to update, %d to delete", create, update, del)
+	summary := fmt.Sprintf("Plan: %d to create, %d to update, %d to delete", create, update, del)
+	if drifted > 0 {
+		summary = fmt.Sprintf("%s, %d drifted", summary, drifted)
+	}
+	return summary
 }

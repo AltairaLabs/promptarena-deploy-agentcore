@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/AltairaLabs/PromptKit/runtime/deploy"
 	"github.com/AltairaLabs/PromptKit/runtime/evals"
+	"github.com/AltairaLabs/promptarena/deploy"
 )
 
 // packWithJudgeEval returns a pack JSON containing one llm_as_judge eval
