@@ -594,7 +594,9 @@ func applyPhase(ctx context.Context, ac *applyContext, spec phaseSpec) applyPhas
 
 		if err := reporter.Resource(&deploy.ResourceResult{
 			Type: resType, Name: name, Action: op.action,
-			Status: op.status, Detail: arn,
+			Status: op.status,
+			Detail: detailWithInvokeHint(resType, arn),
+			Links:  consoleLinks(cfg.Region),
 		}); err != nil {
 			result.callbackErr = err
 			return result
