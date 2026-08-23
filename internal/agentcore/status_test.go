@@ -594,3 +594,20 @@ func TestIsInDestroyOrder(t *testing.T) {
 		}
 	}
 }
+
+// Destroy's callback is optional, exactly as Apply's is, and a teardown run
+// without one is normal — the integration suite cleans up that way, and so
+// would any non-interactive caller. Every emit used to dereference it, so such
+// a run panicked partway through: resources left behind, and a stack trace
+// instead of a list of what survived.
+func TestDestroy_NilCallbackDoesNotPanic(t *testing.T) {
+	p := newSimulatedProvider()
+
+	err := p.Destroy(context.Background(), &deploy.DestroyRequest{
+		DeployConfig: validDestroyConfig(),
+		PriorState:   mustJSON(t, sampleState()),
+	}, nil)
+	if err != nil {
+		t.Fatalf("Destroy with a nil callback: %v", err)
+	}
+}

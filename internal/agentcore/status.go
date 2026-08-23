@@ -46,6 +46,16 @@ func (p *Provider) Destroy(
 		return fmt.Errorf("agentcore: failed to create destroyer: %w", err)
 	}
 
+	// The callback is optional, exactly as Apply's is, and a teardown run
+	// without one is normal — it is how the integration suite cleans up and how
+	// any non-interactive caller would use Destroy. Every emit below used to
+	// dereference it, so such a run panicked partway through, leaving resources
+	// behind and reporting a stack trace rather than which ones survived.
+	//
+	// Normalised once here rather than guarded at each of the four call sites:
+	// guarding individually is exactly what let them drift out of step.
+	callback = orDiscard(callback)
+
 	byType := groupByType(state.Resources)
 
 	emitDestroyEvent(callback, "progress",
@@ -137,7 +147,15 @@ func destroyUnorderedResources(
 
 // emitDestroyEvent is a helper to send a simple destroy event.
 func emitDestroyEvent(callback deploy.DestroyCallback, eventType, message string) {
-	_ = callback(&deploy.DestroyEvent{Type: eventType, Message: message})
+	_ = orDiscard(callback)(&deploy.DestroyEvent{Type: eventType, Message: message})
+}
+
+// orDiscard returns callback, or one that discards events when it is nil.
+func orDiscard(callback deploy.DestroyCallback) deploy.DestroyCallback {
+	if callback != nil {
+		return callback
+	}
+	return func(*deploy.DestroyEvent) error { return nil }
 }
 
 // groupByType builds a lookup of resources indexed by type.

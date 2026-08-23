@@ -106,7 +106,7 @@ func (p *Provider) prepareApply(
 	return &applyContext{
 		pack:     pack,
 		cfg:      cfg,
-		reporter: adaptersdk.NewProgressReporter(callback),
+		reporter: newReporter(callback),
 		client:   client,
 		priorMap: parsePriorState(req.PriorState),
 	}, nil
@@ -178,7 +178,7 @@ func (p *Provider) applyDryRun(
 	cfg.PackJSON = req.PackJSON
 	cfg.PackTools = pack.Tools
 
-	reporter := adaptersdk.NewProgressReporter(callback)
+	reporter := newReporter(callback)
 	desired := generateDesiredResources(pack, cfg)
 
 	resources, cbErr := emitDryRunResources(reporter, desired)
@@ -652,6 +652,26 @@ func execOp(
 
 // parsePriorState deserializes the prior state string into a lookup map
 // keyed by resourceKey(type, name). Returns an empty map if no prior state.
+// newReporter builds a progress reporter that is safe to call unconditionally.
+//
+// Apply's callback is optional and the adapter's own integration suite passes
+// nil. Handing NewProgressReporter a nil callback yields a reporter that
+// panics on first use — mid-apply, after resources exist — so the caller gets
+// a stack trace instead of the state saying what needs cleaning up.
+//
+// A no-op callback rather than a nil reporter, deliberately. Returning nil
+// would move the problem rather than fix it: this package calls Progress and
+// Resource on the reporter in around a dozen places, and on the SDK version
+// pinned here those methods dereference the receiver without a nil check, so a
+// nil reporter panics just the same. A live reporter that discards events
+// keeps every call site correct on any SDK version.
+func newReporter(callback deploy.ApplyCallback) *adaptersdk.ProgressReporter {
+	if callback == nil {
+		callback = func(*deploy.ApplyEvent) error { return nil }
+	}
+	return adaptersdk.NewProgressReporter(callback)
+}
+
 func parsePriorState(priorState string) map[string]ResourceState {
 	priorMap := make(map[string]ResourceState)
 	if priorState == "" {

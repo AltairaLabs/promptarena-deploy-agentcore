@@ -2294,3 +2294,38 @@ func stateByName(resources []ResourceState) map[string]ResourceState {
 	}
 	return byName
 }
+
+// Apply's callback is optional, and the integration suite passes nil the way
+// its vertex and foundry counterparts do. That panicked mid-apply — after the
+// memory resource had been created — so the caller got a stack trace instead
+// of the state telling them what already existed.
+func TestApply_NilCallbackDoesNotPanic(t *testing.T) {
+	provider := newSimulatedProvider()
+	req := &deploy.PlanRequest{
+		PackJSON:     singleAgentPack(),
+		DeployConfig: validConfig(t),
+		ArenaConfig:  validArenaConfigJSON,
+	}
+
+	state, err := provider.Apply(context.Background(), req, nil)
+	if err != nil {
+		t.Fatalf("Apply with a nil callback: %v", err)
+	}
+	if state == "" {
+		t.Error("Apply returned no state")
+	}
+}
+
+// The dry-run path builds its own reporter, so it needs the same treatment.
+func TestApply_DryRunNilCallbackDoesNotPanic(t *testing.T) {
+	provider := newSimulatedProvider()
+	req := &deploy.PlanRequest{
+		PackJSON:     singleAgentPack(),
+		DeployConfig: validConfigDryRun(),
+		ArenaConfig:  validArenaConfigJSON,
+	}
+
+	if _, err := provider.Apply(context.Background(), req, nil); err != nil {
+		t.Fatalf("dry-run Apply with a nil callback: %v", err)
+	}
+}
