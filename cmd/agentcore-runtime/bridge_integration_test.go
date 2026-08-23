@@ -109,10 +109,7 @@ func (m *mockA2AServer) handleSend(w http.ResponseWriter, params map[string]any)
 	}
 	// Default: echo the input text back.
 	text := extractTextFromParams(params)
-	contextID := ""
-	if cid, ok := params["contextId"].(string); ok {
-		contextID = cid
-	}
+	contextID := contextIDFromParams(params)
 	resp := fmt.Sprintf(`{
 		"jsonrpc": "2.0",
 		"id": "1",
@@ -137,10 +134,7 @@ func (m *mockA2AServer) handleStream(w http.ResponseWriter, params map[string]an
 	}
 	// Default: working → 2 artifact chunks → completed.
 	text := extractTextFromParams(params)
-	contextID := ""
-	if cid, ok := params["contextId"].(string); ok {
-		contextID = cid
-	}
+	contextID := contextIDFromParams(params)
 	events := []string{
 		fmt.Sprintf(`{"jsonrpc":"2.0","id":"1","result":{"taskId":"task-s1","contextId":%q,"status":{"state":"working"}}}`, contextID),
 		fmt.Sprintf(`{"jsonrpc":"2.0","id":"1","result":{"taskId":"task-s1","contextId":%q,"artifact":{"parts":[{"text":"echo: "}]}}}`, contextID),
@@ -274,8 +268,8 @@ func TestIntegration_Invocation_SessionPropagation(t *testing.T) {
 	if !ok {
 		t.Fatal("expected lastSendParams to be set")
 	}
-	if params["contextId"] != "session-42" {
-		t.Errorf("a2a contextId = %v, want session-42", params["contextId"])
+	if got := contextIDFromParams(params); got != "session-42" {
+		t.Errorf("a2a message.contextId = %q, want session-42", got)
 	}
 }
 
@@ -1312,4 +1306,21 @@ func wsInvocation(baseURL string) error {
 		return fmt.Errorf("ws: Type=%q, want text", wsResp.Type)
 	}
 	return nil
+}
+
+// contextIDFromParams reads the session the way the real A2A server does.
+//
+// The server unmarshals params into a2a.SendMessageRequest and takes
+// params.Message.ContextID; that struct has no params-level contextId field,
+// so a value set beside the message is dropped on decode. This mock used to
+// read the params level, which meant it and the bridge agreed with each other
+// while both disagreed with the server, and the tests stayed green while every
+// deployed turn opened a new conversation.
+func contextIDFromParams(params map[string]any) string {
+	message, ok := params["message"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	cid, _ := message["contextId"].(string)
+	return cid
 }

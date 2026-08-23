@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/AltairaLabs/PromptKit/runtime/a2a"
 )
 
 // --- invocationRequest tests ---
@@ -112,18 +114,30 @@ func TestBuildA2ARequest_Simple(t *testing.T) {
 	}
 }
 
+// TestBuildA2ARequest_WithSession pins the session onto the field the A2A
+// server actually reads.
+//
+// It decodes into a2a.SendMessageRequest — the type the server unmarshals
+// into — rather than a generic map. That type has no params-level contextId
+// field, so a session set beside the message is dropped on decode and every
+// turn opens a new conversation. Decoding through the real type is what keeps
+// this honest: the map-based assertion this replaces passed for as long as the
+// server was silently ignoring the value.
 func TestBuildA2ARequest_WithSession(t *testing.T) {
 	data, err := buildA2ARequest("hello", "session-abc", nil)
 	if err != nil {
 		t.Fatalf("buildA2ARequest: %v", err)
 	}
-	var req map[string]any
+
+	var req struct {
+		Params a2a.SendMessageRequest `json:"params"`
+	}
 	if err := json.Unmarshal(data, &req); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	params := req["params"].(map[string]any)
-	if params["contextId"] != "session-abc" {
-		t.Errorf("contextId = %v, want session-abc", params["contextId"])
+	if req.Params.Message.ContextID != "session-abc" {
+		t.Errorf("message.contextId = %q, want session-abc",
+			req.Params.Message.ContextID)
 	}
 }
 
@@ -381,8 +395,9 @@ func TestHandleInvocation_SessionHeader(t *testing.T) {
 		t.Fatalf("unmarshal a2a request: %v", err)
 	}
 	params, _ := a2aReq["params"].(map[string]any)
-	if params["contextId"] != "session-xyz" {
-		t.Errorf("contextId = %v, want session-xyz", params["contextId"])
+	// On the message, which is where the A2A server reads it.
+	if got := contextIDFromParams(params); got != "session-xyz" {
+		t.Errorf("message.contextId = %q, want session-xyz", got)
 	}
 
 	// Verify metadata was forwarded.

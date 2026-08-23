@@ -44,12 +44,12 @@ func buildA2AStreamRequest(text, sessionID string, metadata map[string]any) ([]b
 	if len(metadata) > 0 {
 		message["metadata"] = metadata
 	}
+	if sessionID != "" {
+		message[keyContextID] = sessionID
+	}
 
 	params := map[string]any{
 		keyMessage: message,
-	}
-	if sessionID != "" {
-		params["contextId"] = sessionID
 	}
 
 	a2aReq := map[string]any{

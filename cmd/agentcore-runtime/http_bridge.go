@@ -241,15 +241,15 @@ func buildA2ARequest(text, sessionID string, metadata map[string]any) ([]byte, e
 	if len(metadata) > 0 {
 		message["metadata"] = metadata
 	}
+	if sessionID != "" {
+		message[keyContextID] = sessionID
+	}
 
 	params := map[string]any{
 		keyMessage: message,
 		keyConfiguration: map[string]any{
 			keyBlocking: true,
 		},
-	}
-	if sessionID != "" {
-		params["contextId"] = sessionID
 	}
 
 	a2aReq := map[string]any{
