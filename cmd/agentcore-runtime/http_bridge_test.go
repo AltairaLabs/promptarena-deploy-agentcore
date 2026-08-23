@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -150,15 +152,8 @@ func TestBuildA2ARequest_WithMetadata(t *testing.T) {
 
 func TestExtractArtifactText(t *testing.T) {
 	resp := &a2aResponse{}
-	resp.Result.Artifacts = []struct {
-		Parts []struct {
-			Text string `json:"text"`
-		} `json:"parts"`
-		Metadata map[string]any `json:"metadata,omitempty"`
-	}{
-		{Parts: []struct {
-			Text string `json:"text"`
-		}{
+	resp.Result.Artifacts = []a2aArtifact{
+		{Parts: []a2aArtifactPart{
 			{Text: "hello "},
 			{Text: "world"},
 		}},
@@ -178,16 +173,8 @@ func TestExtractFailedMessage_Default(t *testing.T) {
 func TestExtractFailedMessage_WithMessage(t *testing.T) {
 	errText := "something went wrong"
 	resp := &a2aResponse{}
-	resp.Result.Status.Message = &struct {
-		Parts []struct {
-			Text *string `json:"text"`
-		} `json:"parts"`
-	}{
-		Parts: []struct {
-			Text *string `json:"text"`
-		}{
-			{Text: &errText},
-		},
+	resp.Result.Status.Message = &a2aMessage{
+		Parts: []a2aMessagePart{{Text: &errText}},
 	}
 	if got := extractFailedMessage(resp); got != errText {
 		t.Errorf("extractFailedMessage = %q, want %q", got, errText)
@@ -373,23 +360,7 @@ func TestHandleInvocation_SessionHeader(t *testing.T) {
 	}))
 	defer a2aMock.Close()
 
-	// Extract port from mock server URL.
-	parts := strings.Split(a2aMock.URL, ":")
-	port := 0
-	for _, p := range parts {
-		if n := 0; len(p) > 0 {
-			_, _ = json.Number(p).Int64()
-			// Simple port extraction
-			for _, c := range p {
-				if c >= '0' && c <= '9' {
-					n = n*10 + int(c-'0')
-				}
-			}
-			if n > 0 {
-				port = n
-			}
-		}
-	}
+	port := mockServerPort(t, a2aMock.URL)
 
 	b := &httpBridge{
 		a2aPort: port,
@@ -447,4 +418,18 @@ func TestHandleInvocation_InvalidJSON(t *testing.T) {
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
 	}
+}
+
+// mockServerPort returns the port an httptest server is listening on.
+func mockServerPort(t *testing.T, rawURL string) int {
+	t.Helper()
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		t.Fatalf("parse mock URL %q: %v", rawURL, err)
+	}
+	port, err := strconv.Atoi(u.Port())
+	if err != nil {
+		t.Fatalf("parse port from %q: %v", rawURL, err)
+	}
+	return port
 }

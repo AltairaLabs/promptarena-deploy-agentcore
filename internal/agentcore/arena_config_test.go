@@ -19,7 +19,7 @@ func TestParseArenaConfig_InvalidJSON(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for invalid JSON")
 	}
-	if got := err.Error(); got == "arena_config is required" {
+	if err.Error() == "arena_config is required" {
 		t.Fatal("got wrong error — should be a JSON parse error")
 	}
 }

@@ -794,11 +794,8 @@ func TestValidate_Protocol(t *testing.T) {
 
 	t.Run("empty protocol is valid", func(t *testing.T) {
 		cfg := base
-		errs := cfg.validate()
-		for _, e := range errs {
-			if contains(e, "protocol") {
-				t.Errorf("unexpected protocol error: %s", e)
-			}
+		if errs := cfg.validate(); hasProtocolError(errs) {
+			t.Errorf("unexpected protocol error in %v", errs)
 		}
 	})
 
@@ -806,11 +803,8 @@ func TestValidate_Protocol(t *testing.T) {
 		t.Run("valid "+proto, func(t *testing.T) {
 			cfg := base
 			cfg.Protocol = proto
-			errs := cfg.validate()
-			for _, e := range errs {
-				if contains(e, "protocol") {
-					t.Errorf("unexpected protocol error: %s", e)
-				}
+			if errs := cfg.validate(); hasProtocolError(errs) {
+				t.Errorf("unexpected protocol error in %v", errs)
 			}
 		})
 	}
@@ -818,17 +812,20 @@ func TestValidate_Protocol(t *testing.T) {
 	t.Run("invalid protocol", func(t *testing.T) {
 		cfg := base
 		cfg.Protocol = "grpc"
-		errs := cfg.validate()
-		found := false
-		for _, e := range errs {
-			if contains(e, "protocol") {
-				found = true
-			}
-		}
-		if !found {
+		if !hasProtocolError(cfg.validate()) {
 			t.Error("expected protocol validation error")
 		}
 	})
+}
+
+// hasProtocolError reports whether validation complained about the protocol.
+func hasProtocolError(errs []string) bool {
+	for _, e := range errs {
+		if contains(e, "protocol") {
+			return true
+		}
+	}
+	return false
 }
 
 func TestResolveServerProtocol(t *testing.T) {

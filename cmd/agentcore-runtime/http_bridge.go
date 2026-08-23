@@ -26,6 +26,13 @@ const sessionHeader = "X-Amzn-Bedrock-AgentCore-Runtime-Session-Id"
 // stateFailed is the A2A task state indicating failure.
 const stateFailed = "failed"
 
+// headerContentType names the content-type header, and contentTypeJSON is the
+// media type every non-streaming request and response on this bridge uses.
+const (
+	headerContentType = "Content-Type"
+	contentTypeJSON   = "application/json"
+)
+
 // invocationRequest is the payload format sent by invoke_agent_runtime.
 // Supports both "prompt" (our convention) and "input" (AWS example convention).
 // Extra fields are captured as metadata and forwarded to the A2A server.
@@ -154,7 +161,7 @@ func (b *httpBridge) shutdown(ctx context.Context) error {
 
 // writeInvocationError writes a JSON error response for an invocation.
 func writeInvocationError(w http.ResponseWriter, msg string) {
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set(headerContentType, contentTypeJSON)
 	w.WriteHeader(http.StatusInternalServerError)
 	_ = json.NewEncoder(w).Encode(invocationResponse{
 		Response: msg,
@@ -167,35 +174,57 @@ func (b *httpBridge) handleUnknown(w http.ResponseWriter, r *http.Request) {
 	body, _ := io.ReadAll(r.Body)
 	b.log.Warn("unmatched request on http bridge",
 		"method", r.Method, "path", r.URL.Path,
-		"content-type", r.Header.Get("Content-Type"),
+		"content-type", r.Header.Get(headerContentType),
 		"body_size", len(body), "body", string(body))
 	http.Error(w, "not found", http.StatusNotFound)
 }
 
 // a2aResponse is the parsed JSON-RPC response from the A2A server.
 type a2aResponse struct {
-	Result struct {
-		ID        string `json:"id"`
-		ContextID string `json:"contextId"`
-		Status    struct {
-			State   string `json:"state"`
-			Message *struct {
-				Parts []struct {
-					Text *string `json:"text"`
-				} `json:"parts"`
-			} `json:"message"`
-		} `json:"status"`
-		Artifacts []struct {
-			Parts []struct {
-				Text string `json:"text"`
-			} `json:"parts"`
-			Metadata map[string]any `json:"metadata,omitempty"`
-		} `json:"artifacts"`
-		Metadata map[string]any `json:"metadata,omitempty"`
-	} `json:"result"`
-	Error *struct {
-		Message string `json:"message"`
-	} `json:"error"`
+	Result a2aResult `json:"result"`
+	Error  *a2aError `json:"error"`
+}
+
+// a2aResult is the successful half of the response: the task and what it produced.
+type a2aResult struct {
+	ID        string         `json:"id"`
+	ContextID string         `json:"contextId"`
+	Status    a2aStatus      `json:"status"`
+	Artifacts []a2aArtifact  `json:"artifacts"`
+	Metadata  map[string]any `json:"metadata,omitempty"`
+}
+
+// a2aStatus carries the task state and, on failure, the explanatory message.
+type a2aStatus struct {
+	State   string      `json:"state"`
+	Message *a2aMessage `json:"message"`
+}
+
+// a2aMessage is the status message, split into parts by the A2A protocol.
+type a2aMessage struct {
+	Parts []a2aMessagePart `json:"parts"`
+}
+
+// a2aMessagePart holds optional text: a part with no text is not the same as
+// a part with empty text, so the pointer is load-bearing.
+type a2aMessagePart struct {
+	Text *string `json:"text"`
+}
+
+// a2aArtifact is one output the agent produced.
+type a2aArtifact struct {
+	Parts    []a2aArtifactPart `json:"parts"`
+	Metadata map[string]any    `json:"metadata,omitempty"`
+}
+
+// a2aArtifactPart is one text fragment of an artifact.
+type a2aArtifactPart struct {
+	Text string `json:"text"`
+}
+
+// a2aError is the JSON-RPC error half of the response.
+type a2aError struct {
+	Message string `json:"message"`
 }
 
 // buildA2ARequest creates a blocking A2A message/send JSON-RPC request.
@@ -290,7 +319,7 @@ func extractUsage(result *a2aResponse) *usageInfo {
 // call and returns the response.
 func (b *httpBridge) handleInvocation(w http.ResponseWriter, r *http.Request) {
 	b.log.Info("invocation received", "method", r.Method, "path", r.URL.Path,
-		"content-type", r.Header.Get("Content-Type"))
+		"content-type", r.Header.Get(headerContentType))
 
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -341,7 +370,7 @@ func (b *httpBridge) forwardToA2A(a2aBody []byte) ([]byte, error) {
 	a2aURL := fmt.Sprintf("http://127.0.0.1:%d/a2a", b.a2aPort)
 	b.log.Info("forwarding to a2a", "url", a2aURL, "body_size", len(a2aBody))
 
-	resp, err := http.Post(a2aURL, "application/json", //nolint:noctx,gosec // internal loopback
+	resp, err := http.Post(a2aURL, contentTypeJSON, //nolint:noctx,gosec // internal loopback
 		bytes.NewReader(a2aBody))
 	if err != nil {
 		b.log.Error("a2a forward failed", "error", err)
@@ -362,7 +391,7 @@ func (b *httpBridge) forwardToA2A(a2aBody []byte) ([]byte, error) {
 func (b *httpBridge) writeA2AResponse(w http.ResponseWriter, respBody []byte) {
 	var result a2aResponse
 	if err := json.Unmarshal(respBody, &result); err != nil {
-		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set(headerContentType, contentTypeJSON)
 		_, _ = w.Write(respBody)
 		return
 	}
@@ -377,7 +406,7 @@ func (b *httpBridge) writeA2AResponse(w http.ResponseWriter, respBody []byte) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set(headerContentType, contentTypeJSON)
 	_ = json.NewEncoder(w).Encode(invocationResponse{
 		Response:  extractArtifactText(&result),
 		Status:    "success",

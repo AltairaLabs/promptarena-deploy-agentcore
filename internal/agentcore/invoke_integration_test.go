@@ -135,22 +135,8 @@ func extractResponseContent(result map[string]interface{}) string {
 	}
 
 	// Shape 2: A2A JSON-RPC result with artifacts
-	if r, ok := result["result"].(map[string]interface{}); ok {
-		if artifacts, ok := r["artifacts"].([]interface{}); ok {
-			for _, a := range artifacts {
-				if art, ok := a.(map[string]interface{}); ok {
-					if parts, ok := art["parts"].([]interface{}); ok {
-						for _, p := range parts {
-							if part, ok := p.(map[string]interface{}); ok {
-								if text, ok := part["text"].(string); ok && text != "" {
-									return text
-								}
-							}
-						}
-					}
-				}
-			}
-		}
+	if text := artifactsText(result); text != "" {
+		return text
 	}
 
 	// Shape 3: direct {"content": "..."}
@@ -158,5 +144,46 @@ func extractResponseContent(result map[string]interface{}) string {
 		return content
 	}
 
+	return ""
+}
+
+// artifactsText walks result.artifacts[].parts[].text and returns the first
+// non-empty text it finds.
+func artifactsText(result map[string]interface{}) string {
+	r, ok := result["result"].(map[string]interface{})
+	if !ok {
+		return ""
+	}
+	artifacts, ok := r["artifacts"].([]interface{})
+	if !ok {
+		return ""
+	}
+	for _, a := range artifacts {
+		if text := firstPartText(a); text != "" {
+			return text
+		}
+	}
+	return ""
+}
+
+// firstPartText returns the first non-empty text part of a single artifact.
+func firstPartText(artifact interface{}) string {
+	art, ok := artifact.(map[string]interface{})
+	if !ok {
+		return ""
+	}
+	parts, ok := art["parts"].([]interface{})
+	if !ok {
+		return ""
+	}
+	for _, p := range parts {
+		part, ok := p.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if text, ok := part["text"].(string); ok && text != "" {
+			return text
+		}
+	}
 	return ""
 }

@@ -301,15 +301,7 @@ func TestIntegration_Messaround_FullLifecycle(t *testing.T) {
 	for _, c := range planResp.Changes {
 		t.Logf("  %s %s/%s: %s", c.Action, c.Type, c.Name, c.Detail)
 	}
-	if len(planResp.Changes) == 0 {
-		t.Fatal("Plan returned no changes")
-	}
-	// All changes should be CREATE for a fresh deploy.
-	for _, c := range planResp.Changes {
-		if c.Action != deploy.ActionCreate {
-			t.Errorf("expected CREATE for fresh deploy, got %s for %s/%s", c.Action, c.Type, c.Name)
-		}
-	}
+	assertPlanIsAllCreates(t, planResp)
 
 	// --- Apply ---
 	t.Log("=== Phase: Apply ===")
@@ -337,31 +329,10 @@ func TestIntegration_Messaround_FullLifecycle(t *testing.T) {
 		t.Errorf("state.PackID = %q, want messaround", state.PackID)
 	}
 
-	// Verify all resources were created (not failed).
-	for _, r := range state.Resources {
-		if r.Status == ResStatusFailed {
-			t.Errorf("resource %s/%s has status=failed", r.Type, r.Name)
-		}
-		if r.ARN == "" {
-			t.Errorf("resource %s/%s has empty ARN", r.Type, r.Name)
-		}
-	}
-
-	// Verify we got resource events for the expected types.
-	typeSet := make(map[string]bool)
-	for _, ev := range events {
-		if ev.Type == "resource" && ev.Resource != nil {
-			typeSet[ev.Resource.Type] = true
-		}
-	}
-	for _, expected := range []string{
+	assertNoFailedResources(t, state.Resources)
+	assertResourceEventsFor(t, events,
 		ResTypeMemory, ResTypeCedarPolicy, ResTypeToolGateway,
-		ResTypeAgentRuntime, ResTypeEvaluator, ResTypeOnlineEvalConfig,
-	} {
-		if !typeSet[expected] {
-			t.Errorf("missing resource event for type %s", expected)
-		}
-	}
+		ResTypeAgentRuntime, ResTypeEvaluator, ResTypeOnlineEvalConfig)
 
 	// --- Status ---
 	t.Log("=== Phase: Status ===")
@@ -377,14 +348,7 @@ func TestIntegration_Messaround_FullLifecycle(t *testing.T) {
 		t.Logf("  %s/%s = %s", r.Type, r.Name, r.Status)
 	}
 
-	if statusResp.Status != "deployed" {
-		t.Errorf("status = %q, want deployed", statusResp.Status)
-	}
-	for _, r := range statusResp.Resources {
-		if r.Status != StatusHealthy {
-			t.Errorf("resource %s/%s health = %q, want healthy", r.Type, r.Name, r.Status)
-		}
-	}
+	assertStatusDeployedAndHealthy(t, statusResp)
 
 	// --- Destroy is handled by t.Cleanup above ---
 	// We also explicitly test it here for assertions.
@@ -402,23 +366,7 @@ func TestIntegration_Messaround_FullLifecycle(t *testing.T) {
 		t.Fatalf("Destroy error: %v", err)
 	}
 
-	// Verify all resource deletions succeeded.
-	for _, ev := range destroyEvents {
-		if ev.Type == "error" {
-			t.Errorf("destroy error: %s", ev.Message)
-		}
-	}
-
-	// Verify resources were deleted.
-	var deletedCount int
-	for _, ev := range destroyEvents {
-		if ev.Type == "resource" && ev.Resource != nil && ev.Resource.Status == "deleted" {
-			deletedCount++
-		}
-	}
-	if deletedCount == 0 {
-		t.Error("expected at least one deleted resource event")
-	}
+	assertDestroyDeletedSomething(t, destroyEvents)
 
 	// Clear state so cleanup is a no-op (already destroyed).
 	stateStr = ""
@@ -475,14 +423,7 @@ func TestIntegration_Messaround_Redeploy(t *testing.T) {
 	}
 
 	// Verify we got update events for resources that support it.
-	var updateCount int
-	for _, ev := range events {
-		if ev.Type == "resource" && ev.Resource != nil &&
-			ev.Resource.Action == deploy.ActionUpdate {
-			updateCount++
-		}
-	}
-	if updateCount == 0 {
+	if countResourceActions(events, deploy.ActionUpdate) == 0 {
 		t.Error("expected at least one UPDATE resource event on redeploy")
 	}
 
@@ -726,4 +667,91 @@ func TestIntegration_MultiAgent_FullLifecycle(t *testing.T) {
 
 	// Clear state so cleanup is a no-op.
 	stateStr = ""
+}
+
+// assertPlanIsAllCreates checks a fresh-deploy plan: it must propose something,
+// and everything it proposes must be a create.
+func assertPlanIsAllCreates(t *testing.T, planResp *deploy.PlanResponse) {
+	t.Helper()
+	if len(planResp.Changes) == 0 {
+		t.Fatal("Plan returned no changes")
+	}
+	for _, c := range planResp.Changes {
+		if c.Action != deploy.ActionCreate {
+			t.Errorf("expected CREATE for fresh deploy, got %s for %s/%s", c.Action, c.Type, c.Name)
+		}
+	}
+}
+
+// assertNoFailedResources checks every resource in the state came back live.
+func assertNoFailedResources(t *testing.T, resources []ResourceState) {
+	t.Helper()
+	for _, r := range resources {
+		if r.Status == ResStatusFailed {
+			t.Errorf("resource %s/%s has status=failed", r.Type, r.Name)
+		}
+		if r.ARN == "" {
+			t.Errorf("resource %s/%s has empty ARN", r.Type, r.Name)
+		}
+	}
+}
+
+// assertResourceEventsFor checks a resource event was emitted for each of the
+// wanted types. Extra types are fine; the point is that none are missing.
+func assertResourceEventsFor(t *testing.T, events []deploy.ApplyEvent, want ...string) {
+	t.Helper()
+	seen := make(map[string]bool)
+	for _, ev := range events {
+		if ev.Type == "resource" && ev.Resource != nil {
+			seen[ev.Resource.Type] = true
+		}
+	}
+	for _, resType := range want {
+		if !seen[resType] {
+			t.Errorf("missing resource event for type %s", resType)
+		}
+	}
+}
+
+// assertStatusDeployedAndHealthy checks the overall status and every resource
+// within it.
+func assertStatusDeployedAndHealthy(t *testing.T, statusResp *deploy.StatusResponse) {
+	t.Helper()
+	if statusResp.Status != "deployed" {
+		t.Errorf("status = %q, want deployed", statusResp.Status)
+	}
+	for _, r := range statusResp.Resources {
+		if r.Status != StatusHealthy {
+			t.Errorf("resource %s/%s health = %q, want healthy", r.Type, r.Name, r.Status)
+		}
+	}
+}
+
+// assertDestroyDeletedSomething checks destroy reported no errors and actually
+// deleted at least one resource.
+func assertDestroyDeletedSomething(t *testing.T, events []deploy.DestroyEvent) {
+	t.Helper()
+	deleted := 0
+	for _, ev := range events {
+		if ev.Type == "error" {
+			t.Errorf("destroy error: %s", ev.Message)
+		}
+		if ev.Type == "resource" && ev.Resource != nil && ev.Resource.Status == "deleted" {
+			deleted++
+		}
+	}
+	if deleted == 0 {
+		t.Error("expected at least one deleted resource event")
+	}
+}
+
+// countResourceActions counts the resource events carrying a given action.
+func countResourceActions(events []deploy.ApplyEvent, action deploy.Action) int {
+	n := 0
+	for _, ev := range events {
+		if ev.Type == "resource" && ev.Resource != nil && ev.Resource.Action == action {
+			n++
+		}
+	}
+	return n
 }

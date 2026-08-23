@@ -300,10 +300,7 @@ func TestApply_SingleAgent_StreamsCorrectEvents(t *testing.T) {
 	}
 
 	// Verify state.
-	var state AdapterState
-	if err := json.Unmarshal([]byte(stateStr), &state); err != nil {
-		t.Fatalf("failed to unmarshal state: %v", err)
-	}
+	state := decodeState(t, stateStr)
 	if len(state.Resources) != 1 {
 		t.Errorf("expected 1 resource in state, got %d", len(state.Resources))
 	}
@@ -326,12 +323,7 @@ func TestApply_SingleAgentWithTools(t *testing.T) {
 	}
 
 	// Should have tool_gateway events before agent_runtime events.
-	var types []string
-	for _, ev := range events {
-		if ev.Type == "resource" && ev.Resource != nil {
-			types = append(types, ev.Resource.Type)
-		}
-	}
+	types := resourceEventTypes(events)
 
 	// Expect: calc, search (tool_gateway sorted), then toolpack (runtime).
 	if len(types) != 3 {
@@ -345,10 +337,7 @@ func TestApply_SingleAgentWithTools(t *testing.T) {
 	}
 
 	// Check state has all 3 resources.
-	var state AdapterState
-	if err := json.Unmarshal([]byte(stateStr), &state); err != nil {
-		t.Fatalf("failed to unmarshal state: %v", err)
-	}
+	state := decodeState(t, stateStr)
 	if len(state.Resources) != 3 {
 		t.Errorf("expected 3 resources in state, got %d", len(state.Resources))
 	}
@@ -368,12 +357,7 @@ func TestApply_MultiAgent_DependencyOrder(t *testing.T) {
 	}
 
 	// Collect resource event types in order.
-	var resourceTypes []string
-	for _, ev := range events {
-		if ev.Type == "resource" && ev.Resource != nil {
-			resourceTypes = append(resourceTypes, ev.Resource.Type)
-		}
-	}
+	resourceTypes := resourceEventTypes(events)
 
 	// Expected order: tool_gateway(s) -> agent_runtime(s) -> a2a_endpoint(s).
 	// Multi-agent pack has 1 tool, 2 runtimes, 2 a2a endpoints = 5 total.
@@ -382,54 +366,15 @@ func TestApply_MultiAgent_DependencyOrder(t *testing.T) {
 	}
 
 	// Verify ordering: gateway before runtime before a2a.
-	lastGateway := -1
-	firstRuntime := len(resourceTypes)
-	lastRuntime := -1
-	firstA2A := len(resourceTypes)
-
-	for i, rt := range resourceTypes {
-		switch rt {
-		case "tool_gateway":
-			if i > lastGateway {
-				lastGateway = i
-			}
-		case "agent_runtime":
-			if i < firstRuntime {
-				firstRuntime = i
-			}
-			if i > lastRuntime {
-				lastRuntime = i
-			}
-		case "a2a_endpoint":
-			if i < firstA2A {
-				firstA2A = i
-			}
-		}
-	}
-
-	if lastGateway >= firstRuntime {
-		t.Errorf("tool_gateway resources should come before agent_runtime: %v", resourceTypes)
-	}
-	if lastRuntime >= firstA2A {
-		t.Errorf("agent_runtime resources should come before a2a_endpoint: %v", resourceTypes)
-	}
+	assertAllBefore(t, resourceTypes, "tool_gateway", "agent_runtime")
+	assertAllBefore(t, resourceTypes, "agent_runtime", "a2a_endpoint")
 
 	// Verify state blob.
-	var state AdapterState
-	if err := json.Unmarshal([]byte(stateStr), &state); err != nil {
-		t.Fatalf("failed to unmarshal state: %v", err)
-	}
+	state := decodeState(t, stateStr)
 	if len(state.Resources) != 5 {
 		t.Errorf("expected 5 resources in state, got %d", len(state.Resources))
 	}
-	for _, r := range state.Resources {
-		if r.ARN == "" {
-			t.Errorf("resource %s/%s has empty ARN", r.Type, r.Name)
-		}
-		if r.Status != "created" {
-			t.Errorf("resource %s/%s status = %q, want created", r.Type, r.Name, r.Status)
-		}
-	}
+	assertAllCreated(t, state.Resources)
 }
 
 func TestApply_MultiAgentWithEvals(t *testing.T) {
@@ -446,12 +391,7 @@ func TestApply_MultiAgentWithEvals(t *testing.T) {
 	}
 
 	// Collect resource types.
-	var resourceTypes []string
-	for _, ev := range events {
-		if ev.Type == "resource" && ev.Resource != nil {
-			resourceTypes = append(resourceTypes, ev.Resource.Type)
-		}
-	}
+	resourceTypes := resourceEventTypes(events)
 
 	// 2 runtimes + 2 a2a + 2 evaluators + 1 online_eval_config = 7 (no tools in this pack).
 	if len(resourceTypes) != 7 {
@@ -487,10 +427,7 @@ func TestApply_MultiAgentWithEvals(t *testing.T) {
 	}
 
 	// State should have all 7.
-	var state AdapterState
-	if err := json.Unmarshal([]byte(stateStr), &state); err != nil {
-		t.Fatalf("failed to unmarshal state: %v", err)
-	}
+	state := decodeState(t, stateStr)
 	if len(state.Resources) != 7 {
 		t.Errorf("expected 7 resources in state, got %d", len(state.Resources))
 	}
@@ -509,10 +446,7 @@ func TestApply_StateContainsAllResourceInfo(t *testing.T) {
 		t.Fatalf("Apply returned error: %v", err)
 	}
 
-	var state AdapterState
-	if err := json.Unmarshal([]byte(stateStr), &state); err != nil {
-		t.Fatalf("failed to unmarshal state: %v", err)
-	}
+	state := decodeState(t, stateStr)
 
 	if state.PackID != "multipack" {
 		t.Errorf("state.PackID = %q, want multipack", state.PackID)
@@ -581,10 +515,7 @@ func TestApply_PartialFailure_ReturnsStateForSuccessfulResources(t *testing.T) {
 	}
 
 	// State should still contain successful resources.
-	var state AdapterState
-	if err := json.Unmarshal([]byte(stateStr), &state); err != nil {
-		t.Fatalf("failed to unmarshal state: %v", err)
-	}
+	state := decodeState(t, stateStr)
 
 	var createdCount, failedCount int
 	for _, r := range state.Resources {
@@ -740,10 +671,7 @@ func TestApply_EmptyPack_CreatesRuntimeOnly(t *testing.T) {
 		t.Errorf("expected 1 resource event (runtime only), got %d", resourceCount)
 	}
 
-	var state AdapterState
-	if err := json.Unmarshal([]byte(stateStr), &state); err != nil {
-		t.Fatalf("failed to unmarshal state: %v", err)
-	}
+	state := decodeState(t, stateStr)
 	if len(state.Resources) != 1 {
 		t.Errorf("expected 1 resource in state, got %d", len(state.Resources))
 	}
@@ -818,10 +746,7 @@ func TestApply_ToolFailure_ContinuesToRuntime(t *testing.T) {
 	}
 
 	// State should have failed tools and successful runtime.
-	var state AdapterState
-	if err := json.Unmarshal([]byte(stateStr), &state); err != nil {
-		t.Fatalf("failed to unmarshal state: %v", err)
-	}
+	state := decodeState(t, stateStr)
 	for _, r := range state.Resources {
 		if r.Type == "tool_gateway" && r.Status != "failed" {
 			t.Errorf("tool_gateway %q status = %q, want failed", r.Name, r.Status)
@@ -856,10 +781,7 @@ func TestApply_RuntimeFailure(t *testing.T) {
 		t.Fatal("expected error for runtime failure")
 	}
 
-	var state AdapterState
-	if err := json.Unmarshal([]byte(stateStr), &state); err != nil {
-		t.Fatalf("failed to unmarshal state: %v", err)
-	}
+	state := decodeState(t, stateStr)
 	if len(state.Resources) != 1 {
 		t.Fatalf("expected 1 resource, got %d", len(state.Resources))
 	}
@@ -1021,10 +943,7 @@ func TestApply_EvalFailure(t *testing.T) {
 		t.Fatal("expected error for evaluator failure")
 	}
 
-	var state AdapterState
-	if err := json.Unmarshal([]byte(stateStr), &state); err != nil {
-		t.Fatalf("failed to unmarshal state: %v", err)
-	}
+	state := decodeState(t, stateStr)
 
 	for _, r := range state.Resources {
 		if r.Type == "evaluator" && r.Status != "failed" {
@@ -1090,10 +1009,7 @@ func TestApply_OnlineEvalConfigFailure_ContinuesApply(t *testing.T) {
 		t.Error("expected evaluator resources to be created")
 	}
 
-	var state AdapterState
-	if err := json.Unmarshal([]byte(stateStr), &state); err != nil {
-		t.Fatalf("failed to unmarshal state: %v", err)
-	}
+	state := decodeState(t, stateStr)
 	var oecFailed bool
 	for _, r := range state.Resources {
 		if r.Type == ResTypeOnlineEvalConfig {
@@ -1166,10 +1082,7 @@ func TestApply_SingleAgent_Update(t *testing.T) {
 	}
 
 	// State should have the resource with status=updated and the prior ARN.
-	var state AdapterState
-	if err := json.Unmarshal([]byte(stateStr), &state); err != nil {
-		t.Fatalf("failed to unmarshal state: %v", err)
-	}
+	state := decodeState(t, stateStr)
 	if len(state.Resources) != 1 {
 		t.Fatalf("expected 1 resource, got %d", len(state.Resources))
 	}
@@ -1210,34 +1123,24 @@ func TestApply_MixedCreateAndUpdate(t *testing.T) {
 	}
 
 	// Collect resource events by name.
-	actionByName := make(map[string]deploy.Action)
-	statusByName := make(map[string]string)
-	for _, ev := range events {
-		if ev.Type == "resource" && ev.Resource != nil {
-			actionByName[ev.Resource.Name] = ev.Resource.Action
-			statusByName[ev.Resource.Name] = ev.Resource.Status
-		}
-	}
+	outcome := resourceOutcomes(events)
 
 	// coordinator should be updated, worker should be created.
-	if actionByName["coordinator"] != deploy.ActionUpdate {
-		t.Errorf("coordinator action = %q, want %q", actionByName["coordinator"], deploy.ActionUpdate)
+	if outcome["coordinator"].action != deploy.ActionUpdate {
+		t.Errorf("coordinator action = %q, want %q", outcome["coordinator"].action, deploy.ActionUpdate)
 	}
-	if statusByName["coordinator"] != "updated" {
-		t.Errorf("coordinator status = %q, want updated", statusByName["coordinator"])
+	if outcome["coordinator"].status != "updated" {
+		t.Errorf("coordinator status = %q, want updated", outcome["coordinator"].status)
 	}
-	if actionByName["worker"] != deploy.ActionCreate {
-		t.Errorf("worker action = %q, want %q", actionByName["worker"], deploy.ActionCreate)
+	if outcome["worker"].action != deploy.ActionCreate {
+		t.Errorf("worker action = %q, want %q", outcome["worker"].action, deploy.ActionCreate)
 	}
-	if statusByName["worker"] != "created" {
-		t.Errorf("worker status = %q, want created", statusByName["worker"])
+	if outcome["worker"].status != "created" {
+		t.Errorf("worker status = %q, want created", outcome["worker"].status)
 	}
 
 	// Verify state.
-	var state AdapterState
-	if err := json.Unmarshal([]byte(stateStr), &state); err != nil {
-		t.Fatalf("failed to unmarshal state: %v", err)
-	}
+	state := decodeState(t, stateStr)
 	for _, r := range state.Resources {
 		if r.Type == ResTypeAgentRuntime && r.Name == "coordinator" {
 			if r.Status != "updated" {
@@ -1281,10 +1184,7 @@ func TestApply_UpdateRuntime_Failure(t *testing.T) {
 		t.Fatal("expected error for update failure")
 	}
 
-	var state AdapterState
-	if err := json.Unmarshal([]byte(stateStr), &state); err != nil {
-		t.Fatalf("failed to unmarshal state: %v", err)
-	}
+	state := decodeState(t, stateStr)
 	if len(state.Resources) != 1 {
 		t.Fatalf("expected 1 resource, got %d", len(state.Resources))
 	}
@@ -1313,12 +1213,7 @@ func TestApply_WithMemory_CreatesMemoryResource(t *testing.T) {
 	}
 
 	// Should have memory + runtime resource events.
-	var resourceTypes []string
-	for _, ev := range events {
-		if ev.Type == "resource" && ev.Resource != nil {
-			resourceTypes = append(resourceTypes, ev.Resource.Type)
-		}
-	}
+	resourceTypes := resourceEventTypes(events)
 
 	if len(resourceTypes) != 2 {
 		t.Fatalf("expected 2 resource events (memory + runtime), got %d: %v",
@@ -1332,10 +1227,7 @@ func TestApply_WithMemory_CreatesMemoryResource(t *testing.T) {
 	}
 
 	// Verify state.
-	var state AdapterState
-	if err := json.Unmarshal([]byte(stateStr), &state); err != nil {
-		t.Fatalf("failed to unmarshal state: %v", err)
-	}
+	state := decodeState(t, stateStr)
 	if len(state.Resources) != 2 {
 		t.Fatalf("expected 2 resources in state, got %d", len(state.Resources))
 	}
@@ -1389,10 +1281,7 @@ func TestApply_WithMemory_Failure(t *testing.T) {
 	}
 
 	// State should still contain the failed memory and the successful runtime.
-	var state AdapterState
-	if err := json.Unmarshal([]byte(stateStr), &state); err != nil {
-		t.Fatalf("failed to unmarshal state: %v", err)
-	}
+	state := decodeState(t, stateStr)
 
 	var memoryFailed, runtimeCreated bool
 	for _, r := range state.Resources {
@@ -1662,10 +1551,7 @@ func TestApply_PolicyEngineFailure_ContinuesToRuntime(t *testing.T) {
 	}
 
 	// State should have both failed policy and successful runtime.
-	var state AdapterState
-	if err := json.Unmarshal([]byte(stateStr), &state); err != nil {
-		t.Fatalf("failed to unmarshal state: %v", err)
-	}
+	state := decodeState(t, stateStr)
 	var policyFailed, runtimeOK bool
 	for _, r := range state.Resources {
 		if r.Type == ResTypeCedarPolicy && r.Status == "failed" {
@@ -1728,10 +1614,7 @@ func TestApply_DryRun_SingleAgent_NoAWSCalls(t *testing.T) {
 	}
 
 	// State should have planned resources with no ARNs.
-	var state AdapterState
-	if err := json.Unmarshal([]byte(stateStr), &state); err != nil {
-		t.Fatalf("failed to unmarshal state: %v", err)
-	}
+	state := decodeState(t, stateStr)
 	if len(state.Resources) != 1 {
 		t.Errorf("expected 1 resource in state, got %d", len(state.Resources))
 	}
@@ -1767,12 +1650,7 @@ func TestApply_DryRun_WithTools_PlansAllResources(t *testing.T) {
 	}
 
 	// Should have resource events for tools + runtime.
-	var resourceTypes []string
-	for _, ev := range events {
-		if ev.Type == "resource" && ev.Resource != nil {
-			resourceTypes = append(resourceTypes, ev.Resource.Type)
-		}
-	}
+	resourceTypes := resourceEventTypes(events)
 
 	// Single-agent pack doesn't generate tool_gateway in plan (only for multi-agent).
 	// It should have 1 runtime.
@@ -1780,10 +1658,7 @@ func TestApply_DryRun_WithTools_PlansAllResources(t *testing.T) {
 		t.Fatalf("expected at least 1 resource event, got %d: %v", len(resourceTypes), resourceTypes)
 	}
 
-	var state AdapterState
-	if err := json.Unmarshal([]byte(stateStr), &state); err != nil {
-		t.Fatalf("failed to unmarshal state: %v", err)
-	}
+	state := decodeState(t, stateStr)
 	for _, r := range state.Resources {
 		if r.Status != "planned" {
 			t.Errorf("resource %s/%s status = %q, want planned", r.Type, r.Name, r.Status)
@@ -1827,10 +1702,7 @@ func TestApply_DryRun_MultiAgent_PlansAllResources(t *testing.T) {
 			len(resourceTypes), resourceTypes)
 	}
 
-	var state AdapterState
-	if err := json.Unmarshal([]byte(stateStr), &state); err != nil {
-		t.Fatalf("failed to unmarshal state: %v", err)
-	}
+	state := decodeState(t, stateStr)
 	if state.PackID != "multipack" {
 		t.Errorf("state.PackID = %q, want multipack", state.PackID)
 	}
@@ -1864,22 +1736,14 @@ func TestApply_DryRun_WithMemory_PlansMemoryResource(t *testing.T) {
 	}
 
 	// Should have memory + runtime planned resources.
-	var resourceTypes []string
-	for _, ev := range events {
-		if ev.Type == "resource" && ev.Resource != nil {
-			resourceTypes = append(resourceTypes, ev.Resource.Type)
-		}
-	}
+	resourceTypes := resourceEventTypes(events)
 
 	if len(resourceTypes) != 2 {
 		t.Fatalf("expected 2 resource events (memory + runtime), got %d: %v",
 			len(resourceTypes), resourceTypes)
 	}
 
-	var state AdapterState
-	if err := json.Unmarshal([]byte(stateStr), &state); err != nil {
-		t.Fatalf("failed to unmarshal state: %v", err)
-	}
+	state := decodeState(t, stateStr)
 
 	var memoryFound bool
 	for _, r := range state.Resources {
@@ -2002,10 +1866,7 @@ func TestApply_DryRunFalse_StillCallsAWS(t *testing.T) {
 		}
 	}
 
-	var state AdapterState
-	if err := json.Unmarshal([]byte(stateStr), &state); err != nil {
-		t.Fatalf("failed to unmarshal state: %v", err)
-	}
+	state := decodeState(t, stateStr)
 	for _, r := range state.Resources {
 		if r.Status != "created" {
 			t.Errorf("resource %s/%s status = %q, want created", r.Type, r.Name, r.Status)
@@ -2369,5 +2230,76 @@ func TestApply_DryRun_MissingArenaConfig(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "arena_config is required") {
 		t.Errorf("error = %q, want 'arena_config is required'", err.Error())
+	}
+}
+
+// decodeState unmarshals the state blob Apply returned, or fails the test.
+func decodeState(t *testing.T, stateStr string) AdapterState {
+	t.Helper()
+	var state AdapterState
+	if err := json.Unmarshal([]byte(stateStr), &state); err != nil {
+		t.Fatalf("failed to unmarshal state: %v", err)
+	}
+	return state
+}
+
+// resourceEventTypes returns the resource types Apply emitted, in order.
+func resourceEventTypes(events []deploy.ApplyEvent) []string {
+	var types []string
+	for _, ev := range events {
+		if ev.Type == "resource" && ev.Resource != nil {
+			types = append(types, ev.Resource.Type)
+		}
+	}
+	return types
+}
+
+// resourceOutcome is the action and status Apply reported for one resource.
+type resourceOutcome struct {
+	action deploy.Action
+	status string
+}
+
+// resourceOutcomes indexes the resource events by resource name.
+func resourceOutcomes(events []deploy.ApplyEvent) map[string]resourceOutcome {
+	out := make(map[string]resourceOutcome)
+	for _, ev := range events {
+		if ev.Type == "resource" && ev.Resource != nil {
+			out[ev.Resource.Name] = resourceOutcome{ev.Resource.Action, ev.Resource.Status}
+		}
+	}
+	return out
+}
+
+// assertAllBefore checks that every occurrence of earlier precedes every
+// occurrence of later, which is how the dependency order shows up in the
+// event stream.
+func assertAllBefore(t *testing.T, types []string, earlier, later string) {
+	t.Helper()
+	lastEarlier, firstLater := -1, len(types)
+	for i, rt := range types {
+		if rt == earlier {
+			lastEarlier = i
+		}
+		if rt == later && i < firstLater {
+			firstLater = i
+		}
+	}
+	if lastEarlier >= firstLater {
+		t.Errorf("%s resources should come before %s: %v", earlier, later, types)
+	}
+}
+
+// assertAllCreated checks every state resource carries an ARN and the created
+// status.
+func assertAllCreated(t *testing.T, resources []ResourceState) {
+	t.Helper()
+	for _, r := range resources {
+		if r.ARN == "" {
+			t.Errorf("resource %s/%s has empty ARN", r.Type, r.Name)
+		}
+		if r.Status != "created" {
+			t.Errorf("resource %s/%s status = %q, want created", r.Type, r.Name, r.Status)
+		}
 	}
 }

@@ -247,8 +247,12 @@ func (p *Provider) executeApplyPhases(
 	resources, applyErr = applyMemoryPreStep(ctx, ac, resources, applyErr)
 
 	// Step 1 — Tool Gateway entries (no update support yet).
-	phase := applyPhase(ctx, ac.reporter, ac.client.CreateGatewayTool, nil, ac.cfg,
-		sortedKeys(ac.pack.Tools), ResTypeToolGateway, stepTools, ac.priorMap)
+	phase := applyPhase(ctx, ac, phaseSpec{
+		create:    ac.client.CreateGatewayTool,
+		names:     sortedKeys(ac.pack.Tools),
+		resType:   ResTypeToolGateway,
+		stepIndex: stepTools,
+	})
 	resources, applyErr, cbErr = mergePhase(resources, applyErr, phase)
 	if cbErr != nil {
 		return resources, cbErr
@@ -266,8 +270,13 @@ func (p *Provider) executeApplyPhases(
 	}
 
 	// Step 3 — Agent runtimes (supports update).
-	phase = applyPhase(ctx, ac.reporter, ac.client.CreateRuntime, ac.client.UpdateRuntime, ac.cfg,
-		agentRuntimeNames(ac.pack), ResTypeAgentRuntime, stepRuntimes, ac.priorMap)
+	phase = applyPhase(ctx, ac, phaseSpec{
+		create:    ac.client.CreateRuntime,
+		update:    ac.client.UpdateRuntime,
+		names:     agentRuntimeNames(ac.pack),
+		resType:   ResTypeAgentRuntime,
+		stepIndex: stepRuntimes,
+	})
 	resources, applyErr, cbErr = mergePhase(resources, applyErr, phase)
 	if cbErr != nil {
 		return resources, cbErr
@@ -305,8 +314,12 @@ func applyEvalPhases(
 	ac.cfg.EvalDefs = buildEvalDefs(ac.pack)
 	evalNames := evalResourceNames(ac.pack)
 	if len(evalNames) > 0 {
-		phase := applyPhase(ctx, ac.reporter, ac.client.CreateEvaluator, nil, ac.cfg,
-			evalNames, ResTypeEvaluator, stepEvaluators, ac.priorMap)
+		phase := applyPhase(ctx, ac, phaseSpec{
+			create:    ac.client.CreateEvaluator,
+			names:     evalNames,
+			resType:   ResTypeEvaluator,
+			stepIndex: stepEvaluators,
+		})
 		var cbErr error
 		resources, applyErr, cbErr = mergePhase(resources, applyErr, phase)
 		if cbErr != nil {
@@ -319,8 +332,12 @@ func applyEvalPhases(
 	ac.cfg.BuiltinEvalIDs = collectBuiltinEvalIDs(ac.pack)
 	if len(ac.cfg.EvalARNs) > 0 || len(ac.cfg.BuiltinEvalIDs) > 0 {
 		oecName := ac.pack.ID + "_online_eval"
-		phase := applyPhase(ctx, ac.reporter, ac.client.CreateOnlineEvalConfig, nil, ac.cfg,
-			[]string{oecName}, ResTypeOnlineEvalConfig, stepOnlineEvalCfg, ac.priorMap)
+		phase := applyPhase(ctx, ac, phaseSpec{
+			create:    ac.client.CreateOnlineEvalConfig,
+			names:     []string{oecName},
+			resType:   ResTypeOnlineEvalConfig,
+			stepIndex: stepOnlineEvalCfg,
+		})
 		var cbErr error
 		resources, applyErr, cbErr = mergePhase(resources, applyErr, phase)
 		if cbErr != nil {
@@ -482,8 +499,12 @@ func applyA2AWiring(
 	for i, ag := range agents {
 		wireNames[i] = ag.Name + "_a2a"
 	}
-	phase := applyPhase(ctx, ac.reporter, ac.client.CreateA2AWiring, nil, ac.cfg,
-		wireNames, ResTypeA2AEndpoint, stepA2A, ac.priorMap)
+	phase := applyPhase(ctx, ac, phaseSpec{
+		create:    ac.client.CreateA2AWiring,
+		names:     wireNames,
+		resType:   ResTypeA2AEndpoint,
+		stepIndex: stepA2A,
+	})
 	return mergePhase(resources, applyErr, phase)
 }
 
@@ -532,26 +553,28 @@ func injectA2AEndpoints(
 }
 
 // applyPhase creates or updates resources of a single type, reporting progress.
-// stepIndex (0–3) determines which quarter of the progress bar is used.
-// If update is non-nil and the resource exists in priorMap, the update function
-// is called instead of create.
-func applyPhase(
-	ctx context.Context,
-	reporter *adaptersdk.ProgressReporter,
-	create createFunc,
-	update updateFunc,
-	cfg *Config,
-	names []string,
-	resType string,
-	stepIndex int,
-	priorMap map[string]ResourceState,
-) applyPhaseResult {
+// If spec.update is non-nil and the resource exists in the prior state, the
+// update function is called instead of create.
+// phaseSpec describes one create/update pass over a single resource type.
+// Everything the pass needs about the deploy as a whole — the reporter, the
+// config and the prior state — comes off the applyContext instead.
+type phaseSpec struct {
+	create    createFunc
+	update    updateFunc // nil when the resource type has no update path
+	names     []string
+	resType   string
+	stepIndex int // 0-3, selecting the quarter of the progress bar to use
+}
+
+func applyPhase(ctx context.Context, ac *applyContext, spec phaseSpec) applyPhaseResult {
 	var result applyPhaseResult
-	baseProgress := float64(stepIndex) * progressStepSize
+	reporter, cfg := ac.reporter, ac.cfg
+	create, update, names, resType := spec.create, spec.update, spec.names, spec.resType
+	baseProgress := float64(spec.stepIndex) * progressStepSize
 
 	for i, name := range names {
 		pct := baseProgress + float64(i)/float64(len(names)+1)*progressStepSize
-		op := resolveOp(resType, name, update, priorMap)
+		op := resolveOp(resType, name, update, ac.priorMap)
 
 		if err := reporter.Progress(fmt.Sprintf("%s %s: %s", op.verb, resType, name), pct); err != nil {
 			result.callbackErr = err

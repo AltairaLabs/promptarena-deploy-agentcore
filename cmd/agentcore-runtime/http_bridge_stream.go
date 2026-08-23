@@ -76,7 +76,7 @@ func (b *httpBridge) handleStreamingInvocation(
 	a2aURL := fmt.Sprintf("http://127.0.0.1:%d/a2a", b.a2aPort)
 	b.log.Info("forwarding stream to a2a", "url", a2aURL)
 
-	a2aResp, err := http.Post(a2aURL, "application/json", //nolint:noctx,gosec // internal loopback
+	a2aResp, err := http.Post(a2aURL, contentTypeJSON, //nolint:noctx,gosec // internal loopback
 		bytes.NewReader(a2aBody))
 	if err != nil {
 		b.log.Error("a2a stream forward failed", "error", err)
@@ -96,7 +96,7 @@ func (b *httpBridge) relaySSEEvents(w http.ResponseWriter, r *http.Request, body
 		return
 	}
 
-	w.Header().Set("Content-Type", sseContentType)
+	w.Header().Set(headerContentType, sseContentType)
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	w.WriteHeader(http.StatusOK)
