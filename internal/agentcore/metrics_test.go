@@ -91,16 +91,46 @@ func assertDimensions(t *testing.T, got, want map[string]string) {
 	}
 }
 
+// metricsCase is one row of the buildMetricsConfig table.
+type metricsCase struct {
+	name       string
+	pack       *prompt.Pack
+	wantNil    bool
+	wantCount  int // expected number of MetricEntry items
+	wantAlarms int // expected number of AlarmEntry items
+	wantDims   map[string]string
+	checkFunc  func(t *testing.T, mc *MetricsConfig)
+}
+
+// assert checks one case against what buildMetricsConfig returned.
+func (tt metricsCase) assert(t *testing.T, mc *MetricsConfig) {
+	t.Helper()
+	if tt.wantNil {
+		if mc != nil {
+			t.Fatalf("expected nil, got %+v", mc)
+		}
+		return
+	}
+	if mc == nil {
+		t.Fatal("expected non-nil MetricsConfig")
+	}
+
+	assertStr(t, "Namespace", mc.Namespace, metricsNamespace)
+
+	if tt.wantCount > 0 && len(mc.Metrics) != tt.wantCount {
+		t.Fatalf("got %d metrics, want %d", len(mc.Metrics), tt.wantCount)
+	}
+	if tt.wantAlarms > 0 && len(mc.Alarms) != tt.wantAlarms {
+		t.Fatalf("got %d alarms, want %d", len(mc.Alarms), tt.wantAlarms)
+	}
+	assertDimensions(t, mc.Dimensions, tt.wantDims)
+	if tt.checkFunc != nil {
+		tt.checkFunc(t, mc)
+	}
+}
+
 func TestBuildMetricsConfig(t *testing.T) {
-	tests := []struct {
-		name       string
-		pack       *prompt.Pack
-		wantNil    bool
-		wantCount  int // expected number of MetricEntry items
-		wantAlarms int // expected number of AlarmEntry items
-		wantDims   map[string]string
-		checkFunc  func(t *testing.T, mc *MetricsConfig)
-	}{
+	tests := []metricsCase{
 		{
 			name: "gauge metric produces correct entry",
 			pack: &prompt.Pack{
@@ -246,30 +276,7 @@ func TestBuildMetricsConfig(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mc := buildMetricsConfig(tt.pack)
-
-			if tt.wantNil {
-				if mc != nil {
-					t.Fatalf("expected nil, got %+v", mc)
-				}
-				return
-			}
-			if mc == nil {
-				t.Fatal("expected non-nil MetricsConfig")
-			}
-
-			assertStr(t, "Namespace", mc.Namespace, metricsNamespace)
-
-			if tt.wantCount > 0 && len(mc.Metrics) != tt.wantCount {
-				t.Fatalf("got %d metrics, want %d", len(mc.Metrics), tt.wantCount)
-			}
-			if tt.wantAlarms > 0 && len(mc.Alarms) != tt.wantAlarms {
-				t.Fatalf("got %d alarms, want %d", len(mc.Alarms), tt.wantAlarms)
-			}
-			assertDimensions(t, mc.Dimensions, tt.wantDims)
-			if tt.checkFunc != nil {
-				tt.checkFunc(t, mc)
-			}
+			tt.assert(t, buildMetricsConfig(tt.pack))
 		})
 	}
 }

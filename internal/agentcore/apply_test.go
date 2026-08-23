@@ -399,32 +399,8 @@ func TestApply_MultiAgentWithEvals(t *testing.T) {
 	}
 
 	// Evaluators should come after a2a, online_eval_config after evaluators.
-	lastA2A := -1
-	firstEval := len(resourceTypes)
-	lastEval := -1
-	firstOEC := len(resourceTypes)
-	for i, rt := range resourceTypes {
-		if rt == "a2a_endpoint" && i > lastA2A {
-			lastA2A = i
-		}
-		if rt == "evaluator" {
-			if i < firstEval {
-				firstEval = i
-			}
-			if i > lastEval {
-				lastEval = i
-			}
-		}
-		if rt == "online_eval_config" && i < firstOEC {
-			firstOEC = i
-		}
-	}
-	if lastA2A >= firstEval {
-		t.Errorf("a2a_endpoint should come before evaluator: %v", resourceTypes)
-	}
-	if lastEval >= firstOEC {
-		t.Errorf("evaluator should come before online_eval_config: %v", resourceTypes)
-	}
+	assertAllBefore(t, resourceTypes, "a2a_endpoint", "evaluator")
+	assertAllBefore(t, resourceTypes, "evaluator", "online_eval_config")
 
 	// State should have all 7.
 	state := decodeState(t, stateStr)
@@ -504,47 +480,27 @@ func TestApply_PartialFailure_ReturnsStateForSuccessfulResources(t *testing.T) {
 	}
 
 	// Should have error events for a2a_endpoint failures.
-	var errorCount int
-	for _, ev := range events {
-		if ev.Type == "error" {
-			errorCount++
-		}
-	}
-	if errorCount == 0 {
+	if countEventsOfType(events, "error") == 0 {
 		t.Error("expected at least one error event")
 	}
 
 	// State should still contain successful resources.
 	state := decodeState(t, stateStr)
 
-	var createdCount, failedCount int
-	for _, r := range state.Resources {
-		switch r.Status {
-		case "created":
-			createdCount++
-		case "failed":
-			failedCount++
-		}
-	}
-	if createdCount == 0 {
+	byStatus := countStatuses(state.Resources)
+	if byStatus["created"] == 0 {
 		t.Error("expected at least some created resources despite partial failure")
 	}
-	if failedCount == 0 {
+	if byStatus["failed"] == 0 {
 		t.Error("expected at least some failed resources")
 	}
 
-	// The tool_gateway and agent_runtime should have succeeded.
-	for _, r := range state.Resources {
-		if r.Type == "tool_gateway" && r.Status != "created" {
-			t.Errorf("tool_gateway %q should have status=created, got %s", r.Name, r.Status)
-		}
-		if r.Type == "agent_runtime" && r.Status != "created" {
-			t.Errorf("agent_runtime %q should have status=created, got %s", r.Name, r.Status)
-		}
-		if r.Type == "a2a_endpoint" && r.Status != "failed" {
-			t.Errorf("a2a_endpoint %q should have status=failed, got %s", r.Name, r.Status)
-		}
-	}
+	// Only the a2a wiring was made to fail; everything before it stands.
+	assertStatusByType(t, state.Resources, map[string]string{
+		"tool_gateway":  "created",
+		"agent_runtime": "created",
+		"a2a_endpoint":  "failed",
+	})
 }
 
 func TestApply_ProgressMessages(t *testing.T) {
@@ -1053,33 +1009,13 @@ func TestApply_SingleAgent_Update(t *testing.T) {
 	}
 
 	// Should have an update resource event, not a create.
-	var foundUpdate bool
-	for _, ev := range events {
-		if ev.Type == "resource" && ev.Resource != nil &&
-			ev.Resource.Type == "agent_runtime" &&
-			ev.Resource.Action == deploy.ActionUpdate &&
-			ev.Resource.Status == "updated" {
-			foundUpdate = true
-		}
-		// Should NOT have a create event for the runtime.
-		if ev.Type == "resource" && ev.Resource != nil &&
-			ev.Resource.Type == "agent_runtime" &&
-			ev.Resource.Action == deploy.ActionCreate {
-			t.Error("expected ActionUpdate for existing runtime, got ActionCreate")
-		}
-	}
-	if !foundUpdate {
-		t.Error("expected a resource event with ActionUpdate and status=updated")
+	runtime := resourceOutcomes(events)["mypack"]
+	if runtime.action != deploy.ActionUpdate || runtime.status != "updated" {
+		t.Errorf("agent_runtime outcome = %+v, want ActionUpdate/updated", runtime)
 	}
 
 	// Progress message should say "Updating" not "Creating".
-	for _, ev := range events {
-		if ev.Type == "progress" && strings.Contains(ev.Message, "agent_runtime") {
-			if !strings.Contains(ev.Message, "Updating") {
-				t.Errorf("progress message should say Updating, got %q", ev.Message)
-			}
-		}
-	}
+	assertProgressSays(t, events, "agent_runtime", "Updating")
 
 	// State should have the resource with status=updated and the prior ARN.
 	state := decodeState(t, stateStr)
@@ -1140,21 +1076,12 @@ func TestApply_MixedCreateAndUpdate(t *testing.T) {
 	}
 
 	// Verify state.
-	state := decodeState(t, stateStr)
-	for _, r := range state.Resources {
-		if r.Type == ResTypeAgentRuntime && r.Name == "coordinator" {
-			if r.Status != "updated" {
-				t.Errorf("coordinator state status = %q, want updated", r.Status)
-			}
-			if r.ARN != coordARN {
-				t.Errorf("coordinator ARN = %q, want %q (preserved from prior)", r.ARN, coordARN)
-			}
-		}
-		if r.Type == ResTypeAgentRuntime && r.Name == "worker" {
-			if r.Status != "created" {
-				t.Errorf("worker state status = %q, want created", r.Status)
-			}
-		}
+	byName := stateByName(decodeState(t, stateStr).Resources)
+	if got := byName["coordinator"]; got.Status != "updated" || got.ARN != coordARN {
+		t.Errorf("coordinator state = %+v, want status=updated and the prior ARN %q", got, coordARN)
+	}
+	if got := byName["worker"]; got.Status != "created" {
+		t.Errorf("worker state status = %q, want created", got.Status)
 	}
 }
 
@@ -1532,39 +1459,19 @@ func TestApply_PolicyEngineFailure_ContinuesToRuntime(t *testing.T) {
 	}
 
 	// Should have error events for policy failure but runtime should succeed.
-	var errorCount int
-	var runtimeCreated bool
-	for _, ev := range events {
-		if ev.Type == "error" {
-			errorCount++
-		}
-		if ev.Type == "resource" && ev.Resource != nil &&
-			ev.Resource.Type == ResTypeAgentRuntime && ev.Resource.Status == "created" {
-			runtimeCreated = true
-		}
-	}
-	if errorCount == 0 {
+	if countEventsOfType(events, "error") == 0 {
 		t.Error("expected error events for policy failure")
 	}
-	if !runtimeCreated {
+	if !hasResourceEvent(events, ResTypeAgentRuntime, "created") {
 		t.Error("expected agent_runtime to still be created despite policy failure")
 	}
 
 	// State should have both failed policy and successful runtime.
 	state := decodeState(t, stateStr)
-	var policyFailed, runtimeOK bool
-	for _, r := range state.Resources {
-		if r.Type == ResTypeCedarPolicy && r.Status == "failed" {
-			policyFailed = true
-		}
-		if r.Type == ResTypeAgentRuntime && r.Status == "created" {
-			runtimeOK = true
-		}
-	}
-	if !policyFailed {
+	if !hasResource(state.Resources, ResTypeCedarPolicy, "failed") {
 		t.Error("expected cedar_policy resource with status=failed")
 	}
-	if !runtimeOK {
+	if !hasResource(state.Resources, ResTypeAgentRuntime, "created") {
 		t.Error("expected agent_runtime with status=created")
 	}
 }
@@ -1599,33 +1506,17 @@ func TestApply_DryRun_SingleAgent_NoAWSCalls(t *testing.T) {
 	}
 
 	// All resource events should have status=planned.
-	var resourceCount int
-	for _, ev := range events {
-		if ev.Type == "resource" && ev.Resource != nil {
-			resourceCount++
-			if ev.Resource.Status != "planned" {
-				t.Errorf("resource %s/%s status = %q, want planned",
-					ev.Resource.Type, ev.Resource.Name, ev.Resource.Status)
-			}
-		}
-	}
-	if resourceCount < 1 {
+	if len(resourceEventTypes(events)) < 1 {
 		t.Error("expected at least 1 resource event")
 	}
+	assertEveryEventStatus(t, events, "planned")
 
 	// State should have planned resources with no ARNs.
 	state := decodeState(t, stateStr)
 	if len(state.Resources) != 1 {
 		t.Errorf("expected 1 resource in state, got %d", len(state.Resources))
 	}
-	for _, r := range state.Resources {
-		if r.Status != "planned" {
-			t.Errorf("resource %s/%s status = %q, want planned", r.Type, r.Name, r.Status)
-		}
-		if r.ARN != "" {
-			t.Errorf("resource %s/%s should have no ARN in dry-run, got %q", r.Type, r.Name, r.ARN)
-		}
-	}
+	assertPlannedWithoutARN(t, state.Resources)
 	if state.PackID != "mypack" {
 		t.Errorf("state.PackID = %q, want mypack", state.PackID)
 	}
@@ -2302,4 +2193,104 @@ func assertAllCreated(t *testing.T, resources []ResourceState) {
 			t.Errorf("resource %s/%s status = %q, want created", r.Type, r.Name, r.Status)
 		}
 	}
+}
+
+// countEventsOfType counts events carrying a given event type.
+func countEventsOfType(events []deploy.ApplyEvent, evType string) int {
+	n := 0
+	for _, ev := range events {
+		if ev.Type == evType {
+			n++
+		}
+	}
+	return n
+}
+
+// hasResourceEvent reports whether a resource event was emitted for a given
+// type with a given status.
+func hasResourceEvent(events []deploy.ApplyEvent, resType, status string) bool {
+	for _, ev := range events {
+		if ev.Type == "resource" && ev.Resource != nil &&
+			ev.Resource.Type == resType && ev.Resource.Status == status {
+			return true
+		}
+	}
+	return false
+}
+
+// assertEveryEventStatus checks every resource event carries the wanted status.
+func assertEveryEventStatus(t *testing.T, events []deploy.ApplyEvent, want string) {
+	t.Helper()
+	for _, ev := range events {
+		if ev.Type == "resource" && ev.Resource != nil && ev.Resource.Status != want {
+			t.Errorf("resource %s/%s status = %q, want %s",
+				ev.Resource.Type, ev.Resource.Name, ev.Resource.Status, want)
+		}
+	}
+}
+
+// assertProgressSays checks progress messages mentioning subject also carry want.
+func assertProgressSays(t *testing.T, events []deploy.ApplyEvent, subject, want string) {
+	t.Helper()
+	for _, ev := range events {
+		if ev.Type == "progress" && strings.Contains(ev.Message, subject) &&
+			!strings.Contains(ev.Message, want) {
+			t.Errorf("progress message for %s should say %s, got %q", subject, want, ev.Message)
+		}
+	}
+}
+
+// countStatuses tallies state resources by status.
+func countStatuses(resources []ResourceState) map[string]int {
+	counts := make(map[string]int)
+	for _, r := range resources {
+		counts[r.Status]++
+	}
+	return counts
+}
+
+// hasResource reports whether the state carries a resource of the given type
+// with the given status.
+func hasResource(resources []ResourceState, resType, status string) bool {
+	for _, r := range resources {
+		if r.Type == resType && r.Status == status {
+			return true
+		}
+	}
+	return false
+}
+
+// assertStatusByType checks every resource of a listed type has the status
+// wanted for that type. Types absent from want are not checked.
+func assertStatusByType(t *testing.T, resources []ResourceState, want map[string]string) {
+	t.Helper()
+	for _, r := range resources {
+		wantStatus, checked := want[r.Type]
+		if checked && r.Status != wantStatus {
+			t.Errorf("%s %q should have status=%s, got %s", r.Type, r.Name, wantStatus, r.Status)
+		}
+	}
+}
+
+// assertPlannedWithoutARN checks a dry-run left every resource planned and
+// unprovisioned.
+func assertPlannedWithoutARN(t *testing.T, resources []ResourceState) {
+	t.Helper()
+	for _, r := range resources {
+		if r.Status != "planned" {
+			t.Errorf("resource %s/%s status = %q, want planned", r.Type, r.Name, r.Status)
+		}
+		if r.ARN != "" {
+			t.Errorf("resource %s/%s should have no ARN in dry-run, got %q", r.Type, r.Name, r.ARN)
+		}
+	}
+}
+
+// stateByName indexes state resources by name.
+func stateByName(resources []ResourceState) map[string]ResourceState {
+	byName := make(map[string]ResourceState, len(resources))
+	for _, r := range resources {
+		byName[r.Name] = r
+	}
+	return byName
 }
