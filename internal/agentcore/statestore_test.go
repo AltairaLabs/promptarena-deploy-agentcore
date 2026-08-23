@@ -699,3 +699,42 @@ func TestRoleMapping(t *testing.T) {
 		})
 	}
 }
+
+// TestLoad_SendsTheKeyTheWriteSideRecorded pins the required identifiers on the
+// read path.
+//
+// ListEvents requires ActorId and SessionId, and they have to name the same
+// pair CreateEvent recorded. Sending only the memory id fails the whole call,
+// so every Load returned an error and the conversation came back empty — the
+// mock had always answered regardless of its input, so nothing noticed.
+func TestLoad_SendsTheKeyTheWriteSideRecorded(t *testing.T) {
+	var got *bedrockagentcore.ListEventsInput
+	mock := &mockDataPlaneClient{
+		listEventsFn: func(
+			_ context.Context,
+			input *bedrockagentcore.ListEventsInput,
+			_ ...func(*bedrockagentcore.Options),
+		) (*bedrockagentcore.ListEventsOutput, error) {
+			got = input
+			return &bedrockagentcore.ListEventsOutput{}, nil
+		},
+	}
+
+	store := NewStateStore("mem-1", mock)
+	if _, err := store.Load(context.Background(), "sess-1"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if got == nil {
+		t.Fatal("ListEvents was never called")
+	}
+	if got.SessionId == nil || *got.SessionId != "sess-1" {
+		t.Errorf("SessionId = %v, want %q", got.SessionId, "sess-1")
+	}
+	if got.ActorId == nil || *got.ActorId != defaultActorID {
+		t.Errorf("ActorId = %v, want %q", got.ActorId, defaultActorID)
+	}
+	if got.MemoryId == nil || *got.MemoryId != "mem-1" {
+		t.Errorf("MemoryId = %v, want %q", got.MemoryId, "mem-1")
+	}
+}

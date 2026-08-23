@@ -62,8 +62,9 @@ func TestBuildA2AStreamRequest_WithSessionAndMetadata(t *testing.T) {
 		t.Fatalf("unmarshal: %v", err)
 	}
 	params := req["params"].(map[string]any)
-	if params["contextId"] != "sess-1" {
-		t.Errorf("contextId = %v, want sess-1", params["contextId"])
+	// On the message, which is where the A2A server reads it.
+	if got := contextIDFromParams(params); got != "sess-1" {
+		t.Errorf("message.contextId = %q, want sess-1", got)
 	}
 	message := params["message"].(map[string]any)
 	msgMD := message["metadata"].(map[string]any)

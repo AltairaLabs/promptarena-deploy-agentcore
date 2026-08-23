@@ -5,12 +5,17 @@ package main
 // reused (goconst).
 const (
 	// JSON-RPC and A2A message field keys.
-	keyRole          = "role"
-	keyParts         = "parts"
-	keyKind          = "kind"
-	keyMessageID     = "messageId"
-	keyMessage       = "message"
-	keyParams        = "params"
+	keyRole      = "role"
+	keyParts     = "parts"
+	keyKind      = "kind"
+	keyMessageID = "messageId"
+	keyMessage   = "message"
+	keyParams    = "params"
+	// keyContextID belongs on the message, not on params. The A2A server
+	// reads params.Message.ContextID and ignores a contextId set beside the
+	// message, so putting it there silently starts a new conversation on
+	// every turn.
+	keyContextID     = "contextId"
 	keyMethod        = "method"
 	keyConfiguration = "configuration"
 	keyBlocking      = "blocking"
