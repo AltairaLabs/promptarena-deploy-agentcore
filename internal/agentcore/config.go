@@ -329,6 +329,7 @@ func (c *Config) validate() []string {
 			c.Protocol, ProtocolHTTP, ProtocolA2A, ProtocolBoth))
 	}
 
+	errs = append(errs, validateRuntimeBinary(c.RuntimeBinaryPath)...)
 	errs = append(errs, validateObservability(c.Observability)...)
 	errs = append(errs, validateMemory(&c.Memory)...)
 	errs = append(errs, validateA2AAuth(c.A2AAuth)...)

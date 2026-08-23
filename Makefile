@@ -1,4 +1,4 @@
-.PHONY: fmt lint test build build-runtime build-runtime-arm64 check install-hooks docker-build
+.PHONY: fmt lint test test-integration build build-runtime build-runtime-arm64 check install-hooks docker-build
 
 # Format code with goimports
 fmt:
@@ -11,6 +11,12 @@ lint:
 # Run tests with race detector
 test:
 	GOWORK=off go test ./... -race -count=1
+
+# Deployed integration tests. These create billable AgentCore resources and are
+# skipped unless AGENTCORE_TEST_REGION, AGENTCORE_TEST_ROLE_ARN and
+# AGENTCORE_TEST_BINARY_PATH are set. See test/integration/README.md.
+test-integration:
+	GOWORK=off go test -tags=integration ./test/integration/ -v -count=1 -timeout=40m
 
 # Build binary
 build:
