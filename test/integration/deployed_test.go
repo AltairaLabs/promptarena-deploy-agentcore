@@ -42,10 +42,16 @@ const (
 	envLambdaARN = "AGENTCORE_TEST_LAMBDA_ARN"
 )
 
-// defaultModel is the Bedrock model the deployed agent talks to. It must exist
-// in the test region: the adapter validates availability up front and fails the
-// whole apply when it does not.
-const defaultModel = "claude-haiku-4-5-20251001"
+// defaultModel is the Bedrock model the deployed agent talks to.
+//
+// A Bedrock model id, not a vendor model name: this reaches bedrock-runtime
+// verbatim, and a vendor name comes back "The provided model identifier is
+// invalid" on the first turn. Claude 4.5 is served on demand through a
+// cross-region inference profile, which is what the "us." prefix is.
+//
+// Nothing checks this before the deploy — only eval models are preflighted —
+// so an id that is wrong here costs a full apply before it surfaces.
+const defaultModel = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 
 // defaultEvalModel is the full Bedrock id for the judge eval. Judge evals take
 // a model id rather than a short name.

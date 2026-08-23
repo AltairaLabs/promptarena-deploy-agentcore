@@ -172,10 +172,16 @@ func (s *StateStore) loadAllMessages(
 	var nextToken *string
 
 	for {
+		// ActorId and SessionId are required, and name the same pair the
+		// write path records in CreateEvent. Sending only the memory id
+		// fails the whole call, so every load returned an error and the
+		// conversation came back empty.
 		out, err := s.client.ListEvents(
 			ctx,
 			&bedrockagentcore.ListEventsInput{
 				MemoryId:  aws.String(s.memoryID),
+				ActorId:   aws.String(defaultActorID),
+				SessionId: aws.String(sessionID),
 				NextToken: nextToken,
 			},
 		)
