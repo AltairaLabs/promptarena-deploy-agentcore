@@ -39,11 +39,29 @@ enabled fails before anything deploys. `aws bedrock list-foundation-models
 | `ApplyCreatesRuntime` | A deploy did not leave an agent runtime with an ARN. |
 | `StatusReportsDeployed` | The adapter's view of a live deploy disagrees with AWS's, or it surfaces no console link. |
 | `UnaryInvocation` | The runtime does not serve the HTTP bridge, or the system prompt never reached the model. |
-| `ToolCalling` | The tool path is broken between model, arena mock and model. The mock returns a value the model cannot invent. |
+| `ToolCalling` | The tool path is broken. **Skipped unless `AGENTCORE_TEST_LAMBDA_ARN` is set** — see below. |
 | `MemoryCarriesConversation` | AgentCore Memory is not carrying a session. This is where agentcore differs from vertex and foundry, which keep no store and pin the opposite. |
 | `ReapplyIsIdempotent` | An unchanged deploy churns the runtime, costing a rollout for nothing. |
 | `DriftIsDetected` | Plan does not notice a deployment destroyed outside the adapter. |
 | `DestroyIsIdempotent` | A retried teardown fails, turning an interrupted destroy into console cleanup. |
+
+## Why tool calling needs real infrastructure
+
+vertex and foundry execute tools inside the runtime, so their suites use a mock
+tool spec and assert the model called it. AgentCore does not work that way: a
+tool becomes a **Gateway target**, and a target points at a Lambda, an API
+Gateway, an OpenAPI or Smithy document, or an MCP server URL. A mock has none of
+those, so it falls through to the MCP branch and the API refuses it:
+
+```
+ValidationException: The MCP server endpoint URL is malformed or has no
+extractable host.
+```
+
+There is no mock to substitute, because a target is external by definition. So
+the default pack carries no tools, and `ToolCalling` asks for
+`AGENTCORE_TEST_LAMBDA_ARN` — a Lambda the runtime role can invoke — and skips
+without one. Everything else runs unconditionally.
 
 Each test deploys its own runtime under a unique pack id and destroys it on
 cleanup, including on failure. Sharing one name would let a teardown race the

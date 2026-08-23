@@ -355,8 +355,12 @@ func (c *realAWSClient) CreateGatewayTool(
 	}
 
 	input := &bedrockagentcorecontrol.CreateGatewayTargetInput{
-		GatewayIdentifier:   aws.String(c.gatewayID),
-		Name:                aws.String(name),
+		GatewayIdentifier: aws.String(c.gatewayID),
+		// Sanitized for the same reason as the parent gateway: a target name
+		// rejects underscores too, so a tool called "lookup_order" is refused
+		// here one call after the gateway refused it. Destroy purges targets by
+		// listing them rather than by name, so renaming breaks no lookup.
+		Name:                aws.String(sanitizeGatewayTargetName(name)),
 		TargetConfiguration: buildTargetConfig(name, cfg),
 	}
 	if creds := buildCredentialProviderConfigs(name, cfg); len(creds) > 0 {
@@ -379,7 +383,11 @@ func (c *realAWSClient) CreateGatewayTool(
 func (c *realAWSClient) createParentGateway(
 	ctx context.Context, name string, cfg *Config,
 ) error {
-	gwName := name + "-gw"
+	// Sanitized because a Gateway name rejects underscores, which every other
+	// AgentCore resource accepts and tool names routinely contain. Unchanged
+	// for a name that was already valid, so no gateway that deploys today is
+	// renamed by this.
+	gwName := sanitizeGatewayName(name) + gatewaySuffix
 	gwInput := &bedrockagentcorecontrol.CreateGatewayInput{
 		Name:           aws.String(gwName),
 		RoleArn:        aws.String(cfg.RuntimeRoleARN),
@@ -1457,6 +1465,9 @@ func (c *realAWSClient) checkMemory(ctx context.Context, res ResourceState) (str
 		}
 		return StatusUnhealthy, fmt.Errorf("GetMemory %q: %w", res.Name, err)
 	}
+	if out.Memory != nil && out.Memory.Status == types.MemoryStatusDeleting {
+		return StatusMissing, nil
+	}
 	if out.Memory != nil && out.Memory.Status == types.MemoryStatusActive {
 		return StatusHealthy, nil
 	}
@@ -1476,6 +1487,13 @@ func (c *realAWSClient) checkRuntime(ctx context.Context, res ResourceState) (st
 			return StatusMissing, nil
 		}
 		return StatusUnhealthy, fmt.Errorf("GetAgentRuntime %q: %w", res.Name, err)
+	}
+	// A deleting resource still answers Get for a while after Destroy returns.
+	// Reporting it as present makes Plan offer an UPDATE that Apply cannot
+	// perform against a resource on its way out, so it counts as absent: the
+	// honest plan is to create it again.
+	if out.Status == types.AgentRuntimeStatusDeleting {
+		return StatusMissing, nil
 	}
 	if out.Status == types.AgentRuntimeStatusReady {
 		return StatusHealthy, nil

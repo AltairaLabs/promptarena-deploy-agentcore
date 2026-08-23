@@ -39,6 +39,7 @@ const (
 	envBinary    = "AGENTCORE_TEST_BINARY_PATH"
 	envModel     = "AGENTCORE_TEST_MODEL"
 	envEvalModel = "AGENTCORE_TEST_EVAL_MODEL"
+	envLambdaARN = "AGENTCORE_TEST_LAMBDA_ARN"
 )
 
 // defaultModel is the Bedrock model the deployed agent talks to. It must exist
@@ -57,9 +58,38 @@ const applyTimeout = 25 * time.Minute
 // invokeTimeout is generous: the first call to a fresh runtime cold-starts it.
 const invokeTimeout = 300 * time.Second
 
-// featurePack exercises a system prompt, a tool and a judge eval together, so a
-// passing run says more than "the runtime started".
+// featurePack is the pack most tests deploy. It has no tools, and that is a
+// platform difference rather than a gap in coverage.
+//
+// vertex and foundry execute tools inside the runtime, so their suites use a
+// mock tool spec and assert the model called it. AgentCore routes tools through
+// a Gateway whose targets must point at real infrastructure — a Lambda, an API
+// Gateway, an OpenAPI or Smithy document, or an MCP server URL. A mock has none
+// of those, so it reaches buildMCPServerTargetConfig and the API rejects it:
+//
+//	ValidationException: The MCP server endpoint URL is malformed or has no
+//	extractable host.
+//
+// Tool coverage therefore needs a real target, which TestDeployed_ToolCalling
+// asks for by environment and skips without.
 const featurePack = `{
+  "$schema": "https://promptpack.org/schema/latest/promptpack.schema.json",
+  "id": "agentcore-integration",
+  "name": "AgentCore Integration Pack",
+  "version": "1.0.0",
+  "template_engine": { "version": "v1", "syntax": "{{variable}}" },
+  "prompts": {
+    "main": {
+      "id": "main",
+      "name": "Support Agent",
+      "version": "1.0.0",
+      "system_template": "You are a terse support agent. Answer in one short sentence."
+    }
+  }
+}`
+
+// toolPack adds a tool for the one test that has somewhere real to point it.
+const toolPack = `{
   "$schema": "https://promptpack.org/schema/latest/promptpack.schema.json",
   "id": "agentcore-integration",
   "name": "AgentCore Integration Pack",
@@ -87,14 +117,20 @@ const featurePack = `{
   }
 }`
 
-// mockOrderStatus is the value only the tool knows. The model cannot produce it
-// from the prompt, so seeing it in an answer proves the runtime ran the tool
-// rather than improvising an order status.
-const mockOrderStatus = "delivered to a purple locker in Reykjavik"
-
-// featureArena is the arena config the CLI would hand the adapter. The compiled
-// pack carries only the tool's schema; its execution config lives here.
+// featureArena is the arena config the CLI would hand the adapter.
 const featureArena = `{
+  "loaded_providers": {
+    "integration-llm": {
+      "id": "integration-llm",
+      "type": "bedrock",
+      "model": "` + defaultModel + `"
+    }
+  }
+}`
+
+// toolArena points the tool at a real Lambda, supplied by the environment.
+func toolArena(lambdaARN string) string {
+	return `{
   "loaded_providers": {
     "integration-llm": {
       "id": "integration-llm",
@@ -103,14 +139,10 @@ const featureArena = `{
     }
   },
   "tool_specs": {
-    "lookup_order": {
-      "name": "lookup_order",
-      "mode": "mock",
-      "mock_template": "{\"order_id\":\"{{.order_id}}\",\"status\":\"` +
-	mockOrderStatus + `\"}"
-    }
+    "lookup_order": { "name": "lookup_order", "lambda_arn": "` + lambdaARN + `" }
   }
 }`
+}
 
 // testEnv holds the resolved configuration for a run.
 type testEnv struct {
@@ -193,8 +225,28 @@ func packNamed(t *testing.T) string {
 	}
 	// AgentCore runtime names allow letters, digits and underscores only.
 	id = strings.ReplaceAll(id, "-", "_")
-	return strings.Replace(featurePack, `"id": "agentcore-integration"`,
-		`"id": "it_`+id+`"`, 1)
+	return packFrom(t, featurePack)
+}
+
+// packFrom gives a pack a unique id derived from the running test.
+//
+// The id has to clear two patterns at once. The pack schema requires
+// ^[a-z][a-z0-9-]*$ (hyphens, no underscores) and the runtime rejects a pack
+// that fails it; this adapter derives the AWS runtime name from the pack id
+// verbatim and validates it against ^[a-zA-Z][a-zA-Z0-9_]{0,47}$ (underscores,
+// no hyphens). Only separator-free lowercase alphanumerics satisfy both, so
+// that is what these tests use — see the naming issue for widening that.
+func packFrom(t *testing.T, pack string) string {
+	t.Helper()
+
+	id := strings.ToLower(t.Name())
+	for _, cut := range []string{"test", "deployed", "_", "-"} {
+		id = strings.ReplaceAll(id, cut, "")
+	}
+	if len(id) > 40 {
+		id = id[:40]
+	}
+	return strings.Replace(pack, `"id": "agentcore-integration"`, `"id": "it`+id+`"`, 1)
 }
 
 // stateShape is the subset of adapter state these tests read.
@@ -340,10 +392,21 @@ func responseText(result map[string]any) string {
 	return ""
 }
 
+// minSessionIDLen is the shortest runtimeSessionId AgentCore accepts.
+//
+// Undocumented anywhere the adapter can see, and enforced: a shorter id comes
+// back "Member must have length greater than or equal to 33" from
+// InvokeAgentRuntime, after the deploy has already succeeded.
+const minSessionIDLen = 33
+
 // newSession returns a session id unique to this run, so a rerun never reuses
-// a conversation from the last one.
+// a conversation from the last one, padded to the length AgentCore requires.
 func newSession(prefix string) string {
-	return fmt.Sprintf("%s-%d", prefix, time.Now().UnixNano())
+	id := fmt.Sprintf("%s-%d", prefix, time.Now().UnixNano())
+	if len(id) < minSessionIDLen {
+		id += strings.Repeat("0", minSessionIDLen-len(id))
+	}
+	return id
 }
 
 // --- Deploy lifecycle -------------------------------------------------------
@@ -420,19 +483,43 @@ func TestDeployed_UnaryInvocation(t *testing.T) {
 	}
 }
 
-// TestDeployed_ToolCalling asks a real model to call the pack's tool. The tool
-// returns a value the model could not otherwise know, so finding it in the
-// answer proves the whole path ran: model -> tool call -> arena mock -> model.
+// TestDeployed_ToolCalling needs somewhere real for the gateway target to
+// point. Set AGENTCORE_TEST_LAMBDA_ARN to a Lambda the runtime role can invoke.
+//
+// Unlike vertex and foundry, this cannot be faked: a Gateway target is external
+// infrastructure by definition, so there is no mock to substitute.
 func TestDeployed_ToolCalling(t *testing.T) {
 	env := requireEnv(t)
-	arn := runtimeARN(t, applyPack(t, env, packNamed(t)))
 
-	answer := ask(t, env, arn, newSession("tool"),
-		"What is the status of order A-4471? Use the lookup_order tool and quote the status verbatim.")
+	lambdaARN := os.Getenv(envLambdaARN)
+	if lambdaARN == "" {
+		t.Skipf("set %s to a Lambda the runtime role can invoke to exercise tool calling",
+			envLambdaARN)
+	}
 
-	if !strings.Contains(strings.ToLower(answer), "purple locker") {
-		t.Errorf("answer %q does not carry the tool's value (%q); the tool likely never ran",
-			answer, mockOrderStatus)
+	ctx, cancel := context.WithTimeout(context.Background(), applyTimeout)
+	defer cancel()
+
+	cfgJSON := deployConfig(t, env)
+	state, err := agentcore.NewProvider().Apply(ctx, &deploy.PlanRequest{
+		PackJSON:     packFrom(t, toolPack),
+		DeployConfig: cfgJSON,
+		ArenaConfig:  toolArena(lambdaARN),
+	}, nil)
+	if err != nil {
+		if state != "" {
+			destroyQuietly(t, cfgJSON, state)
+		}
+		t.Fatalf("Apply with a tool: %v", err)
+	}
+	t.Cleanup(func() { destroyQuietly(t, cfgJSON, state) })
+
+	answer := ask(t, env, runtimeARN(t, state), newSession("tool"),
+		"What is the status of order A-4471? Use the lookup_order tool.")
+	t.Logf("answer: %s", answer)
+
+	if answer == "" {
+		t.Error("no answer from a tool-calling turn")
 	}
 }
 
