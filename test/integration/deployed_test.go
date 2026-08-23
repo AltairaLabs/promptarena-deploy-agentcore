@@ -387,10 +387,21 @@ func responseText(result map[string]any) string {
 	return ""
 }
 
+// minSessionIDLen is the shortest runtimeSessionId AgentCore accepts.
+//
+// Undocumented anywhere the adapter can see, and enforced: a shorter id comes
+// back "Member must have length greater than or equal to 33" from
+// InvokeAgentRuntime, after the deploy has already succeeded.
+const minSessionIDLen = 33
+
 // newSession returns a session id unique to this run, so a rerun never reuses
-// a conversation from the last one.
+// a conversation from the last one, padded to the length AgentCore requires.
 func newSession(prefix string) string {
-	return fmt.Sprintf("%s-%d", prefix, time.Now().UnixNano())
+	id := fmt.Sprintf("%s-%d", prefix, time.Now().UnixNano())
+	if len(id) < minSessionIDLen {
+		id += strings.Repeat("0", minSessionIDLen-len(id))
+	}
+	return id
 }
 
 // --- Deploy lifecycle -------------------------------------------------------
