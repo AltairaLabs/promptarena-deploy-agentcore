@@ -108,15 +108,38 @@ func checkWidgetLayoutPositionsAreCorrect(t *testing.T, dc *DashboardConfig) {
 	}
 }
 
+// dashboardCase is one row of the buildDashboardConfig table.
+type dashboardCase struct {
+	name        string
+	pack        *prompt.Pack
+	region      string
+	wantNil     bool
+	wantWidgets int
+	checkFunc   func(t *testing.T, dc *DashboardConfig)
+}
+
+// assert checks one case against what buildDashboardConfig returned.
+func (tt dashboardCase) assert(t *testing.T, dc *DashboardConfig) {
+	t.Helper()
+	if tt.wantNil {
+		if dc != nil {
+			t.Fatalf("expected nil, got %+v", dc)
+		}
+		return
+	}
+	if dc == nil {
+		t.Fatal("expected non-nil DashboardConfig")
+	}
+	if tt.wantWidgets > 0 && len(dc.Widgets) != tt.wantWidgets {
+		t.Fatalf("got %d widgets, want %d", len(dc.Widgets), tt.wantWidgets)
+	}
+	if tt.checkFunc != nil {
+		tt.checkFunc(t, dc)
+	}
+}
+
 func TestBuildDashboardConfig(t *testing.T) {
-	tests := []struct {
-		name        string
-		pack        *prompt.Pack
-		region      string
-		wantNil     bool
-		wantWidgets int
-		checkFunc   func(t *testing.T, dc *DashboardConfig)
-	}{
+	tests := []dashboardCase{
 		{
 			name:        "pack with only ID produces one agent widget",
 			pack:        &prompt.Pack{ID: "solo"},
@@ -280,25 +303,7 @@ func TestBuildDashboardConfig(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			dc := buildDashboardConfig(tt.pack, tt.region)
-
-			if tt.wantNil {
-				if dc != nil {
-					t.Fatalf("expected nil, got %+v", dc)
-				}
-				return
-			}
-			if dc == nil {
-				t.Fatal("expected non-nil DashboardConfig")
-			}
-
-			if tt.wantWidgets > 0 && len(dc.Widgets) != tt.wantWidgets {
-				t.Fatalf("got %d widgets, want %d", len(dc.Widgets), tt.wantWidgets)
-			}
-
-			if tt.checkFunc != nil {
-				tt.checkFunc(t, dc)
-			}
+			tt.assert(t, buildDashboardConfig(tt.pack, tt.region))
 		})
 	}
 }

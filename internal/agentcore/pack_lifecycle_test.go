@@ -585,31 +585,11 @@ func TestIntegration_MultiAgent_FullLifecycle(t *testing.T) {
 		t.Errorf("state.PackID = %q, want multi_agent_test", state.PackID)
 	}
 
-	// Verify all resources were created successfully.
-	for _, r := range state.Resources {
-		if r.Status == ResStatusFailed {
-			t.Errorf("resource %s/%s has status=failed", r.Type, r.Name)
-		}
-		if r.ARN == "" {
-			t.Errorf("resource %s/%s has empty ARN", r.Type, r.Name)
-		}
-	}
+	assertNoFailedResources(t, state.Resources)
 
-	// Verify we got resource events for the expected types (including a2a_endpoint
-	// and memory, which are not covered by the messaround tests).
-	typeSet := make(map[string]bool)
-	for _, ev := range events {
-		if ev.Type == "resource" && ev.Resource != nil {
-			typeSet[ev.Resource.Type] = true
-		}
-	}
-	for _, expected := range []string{
-		ResTypeMemory, ResTypeAgentRuntime, ResTypeA2AEndpoint,
-	} {
-		if !typeSet[expected] {
-			t.Errorf("missing resource event for type %s", expected)
-		}
-	}
+	// a2a_endpoint and memory are not covered by the messaround tests.
+	assertResourceEventsFor(t, events,
+		ResTypeMemory, ResTypeAgentRuntime, ResTypeA2AEndpoint)
 
 	// --- Status ---
 	t.Log("=== Phase: Status ===")
@@ -625,14 +605,7 @@ func TestIntegration_MultiAgent_FullLifecycle(t *testing.T) {
 		t.Logf("  %s/%s = %s", r.Type, r.Name, r.Status)
 	}
 
-	if statusResp.Status != "deployed" {
-		t.Errorf("status = %q, want deployed", statusResp.Status)
-	}
-	for _, r := range statusResp.Resources {
-		if r.Status != StatusHealthy {
-			t.Errorf("resource %s/%s health = %q, want healthy", r.Type, r.Name, r.Status)
-		}
-	}
+	assertStatusDeployedAndHealthy(t, statusResp)
 
 	// --- Destroy ---
 	t.Log("=== Phase: Destroy ===")
@@ -649,21 +622,7 @@ func TestIntegration_MultiAgent_FullLifecycle(t *testing.T) {
 		t.Fatalf("Destroy error: %v", err)
 	}
 
-	for _, ev := range destroyEvents {
-		if ev.Type == "error" {
-			t.Errorf("destroy error: %s", ev.Message)
-		}
-	}
-
-	var deletedCount int
-	for _, ev := range destroyEvents {
-		if ev.Type == "resource" && ev.Resource != nil && ev.Resource.Status == "deleted" {
-			deletedCount++
-		}
-	}
-	if deletedCount == 0 {
-		t.Error("expected at least one deleted resource event")
-	}
+	assertDestroyDeletedSomething(t, destroyEvents)
 
 	// Clear state so cleanup is a no-op.
 	stateStr = ""
