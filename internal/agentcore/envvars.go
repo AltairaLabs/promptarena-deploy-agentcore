@@ -41,7 +41,7 @@ const (
 // buildRuntimeEnvVars constructs the environment variable map that will be
 // passed to CreateAgentRuntime / UpdateAgentRuntime. It reads observability,
 // memory, and auth settings from cfg and merges them into a single map.
-func buildRuntimeEnvVars(cfg *Config) map[string]string {
+func buildRuntimeEnvVars(cfg *Config, pack *prompt.Pack) map[string]string {
 	env := make(map[string]string)
 
 	if cfg.Observability != nil {
@@ -83,6 +83,7 @@ func buildRuntimeEnvVars(cfg *Config) map[string]string {
 	}
 
 	injectProviderEnvVars(env, cfg)
+	injectToolEnvVars(env, pack, cfg)
 
 	return env
 }

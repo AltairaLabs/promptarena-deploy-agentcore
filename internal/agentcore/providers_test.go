@@ -439,7 +439,7 @@ func TestBuildRuntimeEnvVars_EmitsProvidersJSON(t *testing.T) {
 			{Name: "embed", Role: RoleEmbedding, Type: "titan", Model: "titan-embed-v2"},
 		},
 	}
-	env := buildRuntimeEnvVars(cfg)
+	env := buildRuntimeEnvVars(cfg, nil)
 
 	raw, ok := env[EnvProviders]
 	if !ok {
@@ -493,7 +493,7 @@ func TestBuildRuntimeEnvVars_LegacyArenaOnlyStillWorks(t *testing.T) {
 			"sonnet": {Type: "claude", Model: "claude-sonnet-4"},
 		}),
 	}
-	env := buildRuntimeEnvVars(cfg)
+	env := buildRuntimeEnvVars(cfg, nil)
 	if env[EnvProviderType] != "claude" || env[EnvProviderModel] != "claude-sonnet-4" {
 		t.Errorf("legacy arena-derived provider not injected: type=%q model=%q",
 			env[EnvProviderType], env[EnvProviderModel])

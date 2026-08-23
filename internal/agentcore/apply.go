@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/AltairaLabs/PromptKit/runtime/evals"
@@ -86,7 +85,7 @@ func (p *Provider) prepareApply(
 	cfg.PackJSON = req.PackJSON
 	cfg.PackTools = pack.Tools
 	cfg.PromptNames = extractPromptNames(pack)
-	cfg.RuntimeEnvVars = buildRuntimeEnvVars(cfg)
+	cfg.RuntimeEnvVars = buildRuntimeEnvVars(cfg, pack)
 	cfg.ResourceTags = buildResourceTags(pack.ID, pack.Version, "", cfg.Tags)
 	cfg.EvalDefs = buildEvalDefs(pack)
 	injectMetricsConfig(cfg, pack)
@@ -249,7 +248,7 @@ func (p *Provider) executeApplyPhases(
 	// Step 1 — Tool Gateway entries (no update support yet).
 	phase := applyPhase(ctx, ac, phaseSpec{
 		create:    ac.client.CreateGatewayTool,
-		names:     sortedKeys(ac.pack.Tools),
+		names:     gatewayToolNames(ac.pack, ac.cfg),
 		resType:   ResTypeToolGateway,
 		stepIndex: stepTools,
 	})
@@ -260,6 +259,12 @@ func (p *Provider) executeApplyPhases(
 
 	// Capture gateway ARN for Cedar tool policies that need a specific resource.
 	ac.cfg.GatewayARN = findGatewayARN(resources)
+
+	// The gateway's endpoint only exists once it has been created, and the
+	// runtime is created after this point, so its environment is completed
+	// here rather than up front.
+	ac.cfg.GatewayURL, ac.cfg.GatewayAuth = ac.client.GatewayEndpoint()
+	injectToolEnvVars(ac.cfg.RuntimeEnvVars, ac.pack, ac.cfg)
 
 	// Step 2 — Cedar Policies (policy engine + policy per prompt with validators/tool_policy).
 	policyRes, policyErr, policyCbErr := applyPoliciesPhase(ctx, ac)
@@ -442,8 +447,15 @@ func createPolicyForPrompt(
 
 	// Associate the policy engine with the gateway so the Cedar schema
 	// includes the gateway's registered tool actions.
-	if err := ac.client.AssociatePolicyEngine(ctx, engineARN, ac.cfg); err != nil {
-		return nil, fmt.Errorf("associate policy engine with gateway: %w", err)
+	//
+	// Only when a gateway exists. A pack whose tools all run in the runtime
+	// creates none, and a tool policy over them is still worth enforcing —
+	// failing here would refuse the deploy and strand the engine just
+	// created, since a failed resource records no id for destroy to use.
+	if gatewayURL, _ := ac.client.GatewayEndpoint(); gatewayURL != "" {
+		if err := ac.client.AssociatePolicyEngine(ctx, engineARN, ac.cfg); err != nil {
+			return nil, fmt.Errorf("associate policy engine with gateway: %w", err)
+		}
 	}
 
 	var lastPolicyARN, lastPolicyID string
@@ -736,16 +748,6 @@ func agentRuntimeNames(pack *prompt.Pack) []string {
 		return names // already sorted by ExtractAgents
 	}
 	return []string{pack.ID}
-}
-
-// sortedKeys returns the keys of a map in sorted order.
-func sortedKeys[V any](m map[string]V) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
 }
 
 // createMemoryResource creates a memory resource if configured, injecting

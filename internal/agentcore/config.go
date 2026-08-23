@@ -78,6 +78,12 @@ type Config struct {
 	// Used by Cedar tool policies that need a specific gateway resource. NOT serialized.
 	GatewayARN string `json:"-"`
 
+	// GatewayURL is the Gateway's MCP endpoint and GatewayAuth is how it
+	// authenticates callers, both read from the Gateway itself at apply-time.
+	// The runtime needs them to call its own tools.
+	GatewayURL  string `json:"-"`
+	GatewayAuth string `json:"-"`
+
 	// ArenaConfig is the parsed arena configuration, populated from
 	// PlanRequest.ArenaConfig. NOT part of the deploy config JSON.
 	ArenaConfig *ArenaConfig `json:"-"`

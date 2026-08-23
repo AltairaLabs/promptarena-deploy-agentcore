@@ -137,7 +137,7 @@ func TestBuildRuntimeEnvVars(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := buildRuntimeEnvVars(tt.cfg)
+			got := buildRuntimeEnvVars(tt.cfg, nil)
 			if len(got) != len(tt.want) {
 				t.Fatalf("got %d env vars, want %d: got=%v want=%v",
 					len(got), len(tt.want), got, tt.want)
@@ -474,7 +474,7 @@ func TestBuildRuntimeEnvVars_InjectsOTLPEndpoint(t *testing.T) {
 		OTLPEndpoint:   "http://collector:4318",
 	}}
 
-	env := buildRuntimeEnvVars(cfg)
+	env := buildRuntimeEnvVars(cfg, nil)
 
 	if got := env[EnvOTLPEndpoint]; got != "http://collector:4318" {
 		t.Errorf("%s = %q, want the configured endpoint", EnvOTLPEndpoint, got)
@@ -489,7 +489,7 @@ func TestBuildRuntimeEnvVars_InjectsOTLPEndpoint(t *testing.T) {
 func TestBuildRuntimeEnvVars_TracingWithoutEndpoint(t *testing.T) {
 	cfg := &Config{Observability: &ObservabilityConfig{TracingEnabled: true}}
 
-	env := buildRuntimeEnvVars(cfg)
+	env := buildRuntimeEnvVars(cfg, nil)
 
 	if got := env[EnvTracingEnabled]; got != "true" {
 		t.Errorf("%s = %q, want true", EnvTracingEnabled, got)

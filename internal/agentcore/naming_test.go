@@ -107,7 +107,7 @@ func TestCollectDerivedNames_WithTools(t *testing.T) {
 			"calc":   {Name: "calc"},
 		},
 	}
-	cfg := &Config{}
+	cfg := &Config{ArenaConfig: arenaFromJSON(t, validArenaConfigJSON)}
 
 	// The tool's own name, because that is what apply records in state. A
 	// derived name here meant plan and state never matched, so every re-plan
@@ -379,7 +379,8 @@ func TestCollectDerivedNames_FullPack(t *testing.T) {
 	}
 
 	cfg := &Config{
-		Memory: MemoryConfig{Strategies: []string{"semantic"}},
+		Memory:      MemoryConfig{Strategies: []string{"semantic"}},
+		ArenaConfig: arenaFromJSON(t, validArenaConfigJSON),
 	}
 
 	names := collectDerivedNames(&pack, cfg)
@@ -502,4 +503,39 @@ func TestSanitizedNamesFitTheirLimits(t *testing.T) {
 				len(got), maxGatewayTargetNameLen, got)
 		}
 	})
+}
+
+// arenaFromJSON parses an arena config fixture.
+func arenaFromJSON(t *testing.T, raw string) *ArenaConfig {
+	t.Helper()
+	cfg, err := parseArenaConfig(raw)
+	if err != nil {
+		t.Fatalf("parseArenaConfig: %v", err)
+	}
+	return cfg
+}
+
+// TestCollectDerivedNames_SkipsToolsWithNoAWSTarget covers the tools that never
+// reach the Gateway.
+//
+// A mock tool runs inside the runtime, so it has no Gateway resource and no
+// business being held to the Gateway's naming rules. Naming it here would
+// reject a pack that deploys perfectly well — and creating a target for it
+// fails the whole apply, since there is no endpoint to point at.
+func TestCollectDerivedNames_SkipsToolsWithNoAWSTarget(t *testing.T) {
+	pack := &prompt.Pack{
+		ID: "toolpack",
+		Tools: map[string]*prompt.PackTool{
+			"search": {Name: "search"},
+			"calc":   {Name: "calc"},
+		},
+	}
+	cfg := &Config{ArenaConfig: arenaFromJSON(t, arenaConfigNoAWSTargetsJSON)}
+
+	names := collectDerivedNames(pack, cfg)
+	for _, tool := range []string{"search", "calc"} {
+		if got, ok := names[tool]; ok {
+			t.Errorf("tool %q became a %q resource; it runs in the runtime", tool, got)
+		}
+	}
 }
