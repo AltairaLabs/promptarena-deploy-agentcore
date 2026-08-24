@@ -262,23 +262,23 @@ func packNamed(t *testing.T) string {
 
 // packFrom gives a pack a unique id derived from the running test.
 //
-// The id has to clear two patterns at once. The pack schema requires
-// ^[a-z][a-z0-9-]*$ (hyphens, no underscores) and the runtime rejects a pack
-// that fails it; this adapter derives the AWS runtime name from the pack id
-// verbatim and validates it against ^[a-zA-Z][a-zA-Z0-9_]{0,47}$ (underscores,
-// no hyphens). Only separator-free lowercase alphanumerics satisfy both, so
-// that is what these tests use — see the naming issue for widening that.
+// Hyphenated, deliberately. The pack schema requires ^[a-z][a-z0-9-]*$ and the
+// runtime refuses a pack that fails it, while AWS resource names take
+// underscores and refuse hyphens — so the adapter has to translate. Using the
+// form a pack author would actually write keeps that translation covered on
+// every run rather than only in unit tests.
 func packFrom(t *testing.T, pack string) string {
 	t.Helper()
 
 	id := strings.ToLower(t.Name())
-	for _, cut := range []string{"test", "deployed", "_", "-"} {
+	for _, cut := range []string{"test", "deployed", "_"} {
 		id = strings.ReplaceAll(id, cut, "")
 	}
-	if len(id) > 40 {
-		id = id[:40]
+	id = strings.Trim(id, "-")
+	if len(id) > 36 {
+		id = strings.Trim(id[:36], "-")
 	}
-	return strings.Replace(pack, `"id": "agentcore-integration"`, `"id": "it`+id+`"`, 1)
+	return strings.Replace(pack, `"id": "agentcore-integration"`, `"id": "it-`+id+`"`, 1)
 }
 
 // stateShape is the subset of adapter state these tests read.

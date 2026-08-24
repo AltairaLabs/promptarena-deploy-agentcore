@@ -85,7 +85,7 @@ func generateDesiredResources(pack *prompt.Pack, cfg *Config) []deploy.ResourceC
 
 	// Memory resource (before tools/runtimes).
 	if cfg.HasMemory() {
-		memName := pack.ID + "_memory"
+		memName := packBaseName(pack) + "_memory"
 		desired = append(desired, deploy.ResourceChange{
 			Type:   ResTypeMemory,
 			Name:   memName,
@@ -118,10 +118,7 @@ func generateAgentResources(pack *prompt.Pack, cfg *Config) []deploy.ResourceCha
 		return generateMultiAgentResources(pack, cfg)
 	}
 
-	name := pack.ID
-	if name == "" {
-		name = defaultPackName
-	}
+	name := packBaseName(pack)
 	desired := []deploy.ResourceChange{{
 		Type:   ResTypeAgentRuntime,
 		Name:   name,
@@ -193,7 +190,7 @@ func generateOnlineEvalConfigResources(pack *prompt.Pack) []deploy.ResourceChang
 		if pack.Evals[i].Type == evalTypeLLMAsJudge || pack.Evals[i].Type == evalTypeBuiltin {
 			return []deploy.ResourceChange{{
 				Type:   ResTypeOnlineEvalConfig,
-				Name:   pack.ID + "_online_eval",
+				Name:   packBaseName(pack) + "_online_eval",
 				Action: deploy.ActionCreate,
 				Detail: fmt.Sprintf("Create online evaluation config for %s", pack.ID),
 			}}
