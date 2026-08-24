@@ -21,6 +21,76 @@ var awsNameRe = regexp.MustCompile(awsNamePattern)
 // defaultPackName is used when a pack has no explicit ID.
 const defaultPackName = "default"
 
+// maxAWSNameLen is the longest name AWS accepts for these resources.
+const maxAWSNameLen = 48
+
+// packBaseName is the AWS-safe stem every pack-level resource name is built
+// from.
+//
+// A pack id and an AgentCore resource name cannot be spelled the same way. The
+// pack schema requires ^[a-z][a-z0-9-]*$ and the runtime refuses a pack that
+// fails it; AWS requires ^[a-zA-Z][a-zA-Z0-9_]{0,47}$ here. Hyphens are legal
+// in one and rejected by the other, underscores the reverse, so the two overlap
+// only on ids with no separator at all.
+//
+// That made "customer-support" — the schema's own idiom, and the obvious thing
+// to write — undeployable, while "customer_support" deployed, reached ready,
+// and then failed its first turn because the runtime would not load the pack.
+// Translating here means the author writes an id their pack schema accepts and
+// this finds a name AWS accepts.
+//
+// Every pack-level name goes through this, so plan, apply and validation cannot
+// disagree about what a resource is called.
+func packBaseName(pack *prompt.Pack) string {
+	if pack == nil || pack.ID == "" {
+		return defaultPackName
+	}
+	return sanitizeAWSName(pack.ID)
+}
+
+// sanitizeAWSName rewrites a name into one AWS will accept.
+//
+// Anything outside [a-zA-Z0-9] becomes an underscore, runs collapse, and a
+// leading non-letter is dropped because AWS requires the first character to be
+// one. A name that is already valid comes back unchanged, which is what makes
+// this safe to introduce: no deployment that works today is renamed, and the
+// only names that change are ones that could never have been deployed.
+func sanitizeAWSName(name string) string {
+	var b strings.Builder
+	lastUnderscore := false
+	for _, r := range name {
+		switch {
+		case (r >= '0' && r <= '9') || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z'):
+			// AWS wants a letter first, so digits before one are dropped
+			// rather than carried into an invalid name.
+			if b.Len() == 0 && !isASCIILetter(r) {
+				continue
+			}
+			b.WriteRune(r)
+			lastUnderscore = false
+		case !lastUnderscore && b.Len() > 0:
+			b.WriteRune('_')
+			lastUnderscore = true
+		}
+	}
+
+	out := strings.TrimRight(b.String(), "_")
+	if out == "" {
+		return defaultPackName
+	}
+	// Suffixes like "_online_eval" are appended to this, so leave room; the
+	// cap has to cover the whole name AWS finally receives.
+	if len(out) > maxAWSNameLen {
+		out = strings.TrimRight(out[:maxAWSNameLen], "_")
+	}
+	return out
+}
+
+// isASCIILetter reports whether r may start an AWS resource name.
+func isASCIILetter(r rune) bool {
+	return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z')
+}
+
 // validateAWSName checks whether name is a valid AWS resource name and returns
 // an error describing the problem if not. The resourceType is used in the error
 // message to help users identify which resource is invalid.
@@ -130,7 +200,7 @@ func collectDerivedNames(pack *prompt.Pack, cfg *Config) map[string]string {
 // collectPackLevelNames adds memory, cedar policy, and online eval names.
 func collectPackLevelNames(names map[string]string, pack *prompt.Pack, cfg *Config) {
 	if cfg.HasMemory() {
-		names[pack.ID+"_memory"] = ResTypeMemory
+		names[packBaseName(pack)+"_memory"] = ResTypeMemory
 	}
 	for _, policyName := range policyResourceNames(pack) {
 		names[policyName+"_policy_engine"] = ResTypeCedarPolicy
@@ -150,7 +220,7 @@ func collectEvalNames(names map[string]string, pack *prompt.Pack) {
 		}
 	}
 	if hasOnlineEval {
-		names[pack.ID+"_online_eval"] = ResTypeOnlineEvalConfig
+		names[packBaseName(pack)+"_online_eval"] = ResTypeOnlineEvalConfig
 	}
 }
 
@@ -180,11 +250,7 @@ func collectAgentNames(names map[string]string, pack *prompt.Pack) {
 		}
 		return
 	}
-	name := pack.ID
-	if name == "" {
-		name = defaultPackName
-	}
-	names[name] = ResTypeAgentRuntime
+	names[packBaseName(pack)] = ResTypeAgentRuntime
 }
 
 // validateResourceNames collects all derived resource names and validates them

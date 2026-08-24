@@ -200,34 +200,23 @@ func TestValidateResourceNames_ValidPack(t *testing.T) {
 }
 
 func TestValidateResourceNames_HyphenatedPackID(t *testing.T) {
-	pack := &prompt.Pack{
-		ID: "research-team",
-	}
-	cfg := &Config{
-		Memory: MemoryConfig{Strategies: []string{"semantic"}},
+	pack := &prompt.Pack{ID: "research-team"}
+	cfg := &Config{Memory: MemoryConfig{Strategies: []string{"semantic"}}}
+
+	// A hyphen is the pack schema's own idiom, and the id an author is most
+	// likely to write. It used to be refused here, which left no id that both
+	// this adapter and the pack schema would accept unless it had no
+	// separator at all.
+	if errs := validateResourceNames(pack, cfg); len(errs) > 0 {
+		t.Fatalf("a hyphenated pack id should deploy, got %v", errs)
 	}
 
-	errs := validateResourceNames(pack, cfg)
-	if len(errs) == 0 {
-		t.Fatal("expected errors for hyphenated pack ID")
+	names := collectDerivedNames(pack, cfg)
+	if _, ok := names["research_team"]; !ok {
+		t.Errorf("runtime name not translated for AWS: %v", names)
 	}
-
-	// Should catch both the runtime name and the memory name.
-	foundRuntime := false
-	foundMemory := false
-	for _, e := range errs {
-		if strings.Contains(e, "research-team") && strings.Contains(e, "agent_runtime") {
-			foundRuntime = true
-		}
-		if strings.Contains(e, "research-team_memory") && strings.Contains(e, "memory") {
-			foundMemory = true
-		}
-	}
-	if !foundRuntime {
-		t.Errorf("expected runtime name error, got %v", errs)
-	}
-	if !foundMemory {
-		t.Errorf("expected memory name error, got %v", errs)
+	if _, ok := names["research_team_memory"]; !ok {
+		t.Errorf("memory name not translated for AWS: %v", names)
 	}
 }
 
@@ -536,6 +525,82 @@ func TestCollectDerivedNames_SkipsToolsWithNoAWSTarget(t *testing.T) {
 	for _, tool := range []string{"search", "calc"} {
 		if got, ok := names[tool]; ok {
 			t.Errorf("tool %q became a %q resource; it runs in the runtime", tool, got)
+		}
+	}
+}
+
+// TestSanitizeAWSName covers the translation between what a pack id may be and
+// what AWS accepts.
+//
+// The identity cases matter most: a name that deploys today must come back
+// unchanged, or introducing this would rename live resources and every
+// re-apply would report a delete and a create.
+func TestSanitizeAWSName(t *testing.T) {
+	for _, tt := range []struct{ in, want string }{
+		// Already valid — must not move.
+		{"customersupport", "customersupport"},
+		{"research_team", "research_team"},
+		{"Agent1", "Agent1"},
+
+		// The schema's idiom, previously undeployable.
+		{"customer-support", "customer_support"},
+		{"a-b-c", "a_b_c"},
+
+		// Runs collapse and edges are trimmed, since AWS allows neither a
+		// doubled separator nor a trailing one.
+		{"a--b", "a_b"},
+		{"-leading", "leading"},
+		{"trailing-", "trailing"},
+
+		// AWS wants a letter first.
+		{"1pack", "pack"},
+		{"9-lives", "lives"},
+
+		// Nothing usable left.
+		{"---", defaultPackName},
+		{"", defaultPackName},
+	} {
+		if got := sanitizeAWSName(tt.in); got != tt.want {
+			t.Errorf("sanitizeAWSName(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
+// TestSanitizeAWSName_LeavesRoomForSuffixes checks the cap covers the whole
+// name AWS finally receives.
+//
+// Pack-level resources append "_memory" and "_online_eval" to this stem, and
+// AWS rejects the result if the total exceeds its limit — the failure would
+// appear only for a long pack id, and only on the resource with the longest
+// suffix.
+func TestSanitizeAWSName_LeavesRoomForSuffixes(t *testing.T) {
+	long := strings.Repeat("a", 80)
+	got := sanitizeAWSName(long)
+	if len(got) > maxAWSNameLen {
+		t.Errorf("sanitized name is %d characters, over the %d AWS allows",
+			len(got), maxAWSNameLen)
+	}
+	if err := validateAWSName(got, "agent_runtime"); err != nil {
+		t.Errorf("sanitized name is not valid: %v", err)
+	}
+}
+
+// TestPackBaseName_IsWhatEveryPackResourceUses guards the property that keeps
+// plan and apply agreeing.
+//
+// Three logical names are derived in three places each. Deriving them
+// separately is how the tool resources came to disagree before, which showed up
+// as a delete and a create for every tool on every re-apply.
+func TestPackBaseName_IsWhatEveryPackResourceUses(t *testing.T) {
+	pack := &prompt.Pack{ID: "research-team"}
+	cfg := &Config{Memory: MemoryConfig{Strategies: []string{"semantic"}}}
+
+	base := packBaseName(pack)
+	names := collectDerivedNames(pack, cfg)
+	for name, resType := range names {
+		if !strings.HasPrefix(name, base) {
+			t.Errorf("resource %q (%s) is not built from the pack base name %q",
+				name, resType, base)
 		}
 	}
 }

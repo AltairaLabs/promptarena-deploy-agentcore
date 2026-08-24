@@ -336,7 +336,7 @@ func applyEvalPhases(
 	ac.cfg.EvalARNs = collectEvalARNs(resources)
 	ac.cfg.BuiltinEvalIDs = collectBuiltinEvalIDs(ac.pack)
 	if len(ac.cfg.EvalARNs) > 0 || len(ac.cfg.BuiltinEvalIDs) > 0 {
-		oecName := ac.pack.ID + "_online_eval"
+		oecName := packBaseName(ac.pack) + "_online_eval"
 		phase := applyPhase(ctx, ac, phaseSpec{
 			create:    ac.client.CreateOnlineEvalConfig,
 			names:     []string{oecName},
@@ -747,7 +747,7 @@ func agentRuntimeNames(pack *prompt.Pack) []string {
 		}
 		return names // already sorted by ExtractAgents
 	}
-	return []string{pack.ID}
+	return []string{packBaseName(pack)}
 }
 
 // createMemoryResource creates a memory resource if configured, injecting
@@ -759,7 +759,7 @@ func createMemoryResource(
 	cfg *Config,
 	pack *prompt.Pack,
 ) (*ResourceState, error) {
-	memName := pack.ID + "_memory"
+	memName := packBaseName(pack) + "_memory"
 
 	if err := reporter.Progress("Creating memory: "+memName, 0); err != nil {
 		return nil, err
