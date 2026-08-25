@@ -69,6 +69,11 @@ func run(log *slog.Logger) error {
 		return err
 	}
 
+	sdkOpts, err = withMetricRecorder(context.Background(), sdkOpts, cfg, log)
+	if err != nil {
+		return err
+	}
+
 	opener := sdk.A2AOpener(cfg.PackFile, agentName, sdkOpts...)
 
 	card := buildAgentCard(pack, agentName)

@@ -109,6 +109,27 @@ aws iam put-role-policy \
   }'
 ```
 
+If your pack declares **evals**, the runtime publishes their results as CloudWatch metrics and needs permission to write them. Without this the evals still run and the results go nowhere, which is indistinguishable from having no evals:
+
+```bash
+aws iam put-role-policy \
+  --role-name AgentCoreRuntime \
+  --policy-name AgentCoreMetricsAccess \
+  --policy-document '{
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "PublishEvalMetrics",
+        "Effect": "Allow",
+        "Action": ["cloudwatch:PutMetricData"],
+        "Resource": "*"
+      }
+    ]
+  }'
+```
+
+`cloudwatch:PutMetricData` takes no resource ARN — access is scoped by the metric namespace condition key if you need to narrow it.
+
 If your pack uses **Cedar policies** (tool blocklist), the gateway role also needs permission to read the policy engine. Add an inline policy:
 
 ```bash
