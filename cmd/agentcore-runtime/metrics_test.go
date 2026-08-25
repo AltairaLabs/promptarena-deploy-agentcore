@@ -164,3 +164,69 @@ func TestParseMetricsConfig_ReportsBadJSON(t *testing.T) {
 		t.Errorf("error should name the variable, got %v", err)
 	}
 }
+
+// TestWithMetricRecorder_NoConfigChangesNothing covers a pack with no evals.
+//
+// Most packs declare none, so the common path must leave the SDK options
+// exactly as they were rather than adding a recorder with nothing to record.
+func TestWithMetricRecorder_NoConfigChangesNothing(t *testing.T) {
+	opts, err := withMetricRecorder(context.Background(), nil,
+		&runtimeConfig{}, slog.Default())
+	if err != nil {
+		t.Fatalf("withMetricRecorder: %v", err)
+	}
+	if len(opts) != 0 {
+		t.Errorf("added %d options for a pack with no metrics", len(opts))
+	}
+}
+
+// TestWithMetricRecorder_ReportsBadConfig fails startup on a malformed
+// injection rather than serving with metrics silently absent.
+func TestWithMetricRecorder_ReportsBadConfig(t *testing.T) {
+	_, err := withMetricRecorder(context.Background(), nil,
+		&runtimeConfig{MetricsConfig: `{"namespace":`}, slog.Default())
+	if err == nil {
+		t.Fatal("expected an error for malformed metrics config")
+	}
+}
+
+// TestMetricValue covers which number an eval publishes.
+func TestMetricValue(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		result evals.EvalResult
+		want   float64
+		ok     bool
+	}{
+		{"metric value wins", evals.EvalResult{MetricValue: ptr(2), Score: ptr(1)}, 2, true},
+		{"score is the fallback", evals.EvalResult{Score: ptr(1)}, 1, true},
+		{"neither is not a number", evals.EvalResult{}, 0, false},
+		{"a real zero still publishes", evals.EvalResult{Score: ptr(0)}, 0, true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := metricValue(&tt.result)
+			if ok != tt.ok || got != tt.want {
+				t.Errorf("metricValue = (%v, %v), want (%v, %v)", got, ok, tt.want, tt.ok)
+			}
+		})
+	}
+}
+
+// TestCloudWatchRecorder_ReportsAFailureOnlyOnce keeps a broken metrics
+// pipeline from writing a line per eval per turn.
+func TestCloudWatchRecorder_ReportsAFailureOnlyOnce(t *testing.T) {
+	fake := &fakeCloudWatch{err: context.DeadlineExceeded}
+	rec := newCloudWatchRecorder(fake, testMetricsConfig(), slog.Default())
+
+	for range 3 {
+		if err := rec.Record(evals.EvalResult{EvalID: "tone", Score: ptr(1)}, nil); err != nil {
+			t.Fatalf("Record: %v", err)
+		}
+	}
+
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	if !rec.failed {
+		t.Error("a publish failure was not recorded")
+	}
+}
