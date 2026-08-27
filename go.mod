@@ -3,10 +3,10 @@ module github.com/AltairaLabs/promptarena-deploy-agentcore
 go 1.26.0
 
 require (
-	github.com/AltairaLabs/PromptKit/pkg v1.5.11
-	github.com/AltairaLabs/PromptKit/runtime v1.5.11
-	github.com/AltairaLabs/PromptKit/sdk v1.5.10
-	github.com/AltairaLabs/PromptKit/server/a2a v1.5.10
+	github.com/AltairaLabs/PromptKit/pkg v1.5.12
+	github.com/AltairaLabs/PromptKit/runtime v1.5.12
+	github.com/AltairaLabs/PromptKit/sdk v1.5.12
+	github.com/AltairaLabs/PromptKit/server/a2a v1.5.12
 	github.com/AltairaLabs/promptarena v1.5.9
 	github.com/aws/aws-sdk-go-v2 v1.43.7
 	github.com/aws/aws-sdk-go-v2/config v1.32.36
@@ -15,6 +15,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/bedrock v1.66.5
 	github.com/aws/aws-sdk-go-v2/service/bedrockagentcore v1.13.0
 	github.com/aws/aws-sdk-go-v2/service/bedrockagentcorecontrol v1.19.0
+	github.com/aws/aws-sdk-go-v2/service/cloudwatch v1.67.0
 	github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs v1.63.1
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.96.0
 	github.com/aws/aws-sdk-go-v2/service/sts v1.45.5
@@ -34,7 +35,6 @@ require (
 	github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.38 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.7.38 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/v4a v1.4.37 // indirect
-	github.com/aws/aws-sdk-go-v2/service/cloudwatch v1.67.0 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.13.16 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/checksum v1.9.8 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.13.36 // indirect
