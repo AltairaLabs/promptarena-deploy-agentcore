@@ -5,15 +5,16 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/AltairaLabs/PromptKit/runtime/packspec"
 	"github.com/AltairaLabs/PromptKit/runtime/prompt"
 	"github.com/AltairaLabs/PromptKit/runtime/statestore"
 )
 
 func TestResolveAgentName_EnvOverride(t *testing.T) {
 	cfg := &runtimeConfig{AgentName: "override"}
-	pack := &prompt.Pack{
+	pack := &prompt.Pack{Pack: packspec.Pack{
 		Agents: &prompt.AgentsConfig{Entry: "entry-agent"},
-	}
+	}}
 
 	name, err := resolveAgentName(cfg, pack)
 	if err != nil {
@@ -26,9 +27,9 @@ func TestResolveAgentName_EnvOverride(t *testing.T) {
 
 func TestResolveAgentName_AgentsEntry(t *testing.T) {
 	cfg := &runtimeConfig{}
-	pack := &prompt.Pack{
+	pack := &prompt.Pack{Pack: packspec.Pack{
 		Agents: &prompt.AgentsConfig{Entry: "orchestrator"},
-	}
+	}}
 
 	name, err := resolveAgentName(cfg, pack)
 	if err != nil {
@@ -41,11 +42,11 @@ func TestResolveAgentName_AgentsEntry(t *testing.T) {
 
 func TestResolveAgentName_SinglePrompt(t *testing.T) {
 	cfg := &runtimeConfig{}
-	pack := &prompt.Pack{
+	pack := &prompt.Pack{Pack: packspec.Pack{
 		Prompts: map[string]*prompt.PackPrompt{
 			"chat": {Name: "chat"},
 		},
-	}
+	}}
 
 	name, err := resolveAgentName(cfg, pack)
 	if err != nil {
@@ -58,12 +59,12 @@ func TestResolveAgentName_SinglePrompt(t *testing.T) {
 
 func TestResolveAgentName_Ambiguous(t *testing.T) {
 	cfg := &runtimeConfig{}
-	pack := &prompt.Pack{
+	pack := &prompt.Pack{Pack: packspec.Pack{
 		Prompts: map[string]*prompt.PackPrompt{
 			"a": {Name: "a"},
 			"b": {Name: "b"},
 		},
-	}
+	}}
 
 	_, err := resolveAgentName(cfg, pack)
 	if err == nil {
@@ -105,7 +106,7 @@ func TestBuildMux_RootRoute(t *testing.T) {
 }
 
 func TestBuildAgentCard_FromPack(t *testing.T) {
-	pack := &prompt.Pack{
+	pack := &prompt.Pack{Pack: packspec.Pack{
 		Version: "1.0.0",
 		Agents: &prompt.AgentsConfig{
 			Entry: "myagent",
@@ -122,7 +123,7 @@ func TestBuildAgentCard_FromPack(t *testing.T) {
 				Description: "test agent prompt",
 			},
 		},
-	}
+	}}
 
 	card := buildAgentCard(pack, "myagent")
 	if card.Name != "myagent" {
@@ -131,7 +132,7 @@ func TestBuildAgentCard_FromPack(t *testing.T) {
 }
 
 func TestBuildAgentCard_Fallback(t *testing.T) {
-	pack := &prompt.Pack{
+	pack := &prompt.Pack{Pack: packspec.Pack{
 		Version: "2.0.0",
 		Prompts: map[string]*prompt.PackPrompt{
 			"chat": {
@@ -139,7 +140,7 @@ func TestBuildAgentCard_Fallback(t *testing.T) {
 				Description: "a chat prompt",
 			},
 		},
-	}
+	}}
 
 	card := buildAgentCard(pack, "chat")
 	if card.Name != "chat" {

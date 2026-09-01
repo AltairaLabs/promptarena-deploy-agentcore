@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/AltairaLabs/PromptKit/runtime/packspec"
 	"github.com/AltairaLabs/PromptKit/runtime/prompt"
 )
 
@@ -12,7 +13,7 @@ func boolPtr(b bool) *bool { return &b }
 // Validators should NOT produce Cedar — they are runtime-only.
 
 func TestCedarValidatorsProduceNothing(t *testing.T) {
-	vals := []prompt.Validator{
+	vals := []*prompt.Validator{
 		{
 			Type:   "banned_words",
 			Params: map[string]interface{}{"words": []interface{}{"badword", "evil"}},
@@ -40,7 +41,7 @@ func TestCedarValidatorsProduceNothing(t *testing.T) {
 
 func TestCedarMaxRoundsProducesNothing(t *testing.T) {
 	tp := &prompt.ToolPolicyPack{
-		MaxRounds: 5,
+		MaxRounds: packspec.Ptr(5),
 	}
 	blocks := generateCedarStatements(nil, tp, "", nil)
 	if len(blocks) != 0 {
@@ -50,7 +51,7 @@ func TestCedarMaxRoundsProducesNothing(t *testing.T) {
 
 func TestCedarMaxToolCallsPerTurnProducesNothing(t *testing.T) {
 	tp := &prompt.ToolPolicyPack{
-		MaxToolCallsPerTurn: 3,
+		MaxToolCallsPerTurn: packspec.Ptr(3),
 	}
 	blocks := generateCedarStatements(nil, tp, "", nil)
 	if len(blocks) != 0 {
@@ -114,7 +115,7 @@ func TestCedarToolBlocklistFiltersUnregisteredTools(t *testing.T) {
 }
 
 func TestCedarMixed_OnlyBlocklistProducesCedar(t *testing.T) {
-	vals := []prompt.Validator{
+	vals := []*prompt.Validator{
 		{
 			Type:   "banned_words",
 			Params: map[string]interface{}{"words": []interface{}{"secret"}},
@@ -126,7 +127,7 @@ func TestCedarMixed_OnlyBlocklistProducesCedar(t *testing.T) {
 	}
 	tp := &prompt.ToolPolicyPack{
 		Blocklist: []string{"exec"},
-		MaxRounds: 10,
+		MaxRounds: packspec.Ptr(10),
 	}
 	result := strings.Join(generateCedarStatements(vals, tp, "", nil), "\n\n")
 
@@ -163,7 +164,7 @@ func TestCedarEmptyToolPolicy(t *testing.T) {
 
 func TestHasPolicyRules_ValidatorsOnly(t *testing.T) {
 	p := &prompt.PackPrompt{
-		Validators: []prompt.Validator{
+		Validators: []*prompt.Validator{
 			{Type: "banned_words"},
 		},
 	}
@@ -174,7 +175,7 @@ func TestHasPolicyRules_ValidatorsOnly(t *testing.T) {
 
 func TestHasPolicyRules_MaxRoundsOnly(t *testing.T) {
 	p := &prompt.PackPrompt{
-		ToolPolicy: &prompt.ToolPolicyPack{MaxRounds: 5},
+		ToolPolicy: &prompt.ToolPolicyPack{MaxRounds: packspec.Ptr(5)},
 	}
 	if hasPolicyRules(p) {
 		t.Error("max_rounds alone should not trigger policy rules")
@@ -191,10 +192,10 @@ func TestHasPolicyRules_BlocklistPresent(t *testing.T) {
 }
 
 func TestPolicyResourceNames(t *testing.T) {
-	pack := &prompt.Pack{
+	pack := &prompt.Pack{Pack: packspec.Pack{
 		Prompts: map[string]*prompt.PackPrompt{
 			"chat": {
-				Validators: []prompt.Validator{
+				Validators: []*prompt.Validator{
 					{Type: "banned_words"},
 				},
 			},
@@ -205,7 +206,7 @@ func TestPolicyResourceNames(t *testing.T) {
 				},
 			},
 		},
-	}
+	}}
 
 	names := policyResourceNames(pack)
 	// Only "tooled" has a blocklist — "chat" only has validators (runtime-only).
@@ -218,11 +219,11 @@ func TestPolicyResourceNames(t *testing.T) {
 }
 
 func TestPolicyResourceNames_NoPolicies(t *testing.T) {
-	pack := &prompt.Pack{
+	pack := &prompt.Pack{Pack: packspec.Pack{
 		Prompts: map[string]*prompt.PackPrompt{
 			"chat": {},
 		},
-	}
+	}}
 	names := policyResourceNames(pack)
 	if len(names) != 0 {
 		t.Errorf("expected 0 names, got %d", len(names))

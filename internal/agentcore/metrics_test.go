@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/AltairaLabs/PromptKit/runtime/evals"
+	"github.com/AltairaLabs/PromptKit/runtime/packspec"
 	"github.com/AltairaLabs/PromptKit/runtime/prompt"
 )
 
@@ -133,9 +134,9 @@ func TestBuildMetricsConfig(t *testing.T) {
 	tests := []metricsCase{
 		{
 			name: "gauge metric produces correct entry",
-			pack: &prompt.Pack{
+			pack: &prompt.Pack{Pack: packspec.Pack{
 				ID: "test-pack",
-				Evals: []evals.EvalDef{
+				Evals: []*evals.EvalDef{
 					{
 						ID: "accuracy",
 						Metric: &evals.MetricDef{
@@ -144,7 +145,7 @@ func TestBuildMetricsConfig(t *testing.T) {
 						},
 					},
 				},
-			},
+			}},
 			wantCount:  1,
 			wantAlarms: 0,
 			wantDims:   map[string]string{"pack_id": "test-pack"},
@@ -152,9 +153,9 @@ func TestBuildMetricsConfig(t *testing.T) {
 		},
 		{
 			name: "counter with range produces alarm",
-			pack: &prompt.Pack{
+			pack: &prompt.Pack{Pack: packspec.Pack{
 				ID: "test-pack",
-				Evals: []evals.EvalDef{
+				Evals: []*evals.EvalDef{
 					{
 						ID: "retries",
 						Metric: &evals.MetricDef{
@@ -167,50 +168,50 @@ func TestBuildMetricsConfig(t *testing.T) {
 						},
 					},
 				},
-			},
+			}},
 			wantCount:  1,
 			wantAlarms: 1,
 			checkFunc:  checkCounterAlarm,
 		},
 		{
 			name: "no evals with metrics returns nil",
-			pack: &prompt.Pack{
+			pack: &prompt.Pack{Pack: packspec.Pack{
 				ID: "test-pack",
-				Evals: []evals.EvalDef{
+				Evals: []*evals.EvalDef{
 					{ID: "no-metric"},
 				},
-			},
+			}},
 			wantNil: true,
 		},
 		{
 			name:    "empty evals returns nil",
-			pack:    &prompt.Pack{ID: "test-pack"},
+			pack:    &prompt.Pack{Pack: packspec.Pack{ID: "test-pack"}},
 			wantNil: true,
 		},
 		{
 			name: "multi-agent pack includes agent dimension",
-			pack: &prompt.Pack{
+			pack: &prompt.Pack{Pack: packspec.Pack{
 				ID: "multi-pack",
 				Agents: &prompt.AgentsConfig{
 					Entry:   "coordinator",
 					Members: map[string]*prompt.AgentDef{"coordinator": {}, "worker": {}},
 				},
-				Evals: []evals.EvalDef{
+				Evals: []*evals.EvalDef{
 					{
 						ID:     "latency",
 						Metric: &evals.MetricDef{Name: "p99_latency", Type: evals.MetricHistogram},
 					},
 				},
-			},
+			}},
 			wantCount: 1,
 			wantDims:  map[string]string{"pack_id": "multi-pack", "agent": "multi"},
 			checkFunc: checkHistogramUnit,
 		},
 		{
 			name: "mixed evals only includes those with metrics",
-			pack: &prompt.Pack{
+			pack: &prompt.Pack{Pack: packspec.Pack{
 				ID: "mixed-pack",
-				Evals: []evals.EvalDef{
+				Evals: []*evals.EvalDef{
 					{ID: "eval-no-metric"},
 					{
 						ID:     "eval-with-metric",
@@ -218,29 +219,29 @@ func TestBuildMetricsConfig(t *testing.T) {
 					},
 					{ID: "another-no-metric"},
 				},
-			},
+			}},
 			wantCount: 1,
 			checkFunc: checkOnlyMetricEvalKept,
 		},
 		{
 			name: "all four metric types map to correct units",
-			pack: &prompt.Pack{
+			pack: &prompt.Pack{Pack: packspec.Pack{
 				ID: "unit-pack",
-				Evals: []evals.EvalDef{
+				Evals: []*evals.EvalDef{
 					{ID: "e1", Metric: &evals.MetricDef{Name: "m1", Type: evals.MetricGauge}},
 					{ID: "e2", Metric: &evals.MetricDef{Name: "m2", Type: evals.MetricCounter}},
 					{ID: "e3", Metric: &evals.MetricDef{Name: "m3", Type: evals.MetricHistogram}},
 					{ID: "e4", Metric: &evals.MetricDef{Name: "m4", Type: evals.MetricBoolean}},
 				},
-			},
+			}},
 			wantCount: 4,
 			checkFunc: checkAllUnits,
 		},
 		{
 			name: "alarm with only min",
-			pack: &prompt.Pack{
+			pack: &prompt.Pack{Pack: packspec.Pack{
 				ID: "min-pack",
-				Evals: []evals.EvalDef{
+				Evals: []*evals.EvalDef{
 					{
 						ID: "e1",
 						Metric: &evals.MetricDef{
@@ -250,15 +251,15 @@ func TestBuildMetricsConfig(t *testing.T) {
 						},
 					},
 				},
-			},
+			}},
 			wantAlarms: 1,
 			checkFunc:  checkMinOnlyAlarm,
 		},
 		{
 			name: "alarm with only max",
-			pack: &prompt.Pack{
+			pack: &prompt.Pack{Pack: packspec.Pack{
 				ID: "max-pack",
-				Evals: []evals.EvalDef{
+				Evals: []*evals.EvalDef{
 					{
 						ID: "e1",
 						Metric: &evals.MetricDef{
@@ -268,7 +269,7 @@ func TestBuildMetricsConfig(t *testing.T) {
 						},
 					},
 				},
-			},
+			}},
 			wantAlarms: 1,
 			checkFunc:  checkMaxOnlyAlarm,
 		},

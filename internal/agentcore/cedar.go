@@ -20,7 +20,7 @@ import (
 // Each element is a standalone forbid block suitable for a single
 // CreatePolicy call (AWS does not accept multiple policies per statement).
 func generateCedarStatements(
-	_ []prompt.Validator,
+	_ []*prompt.Validator,
 	tp *prompt.ToolPolicyPack,
 	gatewayARN string,
 	registeredTools map[string]bool,

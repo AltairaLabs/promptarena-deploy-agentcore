@@ -169,7 +169,7 @@ func appendEvalWidgets(
 		if i > 0 && i%dashboardColumns == 0 {
 			row += dashboardWidgetHeight
 		}
-		w := buildEvalWidget(&pack.Evals[i], pack.ID, region, col, row)
+		w := buildEvalWidget(pack.Evals[i], pack.ID, region, col, row)
 		widgets = append(widgets, w)
 	}
 	return widgets

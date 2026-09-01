@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/AltairaLabs/PromptKit/runtime/evals"
+	"github.com/AltairaLabs/PromptKit/runtime/packspec"
 	"github.com/AltairaLabs/PromptKit/runtime/prompt"
 )
 
@@ -142,26 +143,26 @@ func TestBuildDashboardConfig(t *testing.T) {
 	tests := []dashboardCase{
 		{
 			name:        "pack with only ID produces one agent widget",
-			pack:        &prompt.Pack{ID: "solo"},
+			pack:        &prompt.Pack{Pack: packspec.Pack{ID: "solo"}},
 			region:      "us-west-2",
 			wantWidgets: 1,
 			checkFunc:   checkPackWithOnlyIdProducesOneAgentWidget,
 		},
 		{
 			name: "single agent pack produces one agent widget",
-			pack: &prompt.Pack{
+			pack: &prompt.Pack{Pack: packspec.Pack{
 				ID: "my-agent",
 				Prompts: map[string]*prompt.PackPrompt{
 					"main": {},
 				},
-			},
+			}},
 			region:      "us-east-1",
 			wantWidgets: 1,
 			checkFunc:   checkSingleAgentPackProducesOneAgentWidget,
 		},
 		{
 			name: "multi-agent pack produces agent widgets plus A2A widget",
-			pack: &prompt.Pack{
+			pack: &prompt.Pack{Pack: packspec.Pack{
 				ID: "multi",
 				Agents: &prompt.AgentsConfig{
 					Entry: "coordinator",
@@ -174,16 +175,16 @@ func TestBuildDashboardConfig(t *testing.T) {
 					"coordinator": {},
 					"worker":      {},
 				},
-			},
+			}},
 			region:      "eu-west-1",
 			wantWidgets: 3, // 2 agent + 1 A2A latency
 			checkFunc:   checkMultiAgentPackProducesAgentWidgetsPlusA2aWidget,
 		},
 		{
 			name: "eval metrics produce eval widgets",
-			pack: &prompt.Pack{
+			pack: &prompt.Pack{Pack: packspec.Pack{
 				ID: "eval-pack",
-				Evals: []evals.EvalDef{
+				Evals: []*evals.EvalDef{
 					{
 						ID: "accuracy",
 						Metric: &evals.MetricDef{
@@ -199,16 +200,16 @@ func TestBuildDashboardConfig(t *testing.T) {
 						},
 					},
 				},
-			},
+			}},
 			region:      "us-west-2",
 			wantWidgets: 3, // 1 agent (pack ID) + 2 eval
 			checkFunc:   checkEvalMetricsProduceEvalWidgets,
 		},
 		{
 			name: "eval with range produces threshold annotations",
-			pack: &prompt.Pack{
+			pack: &prompt.Pack{Pack: packspec.Pack{
 				ID: "threshold-pack",
-				Evals: []evals.EvalDef{
+				Evals: []*evals.EvalDef{
 					{
 						ID: "bounded",
 						Metric: &evals.MetricDef{
@@ -221,16 +222,16 @@ func TestBuildDashboardConfig(t *testing.T) {
 						},
 					},
 				},
-			},
+			}},
 			region:      "us-west-2",
 			wantWidgets: 2, // 1 agent + 1 eval
 			checkFunc:   checkEvalWithRangeProducesThresholdAnnotations,
 		},
 		{
 			name: "eval with only min threshold",
-			pack: &prompt.Pack{
+			pack: &prompt.Pack{Pack: packspec.Pack{
 				ID: "min-only",
-				Evals: []evals.EvalDef{
+				Evals: []*evals.EvalDef{
 					{
 						ID: "e1",
 						Metric: &evals.MetricDef{
@@ -240,16 +241,16 @@ func TestBuildDashboardConfig(t *testing.T) {
 						},
 					},
 				},
-			},
+			}},
 			region:      "us-west-2",
 			wantWidgets: 2,
 			checkFunc:   checkEvalWithOnlyMinThreshold,
 		},
 		{
 			name: "eval with only max threshold",
-			pack: &prompt.Pack{
+			pack: &prompt.Pack{Pack: packspec.Pack{
 				ID: "max-only",
-				Evals: []evals.EvalDef{
+				Evals: []*evals.EvalDef{
 					{
 						ID: "e1",
 						Metric: &evals.MetricDef{
@@ -259,16 +260,16 @@ func TestBuildDashboardConfig(t *testing.T) {
 						},
 					},
 				},
-			},
+			}},
 			region:      "us-west-2",
 			wantWidgets: 2,
 			checkFunc:   checkEvalWithOnlyMaxThreshold,
 		},
 		{
 			name: "evals without metrics are skipped",
-			pack: &prompt.Pack{
+			pack: &prompt.Pack{Pack: packspec.Pack{
 				ID: "mixed",
-				Evals: []evals.EvalDef{
+				Evals: []*evals.EvalDef{
 					{ID: "no-metric-1"},
 					{
 						ID:     "has-metric",
@@ -276,14 +277,14 @@ func TestBuildDashboardConfig(t *testing.T) {
 					},
 					{ID: "no-metric-2"},
 				},
-			},
+			}},
 			region:      "us-west-2",
 			wantWidgets: 2, // 1 agent + 1 eval
 			checkFunc:   checkEvalsWithoutMetricsAreSkipped,
 		},
 		{
 			name: "widget layout positions are correct",
-			pack: &prompt.Pack{
+			pack: &prompt.Pack{Pack: packspec.Pack{
 				ID: "layout",
 				Agents: &prompt.AgentsConfig{
 					Entry: "a",
@@ -294,7 +295,7 @@ func TestBuildDashboardConfig(t *testing.T) {
 				Prompts: map[string]*prompt.PackPrompt{
 					"a": {}, "b": {}, "c": {},
 				},
-			},
+			}},
 			region:      "us-west-2",
 			wantWidgets: 4, // 3 agent + 1 A2A
 			checkFunc:   checkWidgetLayoutPositionsAreCorrect,
@@ -385,12 +386,12 @@ func TestAgentWidgetNames(t *testing.T) {
 	}{
 		{
 			name: "single agent uses pack ID",
-			pack: &prompt.Pack{ID: "solo"},
+			pack: &prompt.Pack{Pack: packspec.Pack{ID: "solo"}},
 			want: []string{"solo"},
 		},
 		{
 			name: "multi-agent returns sorted member names",
-			pack: &prompt.Pack{
+			pack: &prompt.Pack{Pack: packspec.Pack{
 				ID: "multi",
 				Agents: &prompt.AgentsConfig{
 					Entry: "z",
@@ -398,7 +399,7 @@ func TestAgentWidgetNames(t *testing.T) {
 						"z": {}, "a": {}, "m": {},
 					},
 				},
-			},
+			}},
 			want: []string{"a", "m", "z"},
 		},
 	}

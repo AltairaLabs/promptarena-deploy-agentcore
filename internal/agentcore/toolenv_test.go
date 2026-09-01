@@ -4,12 +4,13 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/AltairaLabs/PromptKit/runtime/packspec"
 	"github.com/AltairaLabs/PromptKit/runtime/prompt"
 )
 
 // packWithTools builds a pack declaring the named tools.
 func packWithTools(names ...string) *prompt.Pack {
-	pack := &prompt.Pack{ID: "p", Tools: map[string]*prompt.PackTool{}}
+	pack := &prompt.Pack{Pack: packspec.Pack{ID: "p", Tools: map[string]*prompt.PackTool{}}}
 	for _, n := range names {
 		pack.Tools[n] = &prompt.PackTool{Name: n, Description: n}
 	}

@@ -13,6 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 
+	"github.com/AltairaLabs/PromptKit/runtime/packspec"
 	"github.com/AltairaLabs/PromptKit/runtime/prompt"
 	"github.com/AltairaLabs/PromptKit/runtime/tools"
 )
@@ -170,13 +171,13 @@ func TestGatewayExecutor_UnknownToolNamesItself(t *testing.T) {
 // misses is a tool the model never sees — no error, no log from the SDK, just
 // an agent that quietly cannot do something.
 func TestBuildToolRegistry_CoversEveryPackTool(t *testing.T) {
-	pack := &prompt.Pack{
+	pack := &prompt.Pack{Pack: packspec.Pack{
 		Tools: map[string]*prompt.PackTool{
 			"gw_tool":   {Name: "gw_tool", Description: "via gateway"},
 			"mock_tool": {Name: "mock_tool", Description: "mocked"},
 			"http_tool": {Name: "http_tool", Description: "http"},
 		},
-	}
+	}}
 	specs := map[string]toolSpec{
 		"gw_tool":   {Mode: toolModeGateway, GatewayTarget: "target"},
 		"mock_tool": {Mode: toolModeMock, MockResult: map[string]any{"ok": true}},
@@ -228,11 +229,11 @@ func TestBuildToolRegistry_CoversEveryPackTool(t *testing.T) {
 // empty registry would replace the pack's own and offer the model nothing,
 // with no error anywhere.
 func TestBuildToolRegistry_RefusesToDeployAToollessAgent(t *testing.T) {
-	pack := &prompt.Pack{
+	pack := &prompt.Pack{Pack: packspec.Pack{
 		Tools: map[string]*prompt.PackTool{
 			"orphan": {Name: "orphan", Description: "no spec anywhere"},
 		},
-	}
+	}}
 
 	reg, err := buildToolRegistry(pack, nil, "us-west-2", nil, "", "", slog.Default())
 	if err == nil {
@@ -249,9 +250,9 @@ func TestBuildToolRegistry_RefusesToDeployAToollessAgent(t *testing.T) {
 // TestBuildToolRegistry_GatewayToolsNeedAnEndpoint covers a gateway-backed
 // tool with nowhere to call.
 func TestBuildToolRegistry_GatewayToolsNeedAnEndpoint(t *testing.T) {
-	pack := &prompt.Pack{
+	pack := &prompt.Pack{Pack: packspec.Pack{
 		Tools: map[string]*prompt.PackTool{"t": {Name: "t"}},
-	}
+	}}
 	specs := map[string]toolSpec{"t": {Mode: toolModeGateway, GatewayTarget: "target"}}
 
 	if _, err := buildToolRegistry(pack, specs, "us-west-2", testCreds(),
