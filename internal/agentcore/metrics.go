@@ -63,7 +63,7 @@ func buildMetricsConfig(pack *prompt.Pack) *MetricsConfig {
 		entry := MetricEntry{
 			EvalID:     evalID,
 			MetricName: pack.Evals[i].Metric.Name,
-			MetricType: string(pack.Evals[i].Metric.Type),
+			MetricType: pack.Evals[i].Metric.Type,
 			Unit:       metricTypeToUnit(pack.Evals[i].Metric.Type),
 		}
 		metrics = append(metrics, entry)
