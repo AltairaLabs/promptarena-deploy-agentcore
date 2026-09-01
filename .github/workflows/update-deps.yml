@@ -20,6 +20,10 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        # Check out with the PAT so the branch push below is attributed to it
+        # rather than to GITHUB_TOKEN — see the note on "Create pull request".
+        token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
 
     - name: Set up Go
       uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -77,11 +81,16 @@ jobs:
         go test ./... -v -race -count=1
         echo "✓ Tests passed"
 
+    # The PAT is required, not a preference. GitHub deliberately does not start
+    # workflow runs for events raised by GITHUB_TOKEN (a recursion guard), so a
+    # PR opened with it never gets CI, its required checks never report, and it
+    # sits mergeable-but-BLOCKED forever. The v1.6.5 bump PR landed that way.
+    # Opening the PR as a real user makes CI run normally.
     - name: Create pull request
       env:
         VERSION: ${{ github.event.client_payload.version }}
         EVENT: ${{ github.event.action }}
-        GH_TOKEN: ${{ github.token }}
+        GH_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
       run: |
         if [ "$EVENT" = "promptarena-release" ]; then
           UPSTREAM="promptarena"
