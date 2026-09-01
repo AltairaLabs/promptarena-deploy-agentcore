@@ -5,6 +5,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/service/bedrockagentcorecontrol/types"
 
+	"github.com/AltairaLabs/PromptKit/runtime/packspec"
 	"github.com/AltairaLabs/PromptKit/runtime/prompt"
 )
 
@@ -126,15 +127,15 @@ func TestBuildTargetConfig_Lambda(t *testing.T) {
 			"search": {
 				Name:        "search",
 				Description: "Search the web for information",
-				Parameters: map[string]any{
-					"type": "object",
-					"properties": map[string]any{
-						"query": map[string]any{
+				Parameters: &packspec.ToolParameters{
+					Type: "object",
+					Properties: map[string]map[string]any{
+						"query": {
 							"type":        "string",
 							"description": "The search query",
 						},
 					},
-					"required": []any{"query"},
+					Required: []string{"query"},
 				},
 			},
 		},

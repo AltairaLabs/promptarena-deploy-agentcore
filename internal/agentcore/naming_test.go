@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/AltairaLabs/PromptKit/runtime/evals"
+	"github.com/AltairaLabs/PromptKit/runtime/packspec"
 	"github.com/AltairaLabs/PromptKit/runtime/prompt"
 )
 
@@ -55,12 +56,12 @@ func TestValidateAWSName(t *testing.T) {
 }
 
 func TestCollectDerivedNames_SingleAgent(t *testing.T) {
-	pack := &prompt.Pack{
+	pack := &prompt.Pack{Pack: packspec.Pack{
 		ID: "mypack",
 		Prompts: map[string]*prompt.PackPrompt{
 			"default": {ID: "default"},
 		},
-	}
+	}}
 	cfg := &Config{}
 
 	names := collectDerivedNames(pack, cfg)
@@ -73,9 +74,9 @@ func TestCollectDerivedNames_SingleAgent(t *testing.T) {
 }
 
 func TestCollectDerivedNames_SingleAgentWithMemory(t *testing.T) {
-	pack := &prompt.Pack{
+	pack := &prompt.Pack{Pack: packspec.Pack{
 		ID: "mypack",
-	}
+	}}
 	cfg := &Config{
 		Memory: MemoryConfig{Strategies: []string{"semantic"}},
 	}
@@ -90,7 +91,7 @@ func TestCollectDerivedNames_SingleAgentWithMemory(t *testing.T) {
 }
 
 func TestCollectDerivedNames_EmptyPackID(t *testing.T) {
-	pack := &prompt.Pack{ID: ""}
+	pack := &prompt.Pack{Pack: packspec.Pack{ID: ""}}
 	cfg := &Config{}
 
 	names := collectDerivedNames(pack, cfg)
@@ -100,13 +101,13 @@ func TestCollectDerivedNames_EmptyPackID(t *testing.T) {
 }
 
 func TestCollectDerivedNames_WithTools(t *testing.T) {
-	pack := &prompt.Pack{
+	pack := &prompt.Pack{Pack: packspec.Pack{
 		ID: "toolpack",
 		Tools: map[string]*prompt.PackTool{
 			"search": {Name: "search"},
 			"calc":   {Name: "calc"},
 		},
-	}
+	}}
 	cfg := &Config{ArenaConfig: arenaFromJSON(t, validArenaConfigJSON)}
 
 	// The tool's own name, because that is what apply records in state. A
@@ -122,7 +123,7 @@ func TestCollectDerivedNames_WithTools(t *testing.T) {
 }
 
 func TestCollectDerivedNames_MultiAgent(t *testing.T) {
-	pack := &prompt.Pack{
+	pack := &prompt.Pack{Pack: packspec.Pack{
 		ID: "multi",
 		Agents: &prompt.AgentsConfig{
 			Entry: "router",
@@ -131,7 +132,7 @@ func TestCollectDerivedNames_MultiAgent(t *testing.T) {
 				"worker": {},
 			},
 		},
-	}
+	}}
 	cfg := &Config{}
 
 	names := collectDerivedNames(pack, cfg)
@@ -157,14 +158,14 @@ func TestCollectDerivedNames_MultiAgent(t *testing.T) {
 }
 
 func TestCollectDerivedNames_WithEvals(t *testing.T) {
-	pack := &prompt.Pack{
+	pack := &prompt.Pack{Pack: packspec.Pack{
 		ID: "evalpack",
-		Evals: []evals.EvalDef{
+		Evals: []*evals.EvalDef{
 			{ID: "quality", Type: "llm_as_judge"},
 			{ID: "safety", Type: "llm_as_judge"},
 			{ID: "localonly", Type: "exact_match"},
 		},
-	}
+	}}
 	cfg := &Config{}
 
 	names := collectDerivedNames(pack, cfg)
@@ -183,12 +184,12 @@ func TestCollectDerivedNames_WithEvals(t *testing.T) {
 }
 
 func TestValidateResourceNames_ValidPack(t *testing.T) {
-	pack := &prompt.Pack{
+	pack := &prompt.Pack{Pack: packspec.Pack{
 		ID: "mypack",
 		Tools: map[string]*prompt.PackTool{
 			"search": {Name: "search"},
 		},
-	}
+	}}
 	cfg := &Config{
 		Memory: MemoryConfig{Strategies: []string{"semantic"}},
 	}
@@ -200,7 +201,7 @@ func TestValidateResourceNames_ValidPack(t *testing.T) {
 }
 
 func TestValidateResourceNames_HyphenatedPackID(t *testing.T) {
-	pack := &prompt.Pack{ID: "research-team"}
+	pack := &prompt.Pack{Pack: packspec.Pack{ID: "research-team"}}
 	cfg := &Config{Memory: MemoryConfig{Strategies: []string{"semantic"}}}
 
 	// A hyphen is the pack schema's own idiom, and the id an author is most
@@ -226,12 +227,12 @@ func TestValidateResourceNames_HyphenatedPackID(t *testing.T) {
 // other AgentCore resource uses — which rejected the one style AWS accepts and
 // waved through the one it does not.
 func TestValidateResourceNames_HyphenatedToolName(t *testing.T) {
-	pack := &prompt.Pack{
+	pack := &prompt.Pack{Pack: packspec.Pack{
 		ID: "mypack",
 		Tools: map[string]*prompt.PackTool{
 			"web-search": {Name: "web-search"},
 		},
-	}
+	}}
 	cfg := &Config{}
 
 	if errs := validateResourceNames(pack, cfg); len(errs) != 0 {
@@ -242,12 +243,12 @@ func TestValidateResourceNames_HyphenatedToolName(t *testing.T) {
 // An underscored tool name is the case that actually failed at the API, and it
 // now passes because the gateway name is sanitized before it is sent.
 func TestValidateResourceNames_UnderscoredToolName(t *testing.T) {
-	pack := &prompt.Pack{
+	pack := &prompt.Pack{Pack: packspec.Pack{
 		ID: "mypack",
 		Tools: map[string]*prompt.PackTool{
 			"lookup_order": {Name: "lookup_order"},
 		},
-	}
+	}}
 	cfg := &Config{}
 
 	if errs := validateResourceNames(pack, cfg); len(errs) != 0 {
@@ -256,7 +257,7 @@ func TestValidateResourceNames_UnderscoredToolName(t *testing.T) {
 }
 
 func TestValidateResourceNames_MultiAgentHyphenated(t *testing.T) {
-	pack := &prompt.Pack{
+	pack := &prompt.Pack{Pack: packspec.Pack{
 		ID: "multi",
 		Agents: &prompt.AgentsConfig{
 			Entry: "my-router",
@@ -265,7 +266,7 @@ func TestValidateResourceNames_MultiAgentHyphenated(t *testing.T) {
 				"worker":    {},
 			},
 		},
-	}
+	}}
 	cfg := &Config{}
 
 	errs := validateResourceNames(pack, cfg)
@@ -512,13 +513,13 @@ func arenaFromJSON(t *testing.T, raw string) *ArenaConfig {
 // reject a pack that deploys perfectly well — and creating a target for it
 // fails the whole apply, since there is no endpoint to point at.
 func TestCollectDerivedNames_SkipsToolsWithNoAWSTarget(t *testing.T) {
-	pack := &prompt.Pack{
+	pack := &prompt.Pack{Pack: packspec.Pack{
 		ID: "toolpack",
 		Tools: map[string]*prompt.PackTool{
 			"search": {Name: "search"},
 			"calc":   {Name: "calc"},
 		},
-	}
+	}}
 	cfg := &Config{ArenaConfig: arenaFromJSON(t, arenaConfigNoAWSTargetsJSON)}
 
 	names := collectDerivedNames(pack, cfg)
@@ -592,7 +593,7 @@ func TestSanitizeAWSName_LeavesRoomForSuffixes(t *testing.T) {
 // separately is how the tool resources came to disagree before, which showed up
 // as a delete and a create for every tool on every re-apply.
 func TestPackBaseName_IsWhatEveryPackResourceUses(t *testing.T) {
-	pack := &prompt.Pack{ID: "research-team"}
+	pack := &prompt.Pack{Pack: packspec.Pack{ID: "research-team"}}
 	cfg := &Config{Memory: MemoryConfig{Strategies: []string{"semantic"}}}
 
 	base := packBaseName(pack)

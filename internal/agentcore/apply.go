@@ -803,7 +803,7 @@ func buildEvalDefs(pack *prompt.Pack) map[string]evals.EvalDef {
 		if name == "" {
 			name = fmt.Sprintf("eval_%d", i)
 		}
-		defs[name] = pack.Evals[i]
+		defs[name] = *pack.Evals[i]
 	}
 	return defs
 }

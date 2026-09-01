@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/AltairaLabs/PromptKit/runtime/evals"
+	"github.com/AltairaLabs/PromptKit/runtime/packspec"
 	"github.com/AltairaLabs/PromptKit/runtime/prompt"
 )
 
@@ -212,9 +213,9 @@ func TestInjectMetricsConfig(t *testing.T) {
 		cfg := &Config{
 			RuntimeEnvVars: make(map[string]string),
 		}
-		pack := &prompt.Pack{
+		pack := &prompt.Pack{Pack: packspec.Pack{
 			ID: "test-pack",
-			Evals: []evals.EvalDef{
+			Evals: []*evals.EvalDef{
 				{
 					ID: "accuracy",
 					Metric: &evals.MetricDef{
@@ -223,7 +224,7 @@ func TestInjectMetricsConfig(t *testing.T) {
 					},
 				},
 			},
-		}
+		}}
 
 		injectMetricsConfig(cfg, pack)
 
@@ -251,12 +252,12 @@ func TestInjectMetricsConfig(t *testing.T) {
 		cfg := &Config{
 			RuntimeEnvVars: make(map[string]string),
 		}
-		pack := &prompt.Pack{
+		pack := &prompt.Pack{Pack: packspec.Pack{
 			ID: "empty-pack",
-			Evals: []evals.EvalDef{
+			Evals: []*evals.EvalDef{
 				{ID: "no-metric"},
 			},
-		}
+		}}
 
 		injectMetricsConfig(cfg, pack)
 
@@ -269,7 +270,7 @@ func TestInjectMetricsConfig(t *testing.T) {
 		cfg := &Config{
 			RuntimeEnvVars: make(map[string]string),
 		}
-		pack := &prompt.Pack{ID: "no-evals"}
+		pack := &prompt.Pack{Pack: packspec.Pack{ID: "no-evals"}}
 
 		injectMetricsConfig(cfg, pack)
 
@@ -285,9 +286,9 @@ func TestInjectDashboardConfig(t *testing.T) {
 			Region:         "us-west-2",
 			RuntimeEnvVars: make(map[string]string),
 		}
-		pack := &prompt.Pack{
+		pack := &prompt.Pack{Pack: packspec.Pack{
 			ID: "dash-pack",
-			Evals: []evals.EvalDef{
+			Evals: []*evals.EvalDef{
 				{
 					ID: "accuracy",
 					Metric: &evals.MetricDef{
@@ -296,7 +297,7 @@ func TestInjectDashboardConfig(t *testing.T) {
 					},
 				},
 			},
-		}
+		}}
 
 		injectDashboardConfig(cfg, pack)
 
@@ -314,12 +315,12 @@ func TestInjectDashboardConfig(t *testing.T) {
 			Region:         "us-east-1",
 			RuntimeEnvVars: make(map[string]string),
 		}
-		pack := &prompt.Pack{
+		pack := &prompt.Pack{Pack: packspec.Pack{
 			ID: "simple-agent",
 			Prompts: map[string]*prompt.PackPrompt{
 				"main": {},
 			},
-		}
+		}}
 
 		injectDashboardConfig(cfg, pack)
 
@@ -334,7 +335,7 @@ func TestInjectDashboardConfig(t *testing.T) {
 			Region:         "us-west-2",
 			RuntimeEnvVars: make(map[string]string),
 		}
-		pack := &prompt.Pack{ID: "minimal"}
+		pack := &prompt.Pack{Pack: packspec.Pack{ID: "minimal"}}
 
 		injectDashboardConfig(cfg, pack)
 
@@ -349,7 +350,7 @@ func TestInjectDashboardConfig(t *testing.T) {
 			Region:         "us-west-2",
 			RuntimeEnvVars: make(map[string]string),
 		}
-		pack := &prompt.Pack{
+		pack := &prompt.Pack{Pack: packspec.Pack{
 			ID: "multi",
 			Agents: &prompt.AgentsConfig{
 				Entry: "coord",
@@ -362,7 +363,7 @@ func TestInjectDashboardConfig(t *testing.T) {
 				"coord":  {},
 				"worker": {},
 			},
-		}
+		}}
 
 		injectDashboardConfig(cfg, pack)
 

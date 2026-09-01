@@ -336,10 +336,19 @@ func buildCredentialProviderConfigs(name string, cfg *Config) []types.Credential
 
 // --- helper functions for JSON Schema conversion ---
 
-// toStringMap converts an any to map[string]any.
-// Handles both map[string]any and json.RawMessage/[]byte inputs.
+// toStringMap converts an any to map[string]any. It handles map[string]any and
+// json.RawMessage/[]byte directly, and falls back to a JSON round-trip for
+// anything else that marshals to an object.
+//
+// The fallback is not decoration. PromptKit v1.9.0 made PackTool.Parameters a
+// *packspec.ToolParameters, which matches none of the cases above: without it
+// this returns nil, jsonSchemaToSchemaDefinition yields a bare object, and every
+// gateway tool registers with no properties and no required fields — silently,
+// since the type still satisfies the any parameter and compiles.
 func toStringMap(v any) map[string]any {
 	switch m := v.(type) {
+	case nil:
+		return nil
 	case map[string]any:
 		return m
 	case json.RawMessage:
@@ -347,11 +356,21 @@ func toStringMap(v any) map[string]any {
 		if json.Unmarshal(m, &out) == nil {
 			return out
 		}
+		return nil
 	case []byte:
 		var out map[string]any
 		if json.Unmarshal(m, &out) == nil {
 			return out
 		}
+		return nil
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		return nil
+	}
+	var out map[string]any
+	if json.Unmarshal(b, &out) == nil {
+		return out
 	}
 	return nil
 }

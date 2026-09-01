@@ -520,7 +520,7 @@ func (c *realAWSClient) CreateEvaluator(
 		return "", fmt.Errorf("CreateEvaluator %q: no eval definition found", name)
 	}
 
-	level := mapTriggerToLevel(evalDef.Trigger)
+	level := mapTriggerToLevel(evals.EvalTrigger(evalDef.Trigger))
 	instructions := evalParamString(evalDef.Params, "instructions", "Evaluate the agent response quality.")
 	instructions = ensureEvalPlaceholders(instructions)
 	modelID := evalParamString(evalDef.Params, "model", defaultEvalModel)
