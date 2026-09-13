@@ -219,3 +219,78 @@ func TestRun_AmbiguousAgent(t *testing.T) {
 		t.Fatal("expected error for ambiguous agent")
 	}
 }
+
+// TestMaterializePack_WritesToAnUnpredictableTempFile covers materializePack,
+// which had no test.
+//
+// It used to write to a fixed "/tmp/pack.json". /tmp is world-writable and the
+// name was predictable, so anything else on the host could pre-create that
+// path as a symlink and have the runtime write the pack through it — the 0600
+// mode does not help, because the file already exists by then. os.CreateTemp
+// opens with O_EXCL and a random suffix, which is what makes that impossible;
+// asserting the path is unpredictable is asserting the fix.
+func TestMaterializePack_WritesToAnUnpredictableTempFile(t *testing.T) {
+	const packJSON = `{"prompts":{"a":{}}}`
+
+	first := &runtimeConfig{PackJSON: packJSON}
+	if err := materializePack(first); err != nil {
+		t.Fatalf("materializePack: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Remove(first.PackFile) })
+
+	if first.PackFile == "" {
+		t.Fatal("materializePack must set PackFile")
+	}
+	if first.PackFile == "/tmp/pack.json" {
+		t.Error("the pack path must not be the old fixed, predictable location")
+	}
+
+	got, err := os.ReadFile(first.PackFile)
+	if err != nil {
+		t.Fatalf("reading the materialized pack: %v", err)
+	}
+	if string(got) != packJSON {
+		t.Errorf("pack contents = %q, want %q", got, packJSON)
+	}
+
+	info, err := os.Stat(first.PackFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := info.Mode().Perm(); perm != tmpPackPerm {
+		t.Errorf("permissions = %o, want %o — the pack can carry credentials", perm, tmpPackPerm)
+	}
+
+	// Two runs must not collide. A fixed name meant a second runtime on the
+	// same host overwrote the first one's pack mid-flight.
+	second := &runtimeConfig{PackJSON: packJSON}
+	if err := materializePack(second); err != nil {
+		t.Fatalf("second materializePack: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Remove(second.PackFile) })
+
+	if second.PackFile == first.PackFile {
+		t.Errorf("two runs produced the same path %q; they must not collide", first.PackFile)
+	}
+}
+
+// TestMaterializePack_NoopWhenNothingToMaterialize pins the two skip
+// conditions: no inline JSON, or a pack file the caller already supplied.
+// Writing in either case would discard the caller's own path.
+func TestMaterializePack_NoopWhenNothingToMaterialize(t *testing.T) {
+	empty := &runtimeConfig{}
+	if err := materializePack(empty); err != nil {
+		t.Fatalf("no pack JSON must be a no-op, got %v", err)
+	}
+	if empty.PackFile != "" {
+		t.Errorf("PackFile = %q, want it left unset", empty.PackFile)
+	}
+
+	explicit := &runtimeConfig{PackJSON: `{"prompts":{}}`, PackFile: "/some/given/path.json"}
+	if err := materializePack(explicit); err != nil {
+		t.Fatalf("an explicit PackFile must be a no-op, got %v", err)
+	}
+	if explicit.PackFile != "/some/given/path.json" {
+		t.Errorf("PackFile = %q, want the caller's path preserved", explicit.PackFile)
+	}
+}
