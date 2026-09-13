@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/AltairaLabs/promptarena/deploy/adaptersdk"
+	"github.com/AltairaLabs/promptarena/v2/deploy/adaptersdk"
 )
 
 // jsonRPCRequest builds a JSON-RPC 2.0 request line.

@@ -12,8 +12,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/bedrockagentcore"
 	dpTypes "github.com/aws/aws-sdk-go-v2/service/bedrockagentcore/types"
 
-	"github.com/AltairaLabs/PromptKit/runtime/statestore"
-	"github.com/AltairaLabs/PromptKit/runtime/types"
+	"github.com/AltairaLabs/PromptKit/runtime/v2/statestore"
+	"github.com/AltairaLabs/PromptKit/runtime/v2/types"
 )
 
 // Constants for the AgentCore state store.

@@ -12,15 +12,14 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/AltairaLabs/PromptKit/runtime/prompt"
-	"github.com/AltairaLabs/PromptKit/sdk"
-	a2aserver "github.com/AltairaLabs/PromptKit/server/a2a"
+	"github.com/AltairaLabs/PromptKit/runtime/v2/prompt"
+	"github.com/AltairaLabs/PromptKit/sdk/v2"
+	a2aserver "github.com/AltairaLabs/PromptKit/server/a2a/v2"
 )
 
 const (
 	shutdownTimeout        = 10 * time.Second
 	defaultReadHeaderTmout = 10 * time.Second
-	tmpPackPath            = "/tmp/pack.json"
 	tmpPackPerm            = 0o600
 )
 
@@ -175,11 +174,30 @@ func materializePack(cfg *runtimeConfig) error {
 	if cfg.PackJSON == "" || cfg.PackFile != "" {
 		return nil
 	}
-	// tmpPackPath is a fixed, compile-time constant path (not derived from
-	// user input), so this write is not a path-traversal risk.
-	if err := os.WriteFile(tmpPackPath, []byte(cfg.PackJSON), tmpPackPerm); err != nil {
+	// os.CreateTemp, not a fixed path in /tmp. The previous code wrote to
+	// "/tmp/pack.json", and the comment defending it answered the wrong
+	// objection: the risk is not path traversal (the name was a constant) but
+	// that /tmp is world-writable and the name was predictable. Anything else
+	// on the host could pre-create that path as a symlink and have us write
+	// the pack through it; the 0600 mode does not help, because the file
+	// already exists by then. CreateTemp opens with O_EXCL and a random
+	// suffix, so it cannot be pre-created.
+	f, err := os.CreateTemp("", "promptarena-pack-*.json")
+	if err != nil {
+		return fmt.Errorf("create temp file for pack JSON: %w", err)
+	}
+	defer func() { _ = f.Close() }()
+
+	if err := f.Chmod(tmpPackPerm); err != nil {
+		return fmt.Errorf("restrict permissions on pack temp file: %w", err)
+	}
+	if _, err := f.WriteString(cfg.PackJSON); err != nil {
 		return fmt.Errorf("write pack JSON to temp file: %w", err)
 	}
-	cfg.PackFile = tmpPackPath
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("flush pack JSON to temp file: %w", err)
+	}
+
+	cfg.PackFile = f.Name()
 	return nil
 }
