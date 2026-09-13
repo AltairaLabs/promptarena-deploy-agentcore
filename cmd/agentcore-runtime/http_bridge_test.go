@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/AltairaLabs/PromptKit/runtime/a2a"
+	"github.com/AltairaLabs/PromptKit/runtime/v2/a2a"
 )
 
 // --- invocationRequest tests ---

@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/AltairaLabs/promptarena/deploy"
+	"github.com/AltairaLabs/promptarena/v2/deploy"
 )
 
 // failingDestroyer returns errors for specific resource types.

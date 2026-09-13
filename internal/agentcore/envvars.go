@@ -5,7 +5,7 @@ import (
 	"log"
 	"strconv"
 
-	"github.com/AltairaLabs/PromptKit/runtime/prompt"
+	"github.com/AltairaLabs/PromptKit/runtime/v2/prompt"
 )
 
 // Environment variable keys injected into AgentCore runtimes.

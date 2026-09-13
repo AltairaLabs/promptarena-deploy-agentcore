@@ -4,8 +4,8 @@ import (
 	"context"
 	"log"
 
-	"github.com/AltairaLabs/promptarena/deploy"
-	"github.com/AltairaLabs/promptarena/deploy/adaptersdk"
+	"github.com/AltairaLabs/promptarena/v2/deploy"
+	"github.com/AltairaLabs/promptarena/v2/deploy/adaptersdk"
 )
 
 // resourceProbe answers the shared drift contract's existence question using

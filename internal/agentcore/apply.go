@@ -7,10 +7,10 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/AltairaLabs/PromptKit/runtime/evals"
-	"github.com/AltairaLabs/PromptKit/runtime/prompt"
-	"github.com/AltairaLabs/promptarena/deploy"
-	"github.com/AltairaLabs/promptarena/deploy/adaptersdk"
+	"github.com/AltairaLabs/PromptKit/runtime/v2/evals"
+	"github.com/AltairaLabs/PromptKit/runtime/v2/prompt"
+	"github.com/AltairaLabs/promptarena/v2/deploy"
+	"github.com/AltairaLabs/promptarena/v2/deploy/adaptersdk"
 )
 
 // numApplyPhases is the total number of apply phases for progress tracking.

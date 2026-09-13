@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AltairaLabs/PromptKit/sdk"
-	a2aserver "github.com/AltairaLabs/PromptKit/server/a2a"
+	"github.com/AltairaLabs/PromptKit/sdk/v2"
+	a2aserver "github.com/AltairaLabs/PromptKit/server/a2a/v2"
 )
 
 func TestRunWithShutdown_SignalTermination(t *testing.T) {

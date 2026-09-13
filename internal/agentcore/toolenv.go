@@ -5,7 +5,7 @@ import (
 	"log"
 	"sort"
 
-	"github.com/AltairaLabs/PromptKit/runtime/prompt"
+	"github.com/AltairaLabs/PromptKit/runtime/v2/prompt"
 )
 
 // Environment variables describing how the runtime should execute each tool.

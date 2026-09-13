@@ -12,9 +12,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/AltairaLabs/PromptKit/runtime/prompt"
-	"github.com/AltairaLabs/PromptKit/sdk"
-	a2aserver "github.com/AltairaLabs/PromptKit/server/a2a"
+	"github.com/AltairaLabs/PromptKit/runtime/v2/prompt"
+	"github.com/AltairaLabs/PromptKit/sdk/v2"
+	a2aserver "github.com/AltairaLabs/PromptKit/server/a2a/v2"
 )
 
 const (

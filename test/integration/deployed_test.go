@@ -28,7 +28,7 @@ import (
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockagentcore"
 
-	"github.com/AltairaLabs/promptarena/deploy"
+	"github.com/AltairaLabs/promptarena/v2/deploy"
 
 	"github.com/AltairaLabs/promptarena-deploy-agentcore/internal/agentcore"
 )
