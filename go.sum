@@ -46,8 +46,8 @@ github.com/aws/aws-sdk-go-v2/service/apigateway v1.38.4 h1:V8gcFwJPP3eXZXpeui+p9
 github.com/aws/aws-sdk-go-v2/service/apigateway v1.38.4/go.mod h1:iJF5UdwkFue/YuUGCFsCCdT3SBMUx0s+h5TNi0Sz+qg=
 github.com/aws/aws-sdk-go-v2/service/bedrock v1.66.5 h1:QWbXQmzxD2xPtEjOJKiJqwejE/ZJchRW3Yw7/iUzZ7E=
 github.com/aws/aws-sdk-go-v2/service/bedrock v1.66.5/go.mod h1:kUa3owVjMvMgE0TGhfZQPQy9RMlKIhjm8eymrVfL1wM=
-github.com/aws/aws-sdk-go-v2/service/bedrockagentcore v1.13.0 h1:hpQ9i9XakfEg/EhNZhg0SlqNeklooqXDholD3FgRx+s=
-github.com/aws/aws-sdk-go-v2/service/bedrockagentcore v1.13.0/go.mod h1:GAqOzX7/7PQ/8B/zQM4DAzCNFPUO57Pp92YFBtVQttc=
+github.com/aws/aws-sdk-go-v2/service/bedrockagentcore v1.49.0 h1:EA3h4aYpYhiQ65sBsahGrXDtJf9SxuaMlldOvbXry1I=
+github.com/aws/aws-sdk-go-v2/service/bedrockagentcore v1.49.0/go.mod h1:KMIBjYP3w7Ce2VthuIyX/uC/5dzUyni6WymXdhn+srg=
 github.com/aws/aws-sdk-go-v2/service/bedrockagentcorecontrol v1.19.0 h1:A5xi6woj9KAUSUQk/8vioQyRV3iNwd1ovdx0mY6IenI=
 github.com/aws/aws-sdk-go-v2/service/bedrockagentcorecontrol v1.19.0/go.mod h1:Lv3oChocnQdIldqajnqKxFWXupIJ8zx6vUSt/trrZZM=
 github.com/aws/aws-sdk-go-v2/service/cloudwatch v1.67.0 h1:fv3n4Rb++3wmCgetWT78ncVL56pZeOMlamxkPVSEMW8=
