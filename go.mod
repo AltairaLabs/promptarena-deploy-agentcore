@@ -9,7 +9,7 @@ require (
 	github.com/AltairaLabs/PromptKit/server/a2a/v2 v2.6.0
 	github.com/AltairaLabs/promptarena/v2 v2.0.0
 	github.com/aws/aws-sdk-go-v2 v1.47.0
-	github.com/aws/aws-sdk-go-v2/config v1.32.36
+	github.com/aws/aws-sdk-go-v2/config v1.33.5
 	github.com/aws/aws-sdk-go-v2/credentials v1.20.5
 	github.com/aws/aws-sdk-go-v2/service/apigateway v1.38.4
 	github.com/aws/aws-sdk-go-v2/service/bedrock v1.66.5
