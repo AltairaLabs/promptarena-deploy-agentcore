@@ -37,9 +37,23 @@ jobs:
         # a dispatch payload is attacker-controlled input to a shell otherwise.
         EVENT: ${{ github.event.action }}
       run: |
+        # A Go module path carries its major version as a suffix from v2 on
+        # (/v2, /v3, ...). Writing the unsuffixed path with a v2+ version is
+        # not a no-op: `go mod edit` appends a second, bogus require, and the
+        # next parse rejects it outright -- "version v2.6.0 invalid: should be
+        # v0 or v1, not v2". That is how every bump since the v2 module-path
+        # move failed. Derive the suffix from the version in hand so the next
+        # major does not repeat it.
+        MAJOR="${VERSION%%.*}"
+        MAJOR="${MAJOR#v}"
+        case "$MAJOR" in
+          ''|*[!0-9]*) echo "::error::unexpected version '$VERSION'"; exit 1 ;;
+        esac
+        if [ "$MAJOR" -ge 2 ]; then SUF="/v$MAJOR"; else SUF=""; fi
+
         if [ "$EVENT" = "promptarena-release" ]; then
           echo "Updating promptarena to $VERSION..."
-          go mod edit -require="github.com/AltairaLabs/promptarena@$VERSION"
+          go mod edit -require="github.com/AltairaLabs/promptarena$SUF@$VERSION"
           go mod tidy
 
           # promptarena drags PromptKit's runtime forward transitively, but
@@ -49,19 +63,21 @@ jobs:
           # runtime v1.9.0, "packPrompt.ToPromptConfig undefined". PromptKit
           # tags its modules in lockstep, so pin the family to whatever runtime
           # resolved to.
-          PK=$(go list -m -f '{{.Version}}' github.com/AltairaLabs/PromptKit/runtime)
+          # PromptKit's major version is independent of promptarena's, so read
+          # its module path out of go.mod rather than reusing $SUF.
+          PKSUF=$(grep -oE 'AltairaLabs/PromptKit/runtime(/v[0-9]+)?' go.mod | head -1 | sed 's|.*runtime||')
+          PK=$(go list -m -f '{{.Version}}' "github.com/AltairaLabs/PromptKit/runtime$PKSUF")
           echo "Aligning PromptKit modules to $PK..."
           for m in runtime pkg sdk server/a2a; do
-            if grep -q "github.com/AltairaLabs/PromptKit/$m " go.mod; then
-              go mod edit -require="github.com/AltairaLabs/PromptKit/$m@$PK"
+            if grep -q "github.com/AltairaLabs/PromptKit/$m$PKSUF " go.mod; then
+              go mod edit -require="github.com/AltairaLabs/PromptKit/$m$PKSUF@$PK"
             fi
           done
         else
           echo "Updating PromptKit modules to $VERSION..."
-          go mod edit -require="github.com/AltairaLabs/PromptKit/runtime@$VERSION"
-          go mod edit -require="github.com/AltairaLabs/PromptKit/sdk@$VERSION"
-          go mod edit -require="github.com/AltairaLabs/PromptKit/server/a2a@$VERSION"
-          go mod edit -require="github.com/AltairaLabs/PromptKit/pkg@$VERSION"
+          for m in runtime sdk server/a2a pkg; do
+            go mod edit -require="github.com/AltairaLabs/PromptKit/$m$SUF@$VERSION"
+          done
         fi
 
         # Tidy to resolve dependencies
