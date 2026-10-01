@@ -3,10 +3,10 @@ module github.com/AltairaLabs/promptarena-deploy-agentcore
 go 1.26.0
 
 require (
-	github.com/AltairaLabs/PromptKit/pkg/v2 v2.9.1
-	github.com/AltairaLabs/PromptKit/runtime/v2 v2.9.1
-	github.com/AltairaLabs/PromptKit/sdk/v2 v2.9.1
-	github.com/AltairaLabs/PromptKit/server/a2a/v2 v2.9.1
+	github.com/AltairaLabs/PromptKit/pkg/v2 v2.10.0
+	github.com/AltairaLabs/PromptKit/runtime/v2 v2.10.0
+	github.com/AltairaLabs/PromptKit/sdk/v2 v2.10.0
+	github.com/AltairaLabs/PromptKit/server/a2a/v2 v2.10.0
 	github.com/AltairaLabs/promptarena/v2 v2.3.0
 	github.com/aws/aws-sdk-go-v2 v1.47.1
 	github.com/aws/aws-sdk-go-v2/config v1.33.6
