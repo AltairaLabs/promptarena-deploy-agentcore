@@ -4,7 +4,7 @@ go 1.26.0
 
 require (
 	github.com/AltairaLabs/PromptKit/pkg/v2 v2.9.1
-	github.com/AltairaLabs/PromptKit/runtime/v2 v2.9.1
+	github.com/AltairaLabs/PromptKit/runtime/v2 v2.11.0
 	github.com/AltairaLabs/PromptKit/sdk/v2 v2.9.1
 	github.com/AltairaLabs/PromptKit/server/a2a/v2 v2.9.1
 	github.com/AltairaLabs/promptarena/v2 v2.3.0
