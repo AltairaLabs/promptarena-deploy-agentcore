@@ -659,3 +659,26 @@ func TestPlan_InvalidArenaConfig(t *testing.T) {
 		t.Errorf("error = %q, want 'invalid arena_config JSON'", err.Error())
 	}
 }
+
+// TestPlan_RefusesUndeployableToolMode proves the declared-mode check runs on
+// the plan path. A live tool with no url used to plan cleanly and deploy as a
+// mock with no data.
+func TestPlan_RefusesUndeployableToolMode(t *testing.T) {
+	provider := newSimulatedProvider()
+	_, err := provider.Plan(context.Background(), &deploy.PlanRequest{
+		PackJSON: `{"id":"mypack","version":"v1.0.0",
+			"prompts":{"default":{"id":"default","system_template":"hello","tools":["calc","lookup"]}},
+			"tools":{"calc":{"name":"calc","description":"c"},"lookup":{"name":"lookup","description":"l"}}}`,
+		DeployConfig: validDeployConfig,
+		ArenaConfig: `{"tool_specs":{
+			"calc":{"name":"calc","mode":"live"},
+			"lookup":{"name":"lookup","mode":"mock"}
+		}}`,
+	})
+	if err == nil {
+		t.Fatal("expected plan to refuse a live tool with no url")
+	}
+	if !strings.Contains(err.Error(), "invalid tool config") || !strings.Contains(err.Error(), `"calc"`) {
+		t.Errorf("error should name the tool config problem, got %q", err.Error())
+	}
+}

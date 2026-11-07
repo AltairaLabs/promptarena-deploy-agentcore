@@ -2,6 +2,7 @@ package agentcore
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"sort"
 
@@ -119,7 +120,7 @@ func runtimeSpecFor(name string, cfg *Config) RuntimeToolSpec {
 		return RuntimeToolSpec{Mode: toolModeMock}
 	}
 
-	if spec.HTTPConfig != nil && spec.HTTPConfig.URL != "" {
+	if runsAsLive(spec) {
 		return RuntimeToolSpec{
 			Mode:   toolModeLive,
 			URL:    spec.HTTPConfig.URL,
@@ -131,6 +132,73 @@ func runtimeSpecFor(name string, cfg *Config) RuntimeToolSpec {
 		Mode:         toolModeMock,
 		MockResult:   spec.MockResult,
 		MockTemplate: spec.MockTemplate,
+	}
+}
+
+// hasHTTPURL reports whether a tool spec carries an HTTP endpoint.
+func hasHTTPURL(spec *ArenaToolSpec) bool {
+	return spec.HTTPConfig != nil && spec.HTTPConfig.URL != ""
+}
+
+// runsAsLive reports whether a runtime-executed tool makes an HTTP call.
+//
+// A declared mode decides, as it does in the arena: a mode: mock tool that
+// also carries an http block is a mock there, and must be one here. Only a
+// spec with no mode — a tool_targets-only entry, or an older config — falls
+// back to whether an http url is set.
+func runsAsLive(spec *ArenaToolSpec) bool {
+	if spec.Mode != "" {
+		return spec.Mode == toolModeLive
+	}
+	return hasHTTPURL(spec)
+}
+
+// validateToolModes rejects declared tool modes the deployed agent cannot honor.
+//
+// An AWS target from tool_targets wins over the declared mode — moving a tool
+// the arena mocks onto a Lambda at deploy time is what tool_targets is for —
+// so only tools the runtime would execute itself are checked. Of those, the
+// runtime runs mock and live; a live tool needs an http url. Anything else
+// used to deploy as a mock with no data and fail on every call, so it is
+// refused at plan instead.
+func validateToolModes(pack *prompt.Pack, cfg *Config) []string {
+	if pack == nil || cfg == nil {
+		return nil
+	}
+	names := make([]string, 0, len(pack.Tools))
+	for name := range pack.Tools {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	var errs []string
+	for _, name := range names {
+		if msg := toolModeConflict(name, cfg.ArenaConfig.toolSpecForName(name)); msg != "" {
+			errs = append(errs, msg)
+		}
+	}
+	return errs
+}
+
+// toolModeConflict describes why one tool's declared mode cannot be deployed,
+// or returns "" when it can.
+func toolModeConflict(name string, spec *ArenaToolSpec) string {
+	if spec == nil || spec.Mode == "" || hasAWSTarget(spec) {
+		return ""
+	}
+	switch spec.Mode {
+	case toolModeMock:
+		return ""
+	case toolModeLive:
+		if hasHTTPURL(spec) {
+			return ""
+		}
+		return fmt.Sprintf("tool %q declares mode %q but has no http.url; add one, "+
+			"or give the tool an AWS target in deploy.config.tool_targets", name, toolModeLive)
+	default:
+		return fmt.Sprintf("tool %q declares mode %q, which the AgentCore runtime cannot run; "+
+			"use mock or live, or give the tool an AWS target in deploy.config.tool_targets",
+			name, spec.Mode)
 	}
 }
 

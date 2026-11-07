@@ -46,9 +46,13 @@ type ArenaProvider struct {
 
 // ArenaToolSpec describes a single tool from the arena config.
 type ArenaToolSpec struct {
-	Name        string                 `json:"name,omitempty"`
-	Description string                 `json:"description,omitempty"`
-	Mode        string                 `json:"mode,omitempty"` // "mock" | "live" | "mcp" | "a2a"
+	Name        string `json:"name,omitempty"`
+	Description string `json:"description,omitempty"`
+	// Mode is the arena's declared execution mode ("mock", "live", "mcp",
+	// "exec", "client"). An AWS target wins over it; otherwise it decides
+	// how the runtime runs the tool, and validateToolModes refuses one the
+	// runtime cannot honor.
+	Mode        string                 `json:"mode,omitempty"`
 	InputSchema any                    `json:"input_schema,omitempty"`
 	HTTPConfig  *ArenaHTTPConfig       `json:"http,omitempty"`
 	LambdaARN   string                 `json:"lambda_arn,omitempty"`
