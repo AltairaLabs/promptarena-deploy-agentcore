@@ -49,6 +49,9 @@ func (p *Provider) Plan(ctx context.Context, req *deploy.PlanRequest) (*deploy.P
 	if nameErrs := validateResourceNames(pack, cfg); len(nameErrs) > 0 {
 		return nil, fmt.Errorf("agentcore: invalid resource names: %s", formatNameErrors(nameErrs))
 	}
+	if modeErrs := validateToolModes(pack, cfg); len(modeErrs) > 0 {
+		return nil, fmt.Errorf("agentcore: invalid tool config: %s", formatNameErrors(modeErrs))
+	}
 
 	// 6. Verify stored state against what the provider actually has, so the
 	// plan reflects reality rather than the last thing we wrote down.

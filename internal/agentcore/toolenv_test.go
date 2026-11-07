@@ -185,3 +185,63 @@ func TestValidateToolTargetKinds_RefusesUnaddressableTargets(t *testing.T) {
 		})
 	}
 }
+
+// TestRuntimeSpecFor_HonoursExplicitMode checks that a declared mode decides
+// how a runtime-executed tool runs, rather than being inferred from whichever
+// fields happen to be set. The arena runs a mode: mock tool as a mock even when
+// it carries an http block; the deployed agent must do the same.
+func TestRuntimeSpecFor_HonoursExplicitMode(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		spec string
+		want string
+	}{
+		{"mock with http block", `{"mode":"mock","mock_result":{"ok":true},"http":{"url":"https://x"}}`, toolModeMock},
+		{"live with url", `{"mode":"live","http":{"url":"https://x"}}`, toolModeLive},
+		{"no mode, url", `{"http":{"url":"https://x"}}`, toolModeLive},
+		{"no mode, no url", `{"mock_result":{"ok":true}}`, toolModeMock},
+		{"mock with lambda target", `{"mode":"mock","lambda_arn":"arn:aws:lambda:us-west-2:1:function:f"}`,
+			toolModeGateway},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &Config{ArenaConfig: arenaFromJSON(t, `{"tool_specs":{"t":`+tt.spec+`}}`)}
+			if got := runtimeSpecFor("t", cfg).Mode; got != tt.want {
+				t.Errorf("mode = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestValidateToolModes_RefusesContradictions covers a declared mode the
+// tool's fields cannot satisfy. Before, a live tool with no url was quietly
+// deployed as a mock with no data, and an mcp or client tool the same way.
+func TestValidateToolModes_RefusesContradictions(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		spec   string
+		refuse bool
+	}{
+		{"mock", `{"mode":"mock","mock_result":{"ok":true}}`, false},
+		{"live with url", `{"mode":"live","http":{"url":"https://x"}}`, false},
+		{"live without url", `{"mode":"live"}`, true},
+		{"mcp", `{"mode":"mcp"}`, true},
+		{"client", `{"mode":"client"}`, true},
+		{"client with lambda target", `{"mode":"client","lambda_arn":"arn:aws:lambda:us-west-2:1:function:f"}`, false},
+		{"live with lambda target", `{"mode":"live","lambda_arn":"arn:aws:lambda:us-west-2:1:function:f"}`, false},
+		{"no mode", `{"mock_result":{"ok":true}}`, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &Config{ArenaConfig: arenaFromJSON(t, `{"tool_specs":{"t":`+tt.spec+`}}`)}
+			errs := validateToolModes(packWithTools("t", "undeclared"), cfg)
+			if tt.refuse && len(errs) == 0 {
+				t.Error("expected the deploy to be refused")
+			}
+			if !tt.refuse && len(errs) > 0 {
+				t.Errorf("expected no error, got %v", errs)
+			}
+		})
+	}
+	if errs := validateToolModes(nil, nil); errs != nil {
+		t.Errorf("nil pack: got %v", errs)
+	}
+}

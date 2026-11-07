@@ -52,7 +52,7 @@ This page documents every field, its type, constraints, and validation behavior.
 | `a2a_auth` | object | No | -- | Agent-to-agent authentication settings. See [a2a_auth](#a2a_auth). |
 | `protocol` | string | No | `"both"` | Server protocol mode. Controls which servers the runtime starts. See [protocol](#protocol). |
 | `providers` | object[] | No | -- | Provider bindings declaring what the runtime uses and in what role. See [providers](#providers). |
-| `tool_targets` | map[string]object | No | -- | Per-tool AWS target config (`lambda_arn`, `api_gateway`, `openapi`, `smithy`, `credential`), merged into the arena tool specs. |
+| `tool_targets` | map[string]object | No | -- | Per-tool AWS target config (`lambda_arn`, `api_gateway`, `openapi`, `smithy`, `credential`), merged into the arena tool specs. A tool with an AWS target runs through the Gateway whatever its arena `mode`. A tool without one runs inside the runtime: `mode: mock` as a mock, `mode: live` as an HTTP call to its `http.url`. Plan refuses a `live` tool with no `http.url`, and any other mode (`mcp`, `exec`, `client`). |
 
 ## `providers`
 
