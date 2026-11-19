@@ -13,9 +13,12 @@ import "encoding/json"
 func partialApplyState(priorState string, touched []ResourceState, packID, version string) (string, error) {
 	var prior AdapterState
 	if priorState != "" {
-		// An unreadable prior state carries nothing forward; the apply's own
-		// results are still worth recording.
-		_ = json.Unmarshal([]byte(priorState), &prior)
+		if err := json.Unmarshal([]byte(priorState), &prior); err != nil {
+			// A state this adapter cannot read cannot be merged into, and
+			// replacing it would forget everything it records. Returning it
+			// unchanged makes the CLI keep it, as Plan refuses it.
+			return priorState, nil
+		}
 	}
 	merged, wrote := mergePartialResources(prior.Resources, touched)
 	if !wrote {
@@ -33,8 +36,11 @@ func partialApplyState(priorState string, touched []ResourceState, packID, versi
 //
 //   - a resource the apply created or updated replaces its prior entry;
 //   - a resource whose create or update failed keeps its prior entry, or is
-//     left out when it had none, because its create never happened;
-//   - a prior resource the apply never reached is kept as it was.
+//     left out when it had none, because its create never happened (a create
+//     that made the resource and failed after it is reported as created);
+//   - a prior resource the apply never reached is kept as it was, unless its
+//     entry never described a real resource (a dry run's planned entries, or
+//     failed ones).
 //
 // wrote reports whether the apply created or updated anything.
 func mergePartialResources(prior, touched []ResourceState) (merged []ResourceState, wrote bool) {
@@ -42,7 +48,7 @@ func mergePartialResources(prior, touched []ResourceState) (merged []ResourceSta
 	merged = make([]ResourceState, 0, len(prior)+len(touched))
 	for _, r := range prior {
 		key := resourceKey(r.Type, r.Name)
-		if _, dup := index[key]; dup {
+		if _, dup := index[key]; dup || r.Status == ResStatusPlanned || r.Status == ResStatusFailed {
 			continue
 		}
 		index[key] = len(merged)

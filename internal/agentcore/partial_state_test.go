@@ -3,6 +3,7 @@ package agentcore
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"testing"
 
 	"github.com/AltairaLabs/promptarena/v2/deploy"
@@ -181,6 +182,8 @@ func TestMergePartialResources(t *testing.T) {
 		{Type: ResTypeAgentRuntime, Name: "a", ARN: "a0"},
 		{Type: ResTypeAgentRuntime, Name: "a", ARN: "duplicate"},
 		{Type: ResTypeToolGateway, Name: "g", ARN: "g0"},
+		{Type: ResTypeEvaluator, Name: "dry-run", Status: ResStatusPlanned},
+		{Type: ResTypeEvaluator, Name: "old-failure", Status: ResStatusFailed},
 	}
 	touched := []ResourceState{
 		{Type: ResTypeAgentRuntime, Name: "a", ARN: "a1", Status: ResStatusUpdated},
@@ -210,15 +213,87 @@ func TestMergePartialResources(t *testing.T) {
 	}
 }
 
-func TestPartialApplyState_UnreadablePriorKeepsWhatTheApplyWrote(t *testing.T) {
+func TestPartialApplyState_UnreadablePriorIsReturnedUnchanged(t *testing.T) {
 	stateJSON, err := partialApplyState("not json", []ResourceState{
 		{Type: ResTypeAgentRuntime, Name: "a", ARN: "a1", Status: ResStatusCreated},
 	}, "pack", "v1.0.0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	state := decodeState(t, stateJSON)
-	if len(state.Resources) != 1 || state.Resources[0].ARN != "a1" {
-		t.Errorf("want the created runtime alone, got %+v", state.Resources)
+	if stateJSON != "not json" {
+		t.Errorf("state = %q, want the unreadable prior state unchanged, so the CLI keeps it", stateJSON)
+	}
+}
+
+// notReadyRuntimeClient creates runtimes that never become ready: the create
+// returns the new ARN together with an error, as the real client does.
+type notReadyRuntimeClient struct {
+	simulatedAWSClient
+}
+
+func (c *notReadyRuntimeClient) CreateRuntime(ctx context.Context, name string, cfg *Config) (string, error) {
+	arn, err := c.simulatedAWSClient.CreateRuntime(ctx, name, cfg)
+	if err != nil {
+		return "", err
+	}
+	return arn, fmt.Errorf("runtime %q created but not ready", name)
+}
+
+// TestApply_CreatedButNotReadyIsRecorded covers a create that made the
+// resource and then failed waiting for it: the resource exists, so a failed
+// apply's state records it with its ARN for destroy to find.
+func TestApply_CreatedButNotReadyIsRecorded(t *testing.T) {
+	sim := newSimulatedProvider()
+	provider := &Provider{
+		awsClientFunc: func(_ context.Context, cfg *Config) (awsClient, error) {
+			return &notReadyRuntimeClient{simulatedAWSClient: *newSimulatedAWSClient(cfg.Region)}, nil
+		},
+		destroyerFunc: sim.destroyerFunc,
+		checkerFunc:   sim.checkerFunc,
+	}
+	req := &deploy.PlanRequest{
+		PackJSON:     singleAgentPack(),
+		DeployConfig: validConfig(t),
+		ArenaConfig:  validArenaConfigJSON,
+	}
+
+	_, stateStr, err := collectEvents(t, provider, req)
+	if err == nil {
+		t.Fatal("expected the not-ready runtime to fail the apply")
+	}
+	state := decodeState(t, stateStr)
+	if len(state.Resources) != 1 || state.Resources[0].ARN == "" || state.Resources[0].Status != ResStatusCreated {
+		t.Errorf("want the runtime recorded as created with its ARN, got %+v", state.Resources)
+	}
+}
+
+// TestApply_CedarFailureAfterEngineRecordsTheEngine covers a policy create
+// that fails after its engine exists: the engine is recorded, so destroy can
+// delete it, with the number of policies actually made.
+func TestApply_CedarFailureAfterEngineRecordsTheEngine(t *testing.T) {
+	provider := failingProvider(map[string]bool{"cedar_policy_create": true})
+	req := &deploy.PlanRequest{
+		PackJSON:     singleAgentPackWithToolPolicy(),
+		DeployConfig: validConfig(t),
+		ArenaConfig:  validArenaConfigJSON,
+	}
+
+	_, stateStr, err := collectEvents(t, provider, req)
+	if err == nil {
+		t.Fatal("expected the cedar policy failure to fail the apply")
+	}
+	state := decodeState(t, stateStr)
+	var found bool
+	for _, r := range state.Resources {
+		if r.Type != ResTypeCedarPolicy {
+			continue
+		}
+		found = true
+		if r.Metadata["policy_engine_id"] == "" || r.Metadata["policy_count"] != "0" {
+			t.Errorf("cedar_policy = %+v, want the engine id and a policy count of 0", r)
+		}
+	}
+	if !found {
+		t.Errorf("the policy engine that was created must be recorded, got %+v", state.Resources)
 	}
 }

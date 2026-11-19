@@ -120,11 +120,11 @@ Apply does **not** abort on the first error. Each phase processes all its resour
 
 The state returned with the error describes everything that exists after the failure, because the PromptArena CLI saves it in place of the stored state (the adapter advertises the `partial_apply_state` capability):
 
-- A resource the apply created or updated is recorded as it now is.
+- A resource the apply created or updated is recorded as it now is. That includes a resource created but never ready (a runtime, evaluator, online evaluation config or memory that timed out), the parent gateway of a tool whose target failed, and a policy engine whose policies failed. Each exists, and destroy needs its ARN or engine ID to remove it.
 - A resource whose create or update failed keeps its entry from the prior state. It is left out when it had none, because its create never happened.
-- A prior resource the apply never reached is kept as it was.
+- A prior resource the apply never reached is kept as it was. Entries that never described a real resource (a dry run's `planned` entries) are dropped.
 
-When the apply created or updated nothing, it returns the prior state unchanged, and the CLI keeps what it has stored.
+When the apply created or updated nothing, or the prior state cannot be read, it returns the prior state unchanged, and the CLI keeps what it has stored.
 
 Error classification is automatic. The adapter inspects the AWS error message for keywords like "access denied" (permission), "connection refused" (network), "did not become ready" (timeout), and "validation" (configuration). Unrecognised errors default to the `resource` category.
 
