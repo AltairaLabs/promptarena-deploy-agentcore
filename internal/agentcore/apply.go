@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 
 	"github.com/AltairaLabs/PromptKit/runtime/v2/evals"
@@ -97,6 +98,9 @@ func (p *Provider) prepareApply(
 	// and minutes later, with resources already live to tear down.
 	if errs := preflightEvalModels(ctx, client, cfg); len(errs) > 0 {
 		return nil, fmt.Errorf("agentcore: eval model not available: %s", strings.Join(errs, "; "))
+	}
+	if err := preflightEvalLogGroup(ctx, client, cfg, pack); err != nil {
+		return nil, fmt.Errorf("agentcore: %w", err)
 	}
 
 	// Apply can run without Plan, and the override merge below relies on the
@@ -305,7 +309,7 @@ func (p *Provider) executeApplyPhases(
 	ac.cfg.GatewayURL, ac.cfg.GatewayAuth = ac.client.GatewayEndpoint()
 	injectToolEnvVars(ac.cfg.RuntimeEnvVars, ac.pack, ac.cfg)
 
-	// Step 2 — Cedar Policies (policy engine + policy per prompt with validators/tool_policy).
+	// Step 2 — Cedar policies (the pack's policy engine, when a blocklist can be enforced at the gateway).
 	policyRes, policyErr, policyCbErr := applyPoliciesPhase(ctx, ac)
 	resources = append(resources, policyRes...)
 	applyErr = combineErrors(applyErr, policyErr)
@@ -385,6 +389,7 @@ func applyEvalPhases(
 			resType:   ResTypeOnlineEvalConfig,
 			stepIndex: stepOnlineEvalCfg,
 		})
+		recordOnlineEvalLogGroup(phase.resources, ac.cfg)
 		var cbErr error
 		resources, applyErr, cbErr = mergePhase(resources, applyErr, phase)
 		if cbErr != nil {
@@ -413,58 +418,55 @@ func applyMemoryPreStep(
 	return resources, applyErr
 }
 
-// applyPoliciesPhase creates Cedar policy engines and policies for prompts
-// that have validators or tool_policy defined. It returns the created
-// resources, any apply error, and any callback error.
+// applyPoliciesPhase creates the pack's Cedar policy engine and its policies
+// when any prompt's tool blocklist can be enforced at the gateway. It returns
+// the created resources, any apply error, and any callback error.
+//
+// One engine per pack, because a gateway takes one: an engine per prompt
+// meant each association replaced the last, and only the last prompt's
+// blocklist was enforced (see gatewayBlockedTools).
 func applyPoliciesPhase(
 	ctx context.Context, ac *applyContext,
 ) ([]ResourceState, error, error) {
-	names := policyResourceNames(ac.pack)
-	if len(names) == 0 {
+	for _, tool := range gatewayRuntimeOnlyTools(ac.pack) {
+		log.Printf("agentcore: tool %q is blocklisted by some prompts but callable by others; "+
+			"the shared gateway cannot tell prompts apart, so only the runtime enforces it", tool)
+	}
+	if len(gatewayBlockedTools(ac.pack)) == 0 {
 		return nil, releaseRemovedPolicyEngine(ctx, ac), nil
 	}
 
-	var resources []ResourceState
-	var applyErr error
-	baseProgress := float64(stepPolicies) * progressStepSize
-
-	for i, promptName := range names {
-		pct := baseProgress + float64(i)/float64(len(names)+1)*progressStepSize
-		engineName := promptName + "_policy_engine"
-
-		if err := ac.reporter.Progress(
-			fmt.Sprintf("Creating %s: %s", ResTypeCedarPolicy, promptName), pct,
-		); err != nil {
-			return resources, applyErr, err
-		}
-
-		res, err := createPolicyForPrompt(ctx, ac, promptName, engineName)
-		if err != nil {
-			deployErr := newDeployError("create", ResTypeCedarPolicy, promptName, err)
-			_ = ac.reporter.Error(deployErr)
-			// res is the engine and the policies made before the failure, when
-			// the engine was created; it exists and destroy needs its id.
-			if res == nil {
-				res = &ResourceState{Type: ResTypeCedarPolicy, Name: promptName, Status: ResStatusFailed}
-			}
-			resources = append(resources, *res)
-			applyErr = combineErrors(applyErr, deployErr)
-			continue
-		}
-
-		if err := ac.reporter.Resource(&deploy.ResourceResult{
-			Type: ResTypeCedarPolicy, Name: promptName,
-			Action: deploy.ActionCreate, Status: ResStatusCreated,
-			Detail: res.ARN,
-		}); err != nil {
-			return resources, applyErr, err
-		}
-		resources = append(resources, *res)
+	engineName := policyEngineName(ac.pack)
+	pct := float64(stepPolicies) * progressStepSize
+	if err := ac.reporter.Progress(
+		fmt.Sprintf("Creating %s: %s", ResTypeCedarPolicy, engineName), pct,
+	); err != nil {
+		return nil, nil, err
 	}
 
-	injectPolicyEngineARNs(ac.cfg, resources)
+	res, err := createPackPolicy(ctx, ac, engineName)
+	if err != nil {
+		deployErr := newDeployError("create", ResTypeCedarPolicy, engineName, err)
+		_ = ac.reporter.Error(deployErr)
+		// res is the engine and the policies made before the failure, when
+		// the engine was created; it exists and destroy needs its id.
+		if res == nil {
+			res = &ResourceState{Type: ResTypeCedarPolicy, Name: engineName, Status: ResStatusFailed}
+		}
+		return []ResourceState{*res}, deployErr, nil
+	}
 
-	return resources, applyErr, nil
+	if err := ac.reporter.Resource(&deploy.ResourceResult{
+		Type: ResTypeCedarPolicy, Name: engineName,
+		Action: deploy.ActionCreate, Status: ResStatusCreated,
+		Detail: res.ARN,
+	}); err != nil {
+		return []ResourceState{*res}, nil, err
+	}
+
+	resources := []ResourceState{*res}
+	injectPolicyEngineARNs(ac.cfg, resources)
+	return resources, nil, nil
 }
 
 // releaseRemovedPolicyEngine detaches the gateway from the policy engine of a
@@ -494,24 +496,18 @@ func releaseRemovedPolicyEngine(ctx context.Context, ac *applyContext) error {
 	return nil
 }
 
-// createPolicyForPrompt creates a policy engine and one Cedar policy per
-// forbid block for a single prompt. AWS CreatePolicy accepts only a single
-// policy statement, so multiple rules are created as separate policies on
-// the same engine. Returns the resource state on success. On a failure after
-// the engine exists it returns the state of what was made (the engine and the
-// policies created so far) together with the error.
-func createPolicyForPrompt(
-	ctx context.Context, ac *applyContext,
-	promptName, engineName string,
+// createPackPolicy creates the pack's policy engine and one Cedar policy per
+// statement. AWS CreatePolicy accepts only a single policy statement, so
+// multiple rules are created as separate policies on the same engine. Returns
+// the resource state on success. On a failure after the engine exists it
+// returns the state of what was made (the engine and the policies created so
+// far) together with the error.
+func createPackPolicy(
+	ctx context.Context, ac *applyContext, engineName string,
 ) (*ResourceState, error) {
-	p := ac.pack.Prompts[promptName]
-	registeredTools := make(map[string]bool, len(ac.pack.Tools))
-	for name := range ac.pack.Tools {
-		registeredTools[name] = true
-	}
-	statements := generateCedarStatements(p.Validators, p.ToolPolicy, ac.cfg.GatewayARN, registeredTools)
+	statements := packCedarStatements(ac.pack, ac.cfg.GatewayARN)
 	if len(statements) == 0 {
-		return nil, fmt.Errorf("no Cedar rules generated for prompt %s", promptName)
+		return nil, fmt.Errorf("no Cedar rules generated for pack %s", ac.pack.ID)
 	}
 
 	engineARN, engineID, err := ac.client.CreatePolicyEngine(ctx, engineName, ac.cfg)
@@ -519,7 +515,7 @@ func createPolicyForPrompt(
 		if engineID == "" {
 			return nil, fmt.Errorf("policy engine: %w", err)
 		}
-		return cedarPolicyState(promptName, engineARN, engineID, "", "", 0), fmt.Errorf("policy engine: %w", err)
+		return cedarPolicyState(engineName, engineARN, engineID, "", "", 0), fmt.Errorf("policy engine: %w", err)
 	}
 
 	// Associate the policy engine with the gateway so the Cedar schema
@@ -531,36 +527,36 @@ func createPolicyForPrompt(
 	// created, since a failed resource records no id for destroy to use.
 	if gatewayURL, _ := ac.client.GatewayEndpoint(); gatewayURL != "" {
 		if err := ac.client.AssociatePolicyEngine(ctx, engineARN, ac.cfg); err != nil {
-			return cedarPolicyState(promptName, engineARN, engineID, "", "", 0),
+			return cedarPolicyState(engineName, engineARN, engineID, "", "", 0),
 				fmt.Errorf("associate policy engine with gateway: %w", err)
 		}
 	}
 
 	var lastPolicyARN, lastPolicyID string
 	for i, stmt := range statements {
-		policyName := fmt.Sprintf("%s_policy_%d", promptName, i)
+		policyName := packScopedName(ac.pack, fmt.Sprintf("policy_%d", i))
 		arn, id, err := ac.client.CreateCedarPolicy(
 			ctx, engineID, policyName, stmt, ac.cfg,
 		)
 		if err != nil {
-			return cedarPolicyState(promptName, engineARN, engineID, lastPolicyARN, lastPolicyID, i),
+			return cedarPolicyState(engineName, engineARN, engineID, lastPolicyARN, lastPolicyID, i),
 				fmt.Errorf("cedar policy: %w", err)
 		}
 		lastPolicyARN = arn
 		lastPolicyID = id
 	}
 
-	return cedarPolicyState(promptName, engineARN, engineID, lastPolicyARN, lastPolicyID, len(statements)), nil
+	return cedarPolicyState(engineName, engineARN, engineID, lastPolicyARN, lastPolicyID, len(statements)), nil
 }
 
-// cedarPolicyState is the state of a prompt's policy engine and the
+// cedarPolicyState is the state of the pack's policy engine and the
 // policyCount policies created on it, the last of which is policyARN/policyID.
 func cedarPolicyState(
-	promptName, engineARN, engineID, policyARN, policyID string, policyCount int,
+	engineName, engineARN, engineID, policyARN, policyID string, policyCount int,
 ) *ResourceState {
 	return &ResourceState{
 		Type:   ResTypeCedarPolicy,
-		Name:   promptName,
+		Name:   engineName,
 		ARN:    policyARN,
 		Status: ResStatusCreated,
 		Metadata: map[string]string{

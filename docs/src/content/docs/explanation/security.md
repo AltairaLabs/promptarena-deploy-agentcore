@@ -34,9 +34,11 @@ The role must have CloudWatch Logs permissions (`CloudWatchLogsReadOnlyAccess` o
 
 When the pack uses Cedar policies (tool blocklist), the role also needs `bedrock-agentcore:GetPolicyEngine` and `bedrock-agentcore:ListPolicies` permissions. The gateway calls `GetPolicyEngine` when the policy engine is associated with it, and policy creation will fail if the role cannot read the engine.
 
-When the pack includes `llm_as_judge` evals, the deploying credentials benefit from `bedrock:ListFoundationModels`. Apply uses it to check the evaluator's model is offered in the target region **before creating anything** — without it, an unavailable model is only rejected by `CreateEvaluator` in the second-to-last phase, after the memory, gateway and agent runtimes already exist.
+When the pack includes `llm_as_judge` evals, the deploying credentials benefit from `bedrock:ListFoundationModels` and `bedrock:ListInferenceProfiles`. Apply uses them to pick a default judge model the region can serve, and to check each evaluator's model **before creating anything** — without them, an unavailable model is only rejected by `CreateEvaluator` in the second-to-last phase, after the memory, gateway and agent runtimes already exist.
 
-This permission is **optional**. It is included in `AmazonBedrockFullAccess`, so most roles already have it, and a role without it still deploys normally — the adapter logs that it could not check and carries on. It never becomes a new reason a deploy fails.
+When the pack has online evals, the deploying credentials also use `logs:DescribeLogGroups` to check that the `aws/spans` log group exists, `logs:CreateLogGroup` and `logs:TagResource` to create a configured `cloudwatch_log_group`, and, at destroy, `logs:ListTagsForResource` and `logs:DeleteLogGroup` to remove that group again.
+
+The Bedrock list permissions are **optional**. They are included in `AmazonBedrockFullAccess`, so most roles already have it, and a role without it still deploys normally — the adapter logs that it could not check and carries on. It never becomes a new reason a deploy fails.
 
 This single-role design simplifies configuration but means the role must have permissions for all resource types the pack uses. A future enhancement may support separate roles per resource type.
 

@@ -169,11 +169,11 @@ func TestCollectDerivedNames_WithEvals(t *testing.T) {
 	cfg := &Config{}
 
 	names := collectDerivedNames(pack, cfg)
-	if names["quality"] != ResTypeEvaluator {
-		t.Errorf("expected quality -> evaluator")
+	if names["evalpack_quality"] != ResTypeEvaluator {
+		t.Errorf("expected evalpack_quality -> evaluator")
 	}
-	if names["safety"] != ResTypeEvaluator {
-		t.Errorf("expected safety -> evaluator")
+	if names["evalpack_safety"] != ResTypeEvaluator {
+		t.Errorf("expected evalpack_safety -> evaluator")
 	}
 	if names["evalpack_online_eval"] != ResTypeOnlineEvalConfig {
 		t.Errorf("expected evalpack_online_eval -> online_eval_config")
@@ -200,7 +200,7 @@ func TestEvaluatorNames_PlanValidationAndApplyAgree(t *testing.T) {
 	}}
 
 	applyNames := evalResourceNames(pack)
-	want := []string{"quality", "eval_1"}
+	want := []string{"evalpack_quality", "evalpack_eval_1"}
 	if strings.Join(applyNames, ",") != strings.Join(want, ",") {
 		t.Fatalf("apply names = %v, want %v", applyNames, want)
 	}
@@ -385,11 +385,12 @@ func TestCollectDerivedNames_FullPack(t *testing.T) {
 			"router": map[string]any{
 				"id":              "router",
 				"system_template": "route",
-				"tool_policy":     map[string]any{"blocklist": []string{"banned_tool"}},
+				"tool_policy":     map[string]any{"blocklist": []string{"search"}},
 			},
 			"worker": map[string]any{
 				"id":              "worker",
 				"system_template": "work",
+				"tool_policy":     map[string]any{"blocklist": []string{"search"}},
 			},
 		},
 		"agents": map[string]any{
@@ -421,15 +422,15 @@ func TestCollectDerivedNames_FullPack(t *testing.T) {
 	names := collectDerivedNames(&pack, cfg)
 
 	expected := map[string]string{
-		"fullpack_memory":      ResTypeMemory,
-		"fullpack_online_eval": ResTypeOnlineEvalConfig,
-		"quality":              ResTypeEvaluator,
-		"router":               ResTypeAgentRuntime,
-		"worker":               ResTypeAgentRuntime,
-		"router_a2a":           ResTypeA2AEndpoint,
-		"worker_a2a":           ResTypeA2AEndpoint,
-		"search":               ResTypeToolGateway,
-		"router_policy_engine": ResTypeCedarPolicy,
+		"fullpack_memory":        ResTypeMemory,
+		"fullpack_online_eval":   ResTypeOnlineEvalConfig,
+		"fullpack_quality":       ResTypeEvaluator,
+		"router":                 ResTypeAgentRuntime,
+		"worker":                 ResTypeAgentRuntime,
+		"router_a2a":             ResTypeA2AEndpoint,
+		"worker_a2a":             ResTypeA2AEndpoint,
+		"search":                 ResTypeToolGateway,
+		"fullpack_policy_engine": ResTypeCedarPolicy,
 	}
 
 	for name, typ := range expected {
@@ -647,5 +648,66 @@ func TestPackBaseName_IsWhatEveryPackResourceUses(t *testing.T) {
 			t.Errorf("resource %q (%s) is not built from the pack base name %q",
 				name, resType, base)
 		}
+	}
+}
+
+// Evaluator and policy engine names are account-wide. Named after the eval or
+// prompt alone, two packs with an eval called "quality" asked for the same
+// evaluator, and apply's adopt-on-conflict path took over the other pack's.
+func TestPackScopedNames_DifferAcrossPacks(t *testing.T) {
+	mk := func(id string) *prompt.Pack {
+		return &prompt.Pack{Pack: packspec.Pack{
+			ID:    id,
+			Evals: []*evals.EvalDef{{ID: "quality", Type: "llm_as_judge"}},
+		}}
+	}
+	a, b := mk("support-bot"), mk("sales-bot")
+
+	if got := evaluatorName(a, 0); got != "support_bot_quality" {
+		t.Errorf("evaluator name = %q, want support_bot_quality", got)
+	}
+	if evaluatorName(a, 0) == evaluatorName(b, 0) {
+		t.Error("two packs' evaluators must not share a name")
+	}
+	if got := policyEngineName(a); got != "support_bot_policy_engine" {
+		t.Errorf("policy engine name = %q, want support_bot_policy_engine", got)
+	}
+	if policyEngineName(a) == policyEngineName(b) {
+		t.Error("two packs' policy engines must not share a name")
+	}
+}
+
+func TestPackScopedName_SanitizesTheSuffix(t *testing.T) {
+	pack := &prompt.Pack{Pack: packspec.Pack{ID: "mypack"}}
+	if got := packScopedName(pack, "tone-check.v2"); got != "mypack_tone_check_v2" {
+		t.Errorf("packScopedName = %q, want mypack_tone_check_v2", got)
+	}
+	// A suffix may start with a digit: the pack name before it starts with a
+	// letter, so the whole name is still valid.
+	if got := packScopedName(pack, "1st"); got != "mypack_1st" {
+		t.Errorf("packScopedName = %q, want mypack_1st", got)
+	}
+}
+
+// A name over the AWS limit keeps its start and ends in a hash of the whole,
+// so it is valid and two long names sharing a prefix stay distinct.
+func TestPackScopedName_LongNamesAreValidAndDistinct(t *testing.T) {
+	pack := &prompt.Pack{Pack: packspec.Pack{ID: "a-very-long-pack-identifier-for-testing"}}
+	one := packScopedName(pack, "response_quality_judgement_one")
+	two := packScopedName(pack, "response_quality_judgement_two")
+
+	for _, name := range []string{one, two} {
+		if err := validateAWSName(name, ResTypeEvaluator); err != nil {
+			t.Errorf("long name is invalid: %v", err)
+		}
+		if !strings.HasPrefix(name, "a_very_long_pack_identifier") {
+			t.Errorf("name %q should keep the pack prefix", name)
+		}
+	}
+	if one == two {
+		t.Errorf("distinct long names collapsed to %q", one)
+	}
+	if again := packScopedName(pack, "response_quality_judgement_one"); again != one {
+		t.Errorf("not deterministic: %q vs %q", again, one)
 	}
 }

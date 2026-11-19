@@ -73,6 +73,11 @@ type Config struct {
 	// evaluator resource names to their definitions. NOT serialized.
 	EvalDefs map[string]evals.EvalDef `json:"-"`
 
+	// DefaultEvalModel is the judge model for an llm_as_judge eval that sets
+	// no params.model, resolved at apply time to one the region can invoke
+	// (see resolveDefaultEvalModel).
+	DefaultEvalModel string `json:"-"`
+
 	// EvalARNs maps evaluator resource names to their ARNs, populated
 	// at apply-time after the evaluator phase. NOT serialized.
 	EvalARNs map[string]string `json:"-"`

@@ -166,7 +166,7 @@ func TestApply_DeletesWhatPlanDeletes(t *testing.T) {
 	v2 := applyRequest(t, evalToolPack([]string{"quality"}, []string{"search"}), v1)
 	planDeletes := keysWithAction(planActions(t, provider, v2), deploy.ActionDelete)
 	wantDeletes := []string{
-		resourceKey(ResTypeEvaluator, "retired"),
+		resourceKey(ResTypeEvaluator, "evalpack_retired"),
 		resourceKey(ResTypeToolGateway, "calc"),
 	}
 	if strings.Join(planDeletes, ",") != strings.Join(wantDeletes, ",") {
@@ -180,7 +180,7 @@ func TestApply_DeletesWhatPlanDeletes(t *testing.T) {
 	}
 	// The evaluator is deleted outright. The tool shares its gateway with
 	// "search", which the apply kept, so only its target goes.
-	if strings.Join(d.deleted, ",") != resourceKey(ResTypeEvaluator, "retired") {
+	if strings.Join(d.deleted, ",") != resourceKey(ResTypeEvaluator, "evalpack_retired") {
 		t.Errorf("DeleteResource calls = %v, want only the retired evaluator", d.deleted)
 	}
 	if strings.Join(d.targets, ",") != "calc" {
@@ -194,7 +194,7 @@ func TestApply_DeletesWhatPlanDeletes(t *testing.T) {
 		}
 	}
 	for _, key := range []string{
-		resourceKey(ResTypeEvaluator, "quality"),
+		resourceKey(ResTypeEvaluator, "evalpack_quality"),
 		resourceKey(ResTypeToolGateway, "search"),
 		resourceKey(ResTypeAgentRuntime, "evalpack"),
 		resourceKey(ResTypeOnlineEvalConfig, "evalpack_online_eval"),
@@ -228,11 +228,13 @@ func TestApply_DeletesTheWholeGatewayWhenNoToolIsLeft(t *testing.T) {
 	}
 }
 
-// TestPlanAndApply_KeepExistingEvaluatorNames is the migration case: a state
-// written by an earlier release, whose evaluators apply named after the eval
-// id. Plan must update them in place, and apply must neither delete nor
-// duplicate them.
-func TestPlanAndApply_KeepExistingEvaluatorNames(t *testing.T) {
+// TestPlanAndApply_MigrateUnscopedEvaluatorNames is the migration case: a
+// state written by an earlier release, whose evaluators apply named after the
+// eval id alone. Those names are account-wide, so two packs with an eval of
+// the same name shared one evaluator. Plan replaces the unscoped evaluator
+// with the pack-scoped one, and apply creates it, re-points the online eval
+// config at it, and only then deletes the old one.
+func TestPlanAndApply_MigrateUnscopedEvaluatorNames(t *testing.T) {
 	const qualityARN = "arn:aws:bedrock:us-west-2:123456789012:evaluator/quality"
 	prior, _ := json.Marshal(AdapterState{
 		PackID: "evalpack", Version: "v0.9.0",
@@ -249,19 +251,18 @@ func TestPlanAndApply_KeepExistingEvaluatorNames(t *testing.T) {
 	req := applyRequest(t, evalToolPack([]string{"quality"}, nil), string(prior))
 
 	actions := planActions(t, provider, req)
-	if got := actions[resourceKey(ResTypeEvaluator, "quality")]; got != deploy.ActionUpdate {
-		t.Errorf("plan action for evaluator quality = %q, want UPDATE (actions %v)", got, actions)
+	if creates := keysWithAction(actions, deploy.ActionCreate); strings.Join(creates, ",") !=
+		resourceKey(ResTypeEvaluator, "evalpack_quality") {
+		t.Errorf("plan creates %v, want only the pack-scoped evaluator", creates)
 	}
-	if creates := keysWithAction(actions, deploy.ActionCreate); len(creates) != 0 {
-		t.Errorf("plan creates %v for an unchanged deployment", creates)
-	}
-	if deletes := keysWithAction(actions, deploy.ActionDelete); len(deletes) != 0 {
-		t.Errorf("plan deletes %v for an unchanged deployment", deletes)
+	if deletes := keysWithAction(actions, deploy.ActionDelete); strings.Join(deletes, ",") !=
+		resourceKey(ResTypeEvaluator, "quality") {
+		t.Errorf("plan deletes %v, want only the unscoped evaluator", deletes)
 	}
 
 	_, stateStr := mustApply(t, provider, req)
-	if len(d.deleted)+len(d.targets) != 0 {
-		t.Errorf("apply deleted %v %v from an unchanged deployment", d.deleted, d.targets)
+	if strings.Join(d.deleted, ",") != resourceKey(ResTypeEvaluator, "quality") {
+		t.Errorf("apply deleted %v, want the unscoped evaluator", d.deleted)
 	}
 	var evaluators []ResourceState
 	for _, r := range decodeState(t, stateStr).Resources {
@@ -269,20 +270,26 @@ func TestPlanAndApply_KeepExistingEvaluatorNames(t *testing.T) {
 			evaluators = append(evaluators, r)
 		}
 	}
-	if len(evaluators) != 1 || evaluators[0].Name != "quality" || evaluators[0].ARN != qualityARN {
-		t.Errorf("evaluators in state = %+v, want the one existing quality evaluator", evaluators)
+	if len(evaluators) != 1 || evaluators[0].Name != "evalpack_quality" {
+		t.Errorf("evaluators in state = %+v, want only evalpack_quality", evaluators)
+	}
+
+	// Once migrated, an unchanged deployment plans no creates or deletes.
+	again := planActions(t, provider, applyRequest(t, evalToolPack([]string{"quality"}, nil), stateStr))
+	if c, dl := keysWithAction(again, deploy.ActionCreate), keysWithAction(again, deploy.ActionDelete); len(c)+len(dl) != 0 {
+		t.Errorf("plan after migration creates %v and deletes %v", c, dl)
 	}
 }
 
 // TestApply_RenamedEntryForAKeptResourceIsNotDeleted covers a state entry
 // for the same AWS resource the apply just kept under another name: only the
 // stale entry goes, the resource itself is left alone. No released apply wrote
-// "quality_eval" (the real migration is TestPlanAndApply_KeepExistingEvaluatorNames);
+// "quality_eval" (the real migration is TestPlanAndApply_MigrateUnscopedEvaluatorNames);
 // this pins the guard for any future rename.
 func TestApply_RenamedEntryForAKeptResourceIsNotDeleted(t *testing.T) {
 	prior, _ := json.Marshal(AdapterState{Resources: []ResourceState{
 		{Type: ResTypeEvaluator, Name: "quality_eval",
-			ARN: "arn:aws:bedrock:us-west-2:123456789012:evaluator/quality", Status: ResStatusCreated},
+			ARN: "arn:aws:bedrock:us-west-2:123456789012:evaluator/evalpack_quality", Status: ResStatusCreated},
 	}})
 	d := &recordingDestroyer{}
 	_, stateStr := mustApply(t, pruneProvider(d), applyRequest(t, evalToolPack([]string{"quality"}, nil), string(prior)))
@@ -294,7 +301,7 @@ func TestApply_RenamedEntryForAKeptResourceIsNotDeleted(t *testing.T) {
 	if _, ok := byKey[resourceKey(ResTypeEvaluator, "quality_eval")]; ok {
 		t.Error("the stale entry must leave the state")
 	}
-	if _, ok := byKey[resourceKey(ResTypeEvaluator, "quality")]; !ok {
+	if _, ok := byKey[resourceKey(ResTypeEvaluator, "evalpack_quality")]; !ok {
 		t.Error("the kept evaluator must be in the state")
 	}
 }
@@ -318,13 +325,13 @@ func TestApply_DeleteFailureKeepsTheResourceInState(t *testing.T) {
 		t.Error("the failed delete must be reported as an error event")
 	}
 	byKey := stateByKey(decodeState(t, stateStr))
-	if r, ok := byKey[resourceKey(ResTypeEvaluator, "retired")]; !ok || r.ARN == "" {
+	if r, ok := byKey[resourceKey(ResTypeEvaluator, "evalpack_retired")]; !ok || r.ARN == "" {
 		t.Errorf("retired = %+v, want it kept in the state with its ARN", r)
 	}
 	if _, ok := byKey[resourceKey(ResTypeToolGateway, "calc")]; ok {
 		t.Error("calc was deleted and must leave the state")
 	}
-	if _, ok := byKey[resourceKey(ResTypeEvaluator, "quality")]; !ok {
+	if _, ok := byKey[resourceKey(ResTypeEvaluator, "evalpack_quality")]; !ok {
 		t.Error("the kept evaluator must be in the state")
 	}
 }
@@ -527,8 +534,8 @@ func TestApply_OnlineEvalConfigDropsAnEvaluatorBeforeItIsDeleted(t *testing.T) {
 	mustApply(t, provider, applyRequest(t, evalToolPack([]string{"quality"}, nil), v1))
 
 	want := []string{
-		"update evalpack_online_eval [quality]",
-		"delete " + resourceKey(ResTypeEvaluator, "retired"),
+		"update evalpack_online_eval [evalpack_quality]",
+		"delete " + resourceKey(ResTypeEvaluator, "evalpack_retired"),
 	}
 	if strings.Join(log, " | ") != strings.Join(want, " | ") {
 		t.Errorf("calls = %v, want %v", log, want)

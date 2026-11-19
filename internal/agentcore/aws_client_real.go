@@ -3,8 +3,10 @@ package agentcore
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"log"
+	"slices"
 	"strings"
 	"time"
 
@@ -12,9 +14,11 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awscfg "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/bedrock"
+	bedrocktypes "github.com/aws/aws-sdk-go-v2/service/bedrock/types"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockagentcorecontrol"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockagentcorecontrol/types"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs"
+	cwltypes "github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs/types"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 )
@@ -97,21 +101,61 @@ func newRealAWSClient(ctx context.Context, cfg *Config) (*realAWSClient, error) 
 	}, nil
 }
 
-// ListAvailableModels returns the Bedrock foundation model IDs offered in the
-// configured region. Used to pre-flight evaluator models before Apply creates
-// anything; callers treat an error as "unknown", not "unavailable".
-func (c *realAWSClient) ListAvailableModels(ctx context.Context) (map[string]bool, error) {
+// EvalModelCatalog lists what the configured region offers an evaluator: its
+// foundation models, and which of those run on demand, and its inference
+// profiles. Used to pre-flight evaluator models and to pick the default judge
+// model before Apply creates anything; callers treat an error as "unknown",
+// not "unavailable".
+func (c *realAWSClient) EvalModelCatalog(ctx context.Context) (*evalModelCatalog, error) {
 	out, err := c.bedrockClient.ListFoundationModels(ctx, &bedrock.ListFoundationModelsInput{})
 	if err != nil {
 		return nil, fmt.Errorf("ListFoundationModels: %w", err)
 	}
-	models := make(map[string]bool, len(out.ModelSummaries))
+	catalog := newEvalModelCatalog()
 	for i := range out.ModelSummaries {
-		if id := out.ModelSummaries[i].ModelId; id != nil {
-			models[*id] = true
+		m := &out.ModelSummaries[i]
+		catalog.addFoundationModel(aws.ToString(m.ModelId), aws.ToString(m.ModelArn),
+			slices.Contains(m.InferenceTypesSupported, bedrocktypes.InferenceTypeOnDemand))
+	}
+	// System-defined profiles are the cross-region ones AWS publishes;
+	// application profiles are ones the account made, which an eval may name
+	// by ARN.
+	for _, typ := range []bedrocktypes.InferenceProfileType{
+		bedrocktypes.InferenceProfileTypeSystemDefined, bedrocktypes.InferenceProfileTypeApplication,
+	} {
+		if err := c.addInferenceProfiles(ctx, catalog, typ); err != nil {
+			return nil, err
 		}
 	}
-	return models, nil
+	catalog.finish()
+	return catalog, nil
+}
+
+// addInferenceProfiles adds every active inference profile of one type.
+func (c *realAWSClient) addInferenceProfiles(
+	ctx context.Context, catalog *evalModelCatalog, typ bedrocktypes.InferenceProfileType,
+) error {
+	pages := bedrock.NewListInferenceProfilesPaginator(c.bedrockClient, &bedrock.ListInferenceProfilesInput{
+		TypeEquals: typ,
+	})
+	for pages.HasMorePages() {
+		page, err := pages.NextPage(ctx)
+		if err != nil {
+			return fmt.Errorf("ListInferenceProfiles: %w", err)
+		}
+		for i := range page.InferenceProfileSummaries {
+			p := &page.InferenceProfileSummaries[i]
+			if p.Status != bedrocktypes.InferenceProfileStatusActive {
+				continue
+			}
+			modelARNs := make([]string, 0, len(p.Models))
+			for _, m := range p.Models {
+				modelARNs = append(modelARNs, aws.ToString(m.ModelArn))
+			}
+			catalog.addProfile(aws.ToString(p.InferenceProfileId), aws.ToString(p.InferenceProfileArn), modelARNs)
+		}
+	}
+	return nil
 }
 
 // newRealAWSClientFactory is the awsClientFactory used by NewProvider.
@@ -602,9 +646,6 @@ func (c *realAWSClient) CreateA2AWiring(
 	return fmt.Sprintf("arn:aws:bedrock:%s:a2a-endpoint/%s", c.cfg.Region, name), nil
 }
 
-// defaultEvalModel is the default Bedrock model ID used for LLM-as-a-Judge evaluators.
-const defaultEvalModel = "anthropic.claude-sonnet-4-20250514-v1:0"
-
 // defaultRatingScaleSize is the default number of levels in numerical rating scales.
 const defaultRatingScaleSize = 5
 
@@ -621,7 +662,7 @@ func (c *realAWSClient) CreateEvaluator(
 	level := mapTriggerToLevel(evals.EvalTrigger(evalDef.Trigger))
 	instructions := evalParamString(evalDef.Params, "instructions", "Evaluate the agent response quality.")
 	instructions = ensureEvalPlaceholders(instructions)
-	modelID := evalParamString(evalDef.Params, "model", defaultEvalModel)
+	modelID := evalModelFor(&evalDef, cfg.defaultEvalModel())
 
 	input := &bedrockagentcorecontrol.CreateEvaluatorInput{
 		EvaluatorName: aws.String(name),
@@ -744,15 +785,13 @@ func (c *realAWSClient) waitForEvaluatorReady(ctx context.Context, id string) er
 // evaluation configs when not specified in eval params.
 const defaultSamplingPercentage = 100.0
 
-// defaultTraceLogGroup is the CloudWatch log group where AgentCore runtimes
-// emit OTEL traces via Transaction Search. Online eval configs read from this
-// group to evaluate agent interactions.
-const defaultTraceLogGroup = "aws/spans"
-
-// ensureLogGroup creates the CloudWatch log group if it does not already exist.
-func (c *realAWSClient) ensureLogGroup(ctx context.Context, logGroupName string) error {
+// ensureLogGroup creates the CloudWatch log group if it does not already
+// exist, tagged as created for the online eval config oecName so destroy can
+// tell it from a group that was there before (see deleteCreatedLogGroup).
+func (c *realAWSClient) ensureLogGroup(ctx context.Context, logGroupName, oecName string, cfg *Config) error {
 	_, err := c.logsClient.CreateLogGroup(ctx, &cloudwatchlogs.CreateLogGroupInput{
 		LogGroupName: aws.String(logGroupName),
+		Tags:         createdLogGroupTags(cfg.ResourceTags, oecName),
 	})
 	if err != nil {
 		// Ignore ResourceAlreadyExistsException — the log group already exists.
@@ -762,6 +801,68 @@ func (c *realAWSClient) ensureLogGroup(ctx context.Context, logGroupName string)
 		return fmt.Errorf("create log group %q: %w", logGroupName, err)
 	}
 	log.Printf("[agentcore] created CloudWatch log group %s", logGroupName)
+	return nil
+}
+
+// findLogGroup returns the log group named exactly name, or nil when there is
+// none.
+func (c *realAWSClient) findLogGroup(ctx context.Context, name string) (*cwltypes.LogGroup, error) {
+	pages := cloudwatchlogs.NewDescribeLogGroupsPaginator(c.logsClient, &cloudwatchlogs.DescribeLogGroupsInput{
+		LogGroupNamePrefix: aws.String(name),
+	})
+	for pages.HasMorePages() {
+		page, err := pages.NextPage(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("DescribeLogGroups %q: %w", name, err)
+		}
+		for i := range page.LogGroups {
+			if aws.ToString(page.LogGroups[i].LogGroupName) == name {
+				return &page.LogGroups[i], nil
+			}
+		}
+	}
+	return nil, nil
+}
+
+// LogGroupExists reports whether the named CloudWatch log group exists.
+func (c *realAWSClient) LogGroupExists(ctx context.Context, name string) (bool, error) {
+	group, err := c.findLogGroup(ctx, name)
+	return group != nil, err
+}
+
+// deleteCreatedLogGroup deletes the online eval config's log group when apply
+// created it for that config, and leaves it alone otherwise.
+//
+// Apply creates a configured cloudwatch_log_group that does not exist yet, and
+// destroy used to leave it behind. Only a group carrying this config's
+// creation tag is deleted: one that existed before the deploy, or that another
+// pack's config created, is not this deploy's to remove.
+func (c *realAWSClient) deleteCreatedLogGroup(ctx context.Context, logGroupName, oecName string) error {
+	if logGroupName == "" || logGroupName == defaultTraceLogGroup {
+		return nil
+	}
+	group, err := c.findLogGroup(ctx, logGroupName)
+	if err != nil || group == nil {
+		return err
+	}
+	tags, err := c.logsClient.ListTagsForResource(ctx, &cloudwatchlogs.ListTagsForResourceInput{
+		ResourceArn: group.LogGroupArn,
+	})
+	if err != nil {
+		return fmt.Errorf("ListTagsForResource %q: %w", logGroupName, err)
+	}
+	if !createdForOnlineEvalConfig(tags.Tags, oecName) {
+		log.Printf("agentcore: leaving log group %s in place: this deploy did not create it", logGroupName)
+		return nil
+	}
+	_, err = c.logsClient.DeleteLogGroup(ctx, &cloudwatchlogs.DeleteLogGroupInput{
+		LogGroupName: aws.String(logGroupName),
+	})
+	var notFound *cwltypes.ResourceNotFoundException
+	if err != nil && !errors.As(err, &notFound) {
+		return fmt.Errorf("DeleteLogGroup %q: %w", logGroupName, err)
+	}
+	log.Printf("agentcore: deleted log group %s", logGroupName)
 	return nil
 }
 
@@ -776,7 +877,7 @@ func (c *realAWSClient) CreateOnlineEvalConfig(
 	// "aws/spans" group, Transaction Search must be enabled — the group is
 	// AWS-managed and cannot be created manually.
 	if logGroup != defaultTraceLogGroup {
-		if err := c.ensureLogGroup(ctx, logGroup); err != nil {
+		if err := c.ensureLogGroup(ctx, logGroup, name, cfg); err != nil {
 			return "", fmt.Errorf("CreateOnlineEvalConfig %q: %w", name, err)
 		}
 	}
@@ -851,7 +952,7 @@ func (c *realAWSClient) UpdateOnlineEvalConfig(
 		return "", fmt.Errorf("UpdateOnlineEvaluationConfig %q: no evaluator references available", name)
 	}
 	if logGroup := resolveLogGroup(cfg); logGroup != defaultTraceLogGroup {
-		if err := c.ensureLogGroup(ctx, logGroup); err != nil {
+		if err := c.ensureLogGroup(ctx, logGroup, name, cfg); err != nil {
 			return "", fmt.Errorf("UpdateOnlineEvaluationConfig %q: %w", name, err)
 		}
 	}
@@ -881,16 +982,6 @@ func (c *realAWSClient) UpdateOnlineEvalConfig(
 		return arn, fmt.Errorf("online eval config %q updated but not active: %w", name, err)
 	}
 	return arn, nil
-}
-
-// resolveLogGroup returns the CloudWatch log group for online eval config.
-// Defaults to "aws/spans" (the Transaction Search spans log group) which is
-// where OTEL-instrumented AgentCore runtimes write their traces.
-func resolveLogGroup(cfg *Config) string {
-	if cfg.Observability != nil && cfg.Observability.CloudWatchLogGroup != "" {
-		return cfg.Observability.CloudWatchLogGroup
-	}
-	return defaultTraceLogGroup
 }
 
 // buildEvaluatorReferences converts evaluator ARNs and built-in IDs into
@@ -1645,7 +1736,7 @@ func (c *realAWSClient) deleteOnlineEvalConfig(ctx context.Context, res Resource
 	if err != nil && !isNotFound(err) {
 		return fmt.Errorf("DeleteOnlineEvaluationConfig %q: %w", res.Name, err)
 	}
-	return nil
+	return c.deleteCreatedLogGroup(ctx, onlineEvalLogGroup(res, c.cfg), res.Name)
 }
 
 func (c *realAWSClient) deleteEvaluator(ctx context.Context, res ResourceState) error {

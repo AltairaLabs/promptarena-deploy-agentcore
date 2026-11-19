@@ -817,8 +817,8 @@ func TestApply_EvalWithEmptyID(t *testing.T) {
 	// Find the evaluator resource event and check its name.
 	for _, ev := range events {
 		if ev.Type == "resource" && ev.Resource != nil && ev.Resource.Type == "evaluator" {
-			if ev.Resource.Name != "eval_0" {
-				t.Errorf("evaluator name = %q, want eval_0", ev.Resource.Name)
+			if ev.Resource.Name != "evalpack_eval_0" {
+				t.Errorf("evaluator name = %q, want evalpack_eval_0", ev.Resource.Name)
 			}
 			return
 		}

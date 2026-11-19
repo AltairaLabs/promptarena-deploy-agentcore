@@ -12,7 +12,7 @@ The AgentCore adapter manages seven resource types across a multi-phase apply pi
 |------|---------------|-------|
 | `memory` | Bedrock AgentCore Memory | Session (episodic) or persistent (semantic) store |
 | `tool_gateway` | Gateway + Gateway Targets | One parent gateway, one target per pack tool |
-| `cedar_policy` | Policy Engine + Cedar Policy | One engine and one policy per prompt with validators or tool_policy |
+| `cedar_policy` | Policy Engine + Cedar Policies | One engine per pack, with a policy per tool the gateway can block, when a prompt has a tool_policy blocklist |
 | `agent_runtime` | AgentCore Runtime | One runtime per agent member (multi-agent) or one per pack (single-agent) |
 | `a2a_endpoint` | Logical resource | No AWS API call -- discovery is via env var injection |
 | `evaluator` | Bedrock AgentCore Evaluator | LLM-as-a-Judge evaluator (only for `llm_as_judge` type evals) |
@@ -59,7 +59,7 @@ Destroy reverses the apply order. Resources are grouped by type and deleted in t
 
 ```
 1. online_eval_config  (delete via DeleteOnlineEvaluationConfig)
-2. cedar_policy        (policy + engine per prompt)
+2. cedar_policy        (one engine per pack)
 3. evaluator           (delete via DeleteEvaluator)
 4. a2a_endpoint        (logical -- skip in practice)
 5. agent_runtime       (delete via DeleteAgentRuntime)
