@@ -136,6 +136,9 @@ func deliverRuntime(ctx context.Context, client awsClient, cfg *Config, packJSON
 //  3. A2A wiring between agents
 //  4. Evaluators
 //
+// When every phase succeeds, the resources the prior state records and this
+// apply no longer produced are then deleted (see pruneRemovedResources).
+//
 // When DryRun is enabled in config, Apply emits planned resource events
 // without calling any AWS APIs and returns a preview of the deployment.
 func (p *Provider) Apply(
@@ -166,6 +169,10 @@ func (p *Provider) Apply(
 		return stateJSON, applyErr
 	}
 
+	// Everything wanted now exists, so what the prior state still records
+	// beyond it is what Plan marked for deletion.
+	resources, pruneErr := p.pruneRemovedResources(ctx, ac, resources)
+
 	state := AdapterState{
 		Resources: resources,
 		PackID:    ac.pack.ID,
@@ -173,10 +180,10 @@ func (p *Provider) Apply(
 	}
 	stateJSON, err := json.Marshal(state)
 	if err != nil {
-		return "", fmt.Errorf("agentcore: failed to marshal state: %w", err)
+		return "", errors.Join(pruneErr, fmt.Errorf("agentcore: failed to marshal state: %w", err))
 	}
 
-	return string(stateJSON), nil
+	return string(stateJSON), pruneErr
 }
 
 // applyDryRun generates a deployment preview without calling AWS APIs.
@@ -772,11 +779,7 @@ func evalResourceNames(pack *prompt.Pack) []string {
 		if pack.Evals[i].Type != evalTypeLLMAsJudge {
 			continue
 		}
-		name := pack.Evals[i].ID
-		if name == "" {
-			name = fmt.Sprintf("eval_%d", i)
-		}
-		names = append(names, name)
+		names = append(names, evaluatorName(pack, i))
 	}
 	return names
 }
@@ -853,11 +856,7 @@ func buildEvalDefs(pack *prompt.Pack) map[string]evals.EvalDef {
 		if pack.Evals[i].Type != evalTypeLLMAsJudge {
 			continue
 		}
-		name := pack.Evals[i].ID
-		if name == "" {
-			name = fmt.Sprintf("eval_%d", i)
-		}
-		defs[name] = *pack.Evals[i]
+		defs[evaluatorName(pack, i)] = *pack.Evals[i]
 	}
 	return defs
 }

@@ -102,6 +102,11 @@ func (s *simulatedDestroyer) DeleteResource(_ context.Context, res ResourceState
 	return nil
 }
 
+func (s *simulatedDestroyer) DeleteGatewayTarget(_ context.Context, gatewayARN, toolName string) error {
+	log.Printf("agentcore: simulated delete gateway target %q (gateway=%s)", toolName, gatewayARN)
+	return nil
+}
+
 // simulatedChecker is a placeholder that assumes all existing resources are
 // healthy unless a per-resource status or error is configured.
 type simulatedChecker struct {

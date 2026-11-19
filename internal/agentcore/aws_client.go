@@ -38,6 +38,11 @@ type resourceDestroyer interface {
 	// It returns an error only for unexpected failures; already-deleted
 	// resources should return nil.
 	DeleteResource(ctx context.Context, res ResourceState) error
+
+	// DeleteGatewayTarget removes one tool's target from the gateway at
+	// gatewayARN without deleting the gateway, which other tools still use.
+	// An already-deleted gateway or target returns nil.
+	DeleteGatewayTarget(ctx context.Context, gatewayARN, toolName string) error
 }
 
 // resourceChecker abstracts resource health checks.

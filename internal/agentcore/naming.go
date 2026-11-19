@@ -207,13 +207,29 @@ func collectPackLevelNames(names map[string]string, pack *prompt.Pack, cfg *Conf
 	}
 }
 
+// evaluatorName is the name of the evaluator created for pack.Evals[i]: the
+// eval's id, or eval_<index> when it has none.
+//
+// Plan, validation and apply all take the name from here. Plan and validation
+// used to append "_eval" while apply never did, so every plan after the first
+// deploy showed each evaluator as created under one name and deleted under the
+// other. The apply name is the one kept, because it is the name every deployed
+// evaluator already has in AWS and in state: changing it would orphan or
+// duplicate them.
+func evaluatorName(pack *prompt.Pack, i int) string {
+	if id := pack.Evals[i].ID; id != "" {
+		return id
+	}
+	return fmt.Sprintf("eval_%d", i)
+}
+
 // collectEvalNames adds evaluator and online eval config names.
 func collectEvalNames(names map[string]string, pack *prompt.Pack) {
 	hasOnlineEval := false
 	for i := range pack.Evals {
 		switch pack.Evals[i].Type {
 		case evalTypeLLMAsJudge:
-			names[pack.Evals[i].ID+"_eval"] = ResTypeEvaluator
+			names[evaluatorName(pack, i)] = ResTypeEvaluator
 			hasOnlineEval = true
 		case evalTypeBuiltin:
 			hasOnlineEval = true

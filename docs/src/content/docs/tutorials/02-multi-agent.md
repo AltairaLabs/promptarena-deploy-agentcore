@@ -297,7 +297,7 @@ If your pack includes validators, tool policies, memory, or evaluators, addition
   a2a_endpoint    coordinator_a2a       CREATE  Create A2A endpoint for coordinator
   a2a_endpoint    researcher_a2a        CREATE  Create A2A endpoint for researcher
   a2a_endpoint    writer_a2a            CREATE  Create A2A endpoint for writer
-  evaluator       quality_eval          CREATE  Create evaluator for quality
+  evaluator       quality               CREATE  Create evaluator for quality
 
 Plan: 10 to create, 0 to update, 0 to delete
 ```

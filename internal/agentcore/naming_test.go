@@ -169,17 +169,62 @@ func TestCollectDerivedNames_WithEvals(t *testing.T) {
 	cfg := &Config{}
 
 	names := collectDerivedNames(pack, cfg)
-	if names["quality_eval"] != ResTypeEvaluator {
-		t.Errorf("expected quality_eval -> evaluator")
+	if names["quality"] != ResTypeEvaluator {
+		t.Errorf("expected quality -> evaluator")
 	}
-	if names["safety_eval"] != ResTypeEvaluator {
-		t.Errorf("expected safety_eval -> evaluator")
+	if names["safety"] != ResTypeEvaluator {
+		t.Errorf("expected safety -> evaluator")
 	}
 	if names["evalpack_online_eval"] != ResTypeOnlineEvalConfig {
 		t.Errorf("expected evalpack_online_eval -> online_eval_config")
 	}
-	if _, exists := names["localonly_eval"]; exists {
+	if _, exists := names["localonly"]; exists {
 		t.Error("should not have evaluator for exact_match type")
+	}
+	if _, exists := names["quality_eval"]; exists {
+		t.Error("validation must check the name apply creates, not quality_eval")
+	}
+}
+
+// Plan, validation and apply must agree on every evaluator's name, including
+// the fallback for an eval with no id.
+func TestEvaluatorNames_PlanValidationAndApplyAgree(t *testing.T) {
+	pack := &prompt.Pack{Pack: packspec.Pack{
+		ID: "evalpack",
+		Evals: []*evals.EvalDef{
+			{ID: "quality", Type: "llm_as_judge"},
+			{ID: "", Type: "llm_as_judge"},
+			{ID: "localonly", Type: "exact_match"},
+			{ID: "Builtin.Helpfulness", Type: "builtin"},
+		},
+	}}
+
+	applyNames := evalResourceNames(pack)
+	want := []string{"quality", "eval_1"}
+	if strings.Join(applyNames, ",") != strings.Join(want, ",") {
+		t.Fatalf("apply names = %v, want %v", applyNames, want)
+	}
+
+	var planNames []string
+	for _, c := range generateEvalResources(pack) {
+		planNames = append(planNames, c.Name)
+	}
+	if strings.Join(planNames, ",") != strings.Join(applyNames, ",") {
+		t.Errorf("plan names %v != apply names %v", planNames, applyNames)
+	}
+
+	derived := collectDerivedNames(pack, &Config{})
+	defs := buildEvalDefs(pack)
+	for _, n := range applyNames {
+		if derived[n] != ResTypeEvaluator {
+			t.Errorf("validation does not check apply's evaluator name %q", n)
+		}
+		if _, ok := defs[n]; !ok {
+			t.Errorf("no eval definition keyed by apply's evaluator name %q", n)
+		}
+	}
+	if errs := validateResourceNames(pack, &Config{}); len(errs) != 0 {
+		t.Errorf("a pack whose eval has no id must validate, got %v", errs)
 	}
 }
 
@@ -378,7 +423,7 @@ func TestCollectDerivedNames_FullPack(t *testing.T) {
 	expected := map[string]string{
 		"fullpack_memory":      ResTypeMemory,
 		"fullpack_online_eval": ResTypeOnlineEvalConfig,
-		"quality_eval":         ResTypeEvaluator,
+		"quality":              ResTypeEvaluator,
 		"router":               ResTypeAgentRuntime,
 		"worker":               ResTypeAgentRuntime,
 		"router_endpoint":      ResTypeA2AEndpoint,
