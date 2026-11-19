@@ -172,9 +172,12 @@ func NewProvider() *Provider {
 // GetProviderInfo returns metadata about the agentcore adapter.
 func (p *Provider) GetProviderInfo(_ context.Context) (*deploy.ProviderInfo, error) {
 	return &deploy.ProviderInfo{
-		Name:         "agentcore",
-		Version:      Version,
-		Capabilities: []string{"plan", "apply", "destroy", "status", "diagnose", deploy.RuntimeOverrideCapability},
+		Name:    "agentcore",
+		Version: Version,
+		Capabilities: []string{
+			"plan", "apply", "destroy", "status", "diagnose",
+			deploy.RuntimeOverrideCapability, deploy.PartialApplyStateCapability,
+		},
 		ConfigSchema: configSchema,
 	}, nil
 }

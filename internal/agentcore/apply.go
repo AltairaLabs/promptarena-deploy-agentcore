@@ -4,6 +4,7 @@ package agentcore
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -155,6 +156,15 @@ func (p *Provider) Apply(
 	}
 
 	resources, applyErr := p.executeApplyPhases(ctx, ac)
+	if applyErr != nil {
+		// The CLI replaces its stored state with this one, so carry forward the
+		// prior resources this apply never reached.
+		stateJSON, merr := partialApplyState(req.PriorState, resources, ac.pack.ID, ac.pack.Version)
+		if merr != nil {
+			return "", errors.Join(applyErr, fmt.Errorf("agentcore: failed to marshal state: %w", merr))
+		}
+		return stateJSON, applyErr
+	}
 
 	state := AdapterState{
 		Resources: resources,
@@ -166,7 +176,7 @@ func (p *Provider) Apply(
 		return "", fmt.Errorf("agentcore: failed to marshal state: %w", err)
 	}
 
-	return string(stateJSON), applyErr
+	return string(stateJSON), nil
 }
 
 // applyDryRun generates a deployment preview without calling AWS APIs.
@@ -418,9 +428,12 @@ func applyPoliciesPhase(
 		if err != nil {
 			deployErr := newDeployError("create", ResTypeCedarPolicy, promptName, err)
 			_ = ac.reporter.Error(deployErr)
-			resources = append(resources, ResourceState{
-				Type: ResTypeCedarPolicy, Name: promptName, Status: ResStatusFailed,
-			})
+			// res is the engine and the policies made before the failure, when
+			// the engine was created; it exists and destroy needs its id.
+			if res == nil {
+				res = &ResourceState{Type: ResTypeCedarPolicy, Name: promptName, Status: ResStatusFailed}
+			}
+			resources = append(resources, *res)
 			applyErr = combineErrors(applyErr, deployErr)
 			continue
 		}
@@ -443,7 +456,9 @@ func applyPoliciesPhase(
 // createPolicyForPrompt creates a policy engine and one Cedar policy per
 // forbid block for a single prompt. AWS CreatePolicy accepts only a single
 // policy statement, so multiple rules are created as separate policies on
-// the same engine. Returns the resource state on success.
+// the same engine. Returns the resource state on success. On a failure after
+// the engine exists it returns the state of what was made (the engine and the
+// policies created so far) together with the error.
 func createPolicyForPrompt(
 	ctx context.Context, ac *applyContext,
 	promptName, engineName string,
@@ -460,7 +475,10 @@ func createPolicyForPrompt(
 
 	engineARN, engineID, err := ac.client.CreatePolicyEngine(ctx, engineName, ac.cfg)
 	if err != nil {
-		return nil, fmt.Errorf("policy engine: %w", err)
+		if engineID == "" {
+			return nil, fmt.Errorf("policy engine: %w", err)
+		}
+		return cedarPolicyState(promptName, engineARN, engineID, "", "", 0), fmt.Errorf("policy engine: %w", err)
 	}
 
 	// Associate the policy engine with the gateway so the Cedar schema
@@ -472,7 +490,8 @@ func createPolicyForPrompt(
 	// created, since a failed resource records no id for destroy to use.
 	if gatewayURL, _ := ac.client.GatewayEndpoint(); gatewayURL != "" {
 		if err := ac.client.AssociatePolicyEngine(ctx, engineARN, ac.cfg); err != nil {
-			return nil, fmt.Errorf("associate policy engine with gateway: %w", err)
+			return cedarPolicyState(promptName, engineARN, engineID, "", "", 0),
+				fmt.Errorf("associate policy engine with gateway: %w", err)
 		}
 	}
 
@@ -483,24 +502,33 @@ func createPolicyForPrompt(
 			ctx, engineID, policyName, stmt, ac.cfg,
 		)
 		if err != nil {
-			return nil, fmt.Errorf("cedar policy: %w", err)
+			return cedarPolicyState(promptName, engineARN, engineID, lastPolicyARN, lastPolicyID, i),
+				fmt.Errorf("cedar policy: %w", err)
 		}
 		lastPolicyARN = arn
 		lastPolicyID = id
 	}
 
+	return cedarPolicyState(promptName, engineARN, engineID, lastPolicyARN, lastPolicyID, len(statements)), nil
+}
+
+// cedarPolicyState is the state of a prompt's policy engine and the
+// policyCount policies created on it, the last of which is policyARN/policyID.
+func cedarPolicyState(
+	promptName, engineARN, engineID, policyARN, policyID string, policyCount int,
+) *ResourceState {
 	return &ResourceState{
 		Type:   ResTypeCedarPolicy,
 		Name:   promptName,
-		ARN:    lastPolicyARN,
+		ARN:    policyARN,
 		Status: ResStatusCreated,
 		Metadata: map[string]string{
 			"policy_engine_id":  engineID,
 			"policy_engine_arn": engineARN,
-			"policy_id":         lastPolicyID,
-			"policy_count":      fmt.Sprintf("%d", len(statements)),
+			"policy_id":         policyID,
+			"policy_count":      fmt.Sprintf("%d", policyCount),
 		},
-	}, nil
+	}
 }
 
 // injectPolicyEngineARNs adds the PROMPTPACK_POLICY_ENGINE_ARN env var to
@@ -615,9 +643,7 @@ func applyPhase(ctx context.Context, ac *applyContext, spec phaseSpec) applyPhas
 		if opErr != nil {
 			deployErr := newDeployError(op.failVerb, resType, name, opErr)
 			_ = reporter.Error(deployErr)
-			result.resources = append(result.resources, ResourceState{
-				Type: resType, Name: name, Status: ResStatusFailed,
-			})
+			result.resources = append(result.resources, failedResource(resType, name, arn, op.isUpdate))
 			result.err = combineErrors(result.err, deployErr)
 			continue
 		}
@@ -636,6 +662,17 @@ func applyPhase(ctx context.Context, ac *applyContext, spec phaseSpec) applyPhas
 		})
 	}
 	return result
+}
+
+// failedResource records a resource whose create or update failed. A create
+// that returns an ARN with its error made the resource and then failed after
+// it (it never became ready), so it is recorded as created: it exists, and
+// destroy needs its ARN to find it.
+func failedResource(resType, name, arn string, isUpdate bool) ResourceState {
+	if arn != "" && !isUpdate {
+		return ResourceState{Type: resType, Name: name, ARN: arn, Status: ResStatusCreated}
+	}
+	return ResourceState{Type: resType, Name: name, Status: ResStatusFailed}
 }
 
 // resourceOp holds the resolved operation details for a single resource.
@@ -787,9 +824,8 @@ func createMemoryResource(
 	if err != nil {
 		deployErr := newDeployError("create", ResTypeMemory, memName, err)
 		_ = reporter.Error(deployErr)
-		return &ResourceState{
-			Type: ResTypeMemory, Name: memName, Status: "failed",
-		}, deployErr
+		res := failedResource(ResTypeMemory, memName, arn, false)
+		return &res, deployErr
 	}
 
 	// Inject memory ARN into runtime env vars so runtimes can discover it.

@@ -405,7 +405,9 @@ func (c *realAWSClient) CreateGatewayTool(
 			log.Printf("agentcore: gateway target %q already exists, adopting", name)
 			return c.gatewayARN, nil
 		}
-		return "", fmt.Errorf("CreateGatewayTarget %q: %w", name, err)
+		// The parent gateway exists whatever happened to the target; its ARN
+		// lets a failed apply's state record it, so destroy can remove it.
+		return c.gatewayARN, fmt.Errorf("CreateGatewayTarget %q: %w", name, err)
 	}
 
 	return aws.ToString(targetOut.GatewayArn), nil

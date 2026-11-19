@@ -491,16 +491,19 @@ func TestApply_PartialFailure_ReturnsStateForSuccessfulResources(t *testing.T) {
 	if byStatus["created"] == 0 {
 		t.Error("expected at least some created resources despite partial failure")
 	}
-	if byStatus["failed"] == 0 {
-		t.Error("expected at least some failed resources")
+	// A failed create made nothing, so the state records no failed resource.
+	if byStatus["failed"] != 0 {
+		t.Errorf("expected no failed resources in state, got %d", byStatus["failed"])
 	}
 
 	// Only the a2a wiring was made to fail; everything before it stands.
 	assertStatusByType(t, state.Resources, map[string]string{
 		"tool_gateway":  "created",
 		"agent_runtime": "created",
-		"a2a_endpoint":  "failed",
 	})
+	if hasResourceType(state.Resources, ResTypeA2AEndpoint) {
+		t.Error("the a2a wiring whose create failed must not be recorded")
+	}
 }
 
 func TestApply_ProgressMessages(t *testing.T) {
@@ -737,12 +740,10 @@ func TestApply_RuntimeFailure(t *testing.T) {
 		t.Fatal("expected error for runtime failure")
 	}
 
-	state := decodeState(t, stateStr)
-	if len(state.Resources) != 1 {
-		t.Fatalf("expected 1 resource, got %d", len(state.Resources))
-	}
-	if state.Resources[0].Status != "failed" {
-		t.Errorf("runtime status = %q, want failed", state.Resources[0].Status)
+	// Nothing was created and there was no prior state, so there is none to
+	// report.
+	if stateStr != "" {
+		t.Errorf("state = %s, want none", stateStr)
 	}
 }
 
@@ -966,17 +967,11 @@ func TestApply_OnlineEvalConfigFailure_ContinuesApply(t *testing.T) {
 	}
 
 	state := decodeState(t, stateStr)
-	var oecFailed bool
-	for _, r := range state.Resources {
-		if r.Type == ResTypeOnlineEvalConfig {
-			if r.Status != "failed" {
-				t.Errorf("online_eval_config status = %q, want failed", r.Status)
-			}
-			oecFailed = true
-		}
+	if !hasResource(state.Resources, ResTypeEvaluator, "created") {
+		t.Error("expected the created evaluators in state")
 	}
-	if !oecFailed {
-		t.Error("expected online_eval_config resource with status=failed in state")
+	if hasResourceType(state.Resources, ResTypeOnlineEvalConfig) {
+		t.Error("the online_eval_config whose create failed must not be recorded")
 	}
 }
 
@@ -1111,12 +1106,10 @@ func TestApply_UpdateRuntime_Failure(t *testing.T) {
 		t.Fatal("expected error for update failure")
 	}
 
-	state := decodeState(t, stateStr)
-	if len(state.Resources) != 1 {
-		t.Fatalf("expected 1 resource, got %d", len(state.Resources))
-	}
-	if state.Resources[0].Status != "failed" {
-		t.Errorf("runtime status = %q, want failed", state.Resources[0].Status)
+	// The update failed, so the runtime is as it was: the prior state comes
+	// back unchanged.
+	if stateStr != req.PriorState {
+		t.Errorf("state = %s, want the prior state unchanged: %s", stateStr, req.PriorState)
 	}
 }
 
@@ -1207,22 +1200,13 @@ func TestApply_WithMemory_Failure(t *testing.T) {
 		t.Fatal("expected error for memory failure")
 	}
 
-	// State should still contain the failed memory and the successful runtime.
+	// State should contain the successful runtime, and no memory: its create
+	// failed, so there is none.
 	state := decodeState(t, stateStr)
-
-	var memoryFailed, runtimeCreated bool
-	for _, r := range state.Resources {
-		if r.Type == ResTypeMemory && r.Status == "failed" {
-			memoryFailed = true
-		}
-		if r.Type == ResTypeAgentRuntime && r.Status == "created" {
-			runtimeCreated = true
-		}
+	if hasResourceType(state.Resources, ResTypeMemory) {
+		t.Error("the memory whose create failed must not be recorded")
 	}
-	if !memoryFailed {
-		t.Error("expected memory resource with status=failed")
-	}
-	if !runtimeCreated {
+	if !hasResource(state.Resources, ResTypeAgentRuntime, "created") {
 		t.Error("expected agent_runtime to still be created despite memory failure")
 	}
 }
@@ -1466,10 +1450,11 @@ func TestApply_PolicyEngineFailure_ContinuesToRuntime(t *testing.T) {
 		t.Error("expected agent_runtime to still be created despite policy failure")
 	}
 
-	// State should have both failed policy and successful runtime.
+	// State should have the successful runtime, and no policy: its create
+	// failed.
 	state := decodeState(t, stateStr)
-	if !hasResource(state.Resources, ResTypeCedarPolicy, "failed") {
-		t.Error("expected cedar_policy resource with status=failed")
+	if hasResourceType(state.Resources, ResTypeCedarPolicy) {
+		t.Error("the cedar_policy whose create failed must not be recorded")
 	}
 	if !hasResource(state.Resources, ResTypeAgentRuntime, "created") {
 		t.Error("expected agent_runtime with status=created")
@@ -2254,6 +2239,16 @@ func countStatuses(resources []ResourceState) map[string]int {
 func hasResource(resources []ResourceState, resType, status string) bool {
 	for _, r := range resources {
 		if r.Type == resType && r.Status == status {
+			return true
+		}
+	}
+	return false
+}
+
+// hasResourceType reports whether any resource has the given type.
+func hasResourceType(resources []ResourceState, resType string) bool {
+	for _, r := range resources {
+		if r.Type == resType {
 			return true
 		}
 	}
