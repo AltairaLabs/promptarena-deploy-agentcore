@@ -3,6 +3,7 @@ package agentcore
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"sort"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -59,22 +60,32 @@ func packGatewayName(pack *prompt.Pack) string {
 // under packGatewayName. That is what makes the naming change safe: a
 // deployment made when the gateway was named after a tool keeps its gateway
 // and is not given a second one.
+//
+// An older state can have tools on more than one gateway. The one most tools
+// use is kept (ties go to the lowest ARN, for a stable answer); apply then
+// gathers every tool onto it, and the others are deleted as superseded (see
+// supersededGateways).
 func priorGatewayARN(prior map[string]ResourceState) string {
-	keys := make([]string, 0, len(prior))
-	for k := range prior {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	for _, k := range keys {
-		r := prior[k]
+	counts := map[string]int{}
+	for _, r := range prior {
 		if r.Type != ResTypeToolGateway || r.Status == ResStatusPlanned || r.Status == ResStatusFailed {
 			continue
 		}
 		if extractResourceID(r.ARN, "gateway") != "" {
-			return r.ARN
+			counts[r.ARN]++
 		}
 	}
-	return ""
+	best := ""
+	for arn, n := range counts {
+		if best == "" || n > counts[best] || (n == counts[best] && arn < best) {
+			best = arn
+		}
+	}
+	if len(counts) > 1 {
+		log.Printf("agentcore: prior state has tools on %d gateways; keeping %s and moving the rest onto it",
+			len(counts), best)
+	}
+	return best
 }
 
 // buildTargetConfig returns the SDK TargetConfiguration for a gateway tool.

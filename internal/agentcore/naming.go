@@ -137,6 +137,11 @@ const maxGatewayNameLen = 48
 // call after the parent gateway that refused it first.
 const maxGatewayTargetNameLen = 100
 
+// gatewayTargetNamePattern is gatewayNamePattern with the target's limit.
+const gatewayTargetNamePattern = `^([0-9a-zA-Z]-?){1,100}$`
+
+var gatewayTargetNameRe = regexp.MustCompile(gatewayTargetNamePattern)
+
 // sanitizeGatewayName makes a name the Gateway API will accept.
 //
 // Anything outside [0-9a-zA-Z] becomes a hyphen, runs of hyphens collapse, and
@@ -278,6 +283,10 @@ func collectAgentNames(names map[string]string, pack *prompt.Pack) {
 // if all names are valid.
 func validateResourceNames(pack *prompt.Pack, cfg *Config) []string {
 	errs := validateToolTargetKinds(pack, cfg)
+	// The parent gateway a new deployment's tools go on.
+	if gw := packGatewayName(pack); len(gatewayToolNames(pack, cfg)) > 0 && !gatewayNameRe.MatchString(gw) {
+		errs = append(errs, fmt.Sprintf("gateway name %q is invalid: must match %s", gw, gatewayNamePattern))
+	}
 	derived := collectDerivedNames(pack, cfg)
 
 	// Sort keys for deterministic error ordering.
@@ -304,8 +313,9 @@ func validateResourceNames(pack *prompt.Pack, cfg *Config) []string {
 // "web-search", which AWS accepts, while passing "lookup_order", which it
 // rejects with a ValidationException at apply.
 //
-// The gateway name that AWS actually validates is checked by
-// validateToolTargetNames, against the pattern AWS actually uses.
+// The target name that AWS actually validates is checked by
+// validateToolTargetNames, against the pattern AWS actually uses. The parent
+// Gateway is named after the pack (packGatewayName), which is always valid.
 func validateDerivedName(name, resourceType string) error {
 	if resourceType == ResTypeToolGateway {
 		if name == "" {
@@ -332,13 +342,14 @@ func validateToolTargetNames(targets map[string]*ArenaToolSpec) []string {
 
 	var errs []string
 	for _, name := range keys {
-		// The parent gateway is the name AWS validates strictly, and it is
-		// derived rather than given, so check what will actually be sent.
-		gwName := sanitizeGatewayName(name) + gatewaySuffix
-		if !gatewayNameRe.MatchString(gwName) {
+		// The tool name becomes the gateway *target* name, after sanitizing,
+		// so check what will actually be sent. (The parent gateway is named
+		// after the pack, not a tool: see packGatewayName.)
+		targetName := sanitizeGatewayTargetName(name)
+		if !gatewayTargetNameRe.MatchString(targetName) {
 			errs = append(errs, fmt.Sprintf(
-				"tool_targets: tool %q produces invalid gateway name %q: must match %s",
-				name, gwName, gatewayNamePattern,
+				"tool_targets: tool %q produces invalid gateway target name %q: must match %s",
+				name, targetName, gatewayTargetNamePattern,
 			))
 		}
 	}

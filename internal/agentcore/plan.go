@@ -79,11 +79,10 @@ func resourceKey(typ, name string) string {
 	return typ + "/" + name
 }
 
-// generateDesiredResources builds the list of desired resources from the pack.
-// For multi-agent packs it uses adaptersdk.GenerateAgentResourcePlan as a
-// starting point and adds tool_gateway (for pack-level tools) and
-// evaluator (for evals). For single-agent packs it generates a
-// single agent_runtime resource.
+// generateDesiredResources builds the list of desired resources from the pack,
+// named as apply names them: memory, Cedar policies, a runtime per agent (and
+// an A2A wiring per member of a multi-agent pack), tool gateways, evaluators
+// and the online eval config.
 func generateDesiredResources(pack *prompt.Pack, cfg *Config) []deploy.ResourceChange {
 	var desired []deploy.ResourceChange
 
@@ -264,10 +263,15 @@ func diffResources(desired []deploy.ResourceChange, prior *AdapterState) []deplo
 		}
 	}
 
-	// Any prior resource not in desired set should be deleted.
+	// Any prior resource not in desired set should be deleted — unless its
+	// entry never described a real resource (a dry run's planned one, or a
+	// failed create): apply skips those, so the plan must not promise it.
 	// Collect and sort for deterministic output.
 	var toDelete []ResourceState
 	for _, r := range prior.Resources {
+		if r.Status == ResStatusPlanned || r.Status == ResStatusFailed {
+			continue
+		}
 		if !seen[resourceKey(r.Type, r.Name)] {
 			toDelete = append(toDelete, r)
 		}

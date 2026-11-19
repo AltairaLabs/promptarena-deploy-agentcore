@@ -693,3 +693,26 @@ func TestApply_KeepsThePriorGateway(t *testing.T) {
 		t.Errorf("re-apply: prior gateway %q, want the legacy one %q", c.prior, legacy)
 	}
 }
+
+// TestPriorGatewayARN_PrefersTheGatewayMostToolsUse covers an older state with
+// tools on two gateways: the one most of them use is kept.
+func TestPriorGatewayARN_PrefersTheGatewayMostToolsUse(t *testing.T) {
+	const (
+		gwA = "arn:aws:bedrock-agentcore:us-east-1:1:gateway/a-gw"
+		gwB = "arn:aws:bedrock-agentcore:us-east-1:1:gateway/b-gw"
+	)
+	prior := map[string]ResourceState{}
+	for name, arn := range map[string]string{"aa": gwA, "bb": gwB, "cc": gwB} {
+		prior[resourceKey(ResTypeToolGateway, name)] = ResourceState{
+			Type: ResTypeToolGateway, Name: name, ARN: arn, Status: ResStatusCreated,
+		}
+	}
+	if got := priorGatewayARN(prior); got != gwB {
+		t.Errorf("got %q, want the gateway two tools use: %q", got, gwB)
+	}
+	// A tie goes to the lowest ARN, so the answer never depends on map order.
+	delete(prior, resourceKey(ResTypeToolGateway, "cc"))
+	if got := priorGatewayARN(prior); got != gwA {
+		t.Errorf("tie: got %q, want %q", got, gwA)
+	}
+}

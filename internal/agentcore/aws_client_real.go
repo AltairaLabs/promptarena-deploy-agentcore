@@ -188,6 +188,7 @@ func (c *realAWSClient) getGatewayDetails(ctx context.Context, gwID string) (gat
 		url:            aws.ToString(detail.GatewayUrl),
 		authorizer:     detail.AuthorizerType,
 		authorizerConf: detail.AuthorizerConfiguration,
+		status:         detail.Status,
 	}, nil
 }
 
@@ -196,6 +197,44 @@ type gatewayDetails struct {
 	id, arn, name, url string
 	authorizer         types.AuthorizerType
 	authorizerConf     types.AuthorizerConfiguration
+	status             types.GatewayStatus
+}
+
+// gatewayUnusable reports whether a gateway can never take new targets: it is
+// being deleted, or its creation failed.
+func gatewayUnusable(status types.GatewayStatus) bool {
+	return status == types.GatewayStatusDeleting || status == types.GatewayStatusFailed
+}
+
+// adoptPriorGateway makes the prior state's gateway this apply's parent
+// gateway, waiting for it to be ready. It reports false, with no error, when
+// there is no prior gateway or it is gone or unusable, so the caller creates
+// one.
+func (c *realAWSClient) adoptPriorGateway(ctx context.Context, cfg *Config) (bool, error) {
+	id := extractResourceID(cfg.PriorGatewayARN, "gateway")
+	if id == "" {
+		return false, nil
+	}
+	found, err := c.getGatewayDetails(ctx, id)
+	if err != nil {
+		if isNotFound(err) {
+			log.Printf("agentcore: gateway %q from prior state no longer exists; creating one", id)
+			return false, nil
+		}
+		return false, fmt.Errorf("GetGateway %q: %w", id, err)
+	}
+	if gatewayUnusable(found.status) {
+		log.Printf("agentcore: gateway %q from prior state is %s; creating one", found.name, found.status)
+		return false, nil
+	}
+	log.Printf("agentcore: keeping existing gateway %q", found.name)
+	c.useGateway(&found)
+	if found.status != types.GatewayStatusReady {
+		if err := c.waitForGatewayReady(ctx, found.id); err != nil {
+			return true, fmt.Errorf("existing gateway %q not ready: %w", found.name, err)
+		}
+	}
+	return true, nil
 }
 
 // useGateway makes found the parent gateway for this apply's tools.
@@ -437,24 +476,15 @@ func (c *realAWSClient) CreateGatewayTool(
 func (c *realAWSClient) createParentGateway(
 	ctx context.Context, name string, cfg *Config,
 ) error {
-	if id := extractResourceID(cfg.PriorGatewayARN, "gateway"); id != "" {
-		found, err := c.getGatewayDetails(ctx, id)
-		if err == nil {
-			log.Printf("agentcore: keeping existing gateway %q", found.name)
-			c.useGateway(&found)
-			return nil
-		}
-		if !isNotFound(err) {
-			return fmt.Errorf("GetGateway %q for tool %q: %w", id, name, err)
-		}
-		log.Printf("agentcore: gateway %q from prior state no longer exists; creating one", id)
+	if kept, err := c.adoptPriorGateway(ctx, cfg); kept || err != nil {
+		return err
 	}
 
+	// Never derived from a tool here: that is what named a different
+	// gateway whenever the first tool changed.
 	gwName := cfg.GatewayName
 	if gwName == "" {
-		// Sanitized because a Gateway name rejects underscores, which every
-		// other AgentCore resource accepts and tool names routinely contain.
-		gwName = sanitizeGatewayName(name) + gatewaySuffix
+		return fmt.Errorf("CreateGateway for tool %q: no gateway name configured", name)
 	}
 	gwInput := &bedrockagentcorecontrol.CreateGatewayInput{
 		Name:           aws.String(gwName),
@@ -474,6 +504,9 @@ func (c *realAWSClient) createParentGateway(
 				return fmt.Errorf("CreateGateway for tool %q (adopt): %w", name, findErr)
 			}
 			c.useGateway(&found)
+			if found.status != types.GatewayStatusReady {
+				return c.waitForGatewayReady(ctx, found.id)
+			}
 			return nil
 		}
 		return fmt.Errorf("CreateGateway for tool %q: %w", name, err)

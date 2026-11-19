@@ -39,6 +39,7 @@ func integrationConfig(t *testing.T) *Config {
 		Region:            region,
 		RuntimeRoleARN:    roleARN,
 		RuntimeBinaryPath: binaryPath,
+		GatewayName:       "promptkit-integ-gw",
 	}
 }
 
