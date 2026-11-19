@@ -73,11 +73,20 @@ Destroy continues on individual resource failures. A failed deletion is reported
 
 ## Update support
 
-Only `agent_runtime` supports in-place updates. When the adapter detects a prior state entry for a runtime (same type and name), it calls `UpdateAgentRuntime` instead of `CreateAgentRuntime`. The update carries the same payload (role ARN, env vars, authorizer config) and polls until the runtime returns to READY status.
+Only `agent_runtime` and `online_eval_config` support in-place updates. When the adapter detects a prior state entry for a runtime (same type and name), it calls `UpdateAgentRuntime` instead of `CreateAgentRuntime`. The update carries the same payload (role ARN, env vars, authorizer config) and polls until the runtime returns to READY status.
 
 All other resource types are create-only. If you change a tool gateway, policy, or evaluator configuration, you must destroy and redeploy.
 
 The adapter resolves create-vs-update per resource by looking up the resource key (`type + name`) in the prior state map. The prior state is the opaque JSON string returned by the previous `Apply` call and passed back through `PlanRequest.PriorState`.
+
+## Removing resources
+
+When you take something out of a pack (an eval, a tool, a memory store, an agent member) the plan lists the resource it produced as a delete. Apply carries the delete out after every create and update has succeeded, in the same order as destroy, and the resource leaves the state.
+
+- **Only after a successful apply.** If any create or update fails, nothing is deleted. A resource the apply did not produce might only be one it never reached. The prior state keeps it, and the next apply deletes it.
+- **A failed delete stays in the state.** Apply reports the error, and the resource stays recorded, so the next apply or a destroy can try again.
+- **Tools share one gateway.** Removing one tool deletes only its target. The gateway is deleted only when no remaining tool uses it.
+- **Dependents let go first.** Before a removed evaluator is deleted, the online evaluation config is updated to list only the evaluators that remain. When the last Cedar policy is removed but the gateway stays, the gateway is detached from its policy engine before the engine is deleted.
 
 ## Logical resources
 

@@ -15,6 +15,8 @@ type awsClient interface {
 	CreateA2AWiring(ctx context.Context, name string, cfg *Config) (arn string, err error)
 	CreateEvaluator(ctx context.Context, name string, cfg *Config) (arn string, err error)
 	CreateOnlineEvalConfig(ctx context.Context, name string, cfg *Config) (arn string, err error)
+	// UpdateOnlineEvalConfig re-points an existing config at cfg's evaluators.
+	UpdateOnlineEvalConfig(ctx context.Context, arn string, name string, cfg *Config) (string, error)
 	CreateMemory(ctx context.Context, name string, cfg *Config) (arn string, err error)
 	CreatePolicyEngine(ctx context.Context, name string, cfg *Config) (
 		arn string, engineID string, err error,
@@ -23,6 +25,9 @@ type awsClient interface {
 		cedarStatement string, cfg *Config) (arn string, policyID string, err error,
 	)
 	AssociatePolicyEngine(ctx context.Context, policyEngineARN string, cfg *Config) error
+	// DisassociatePolicyEngine removes the gateway's policy engine, if there
+	// is a gateway, so an engine the pack no longer uses can be deleted.
+	DisassociatePolicyEngine(ctx context.Context, cfg *Config) error
 	UploadCodePackage(ctx context.Context, zipData []byte, bucket, key string) error
 
 	// ListAvailableModels returns the set of Bedrock foundation model IDs
@@ -38,6 +43,11 @@ type resourceDestroyer interface {
 	// It returns an error only for unexpected failures; already-deleted
 	// resources should return nil.
 	DeleteResource(ctx context.Context, res ResourceState) error
+
+	// DeleteGatewayTarget removes one tool's target from the gateway at
+	// gatewayARN without deleting the gateway, which other tools still use.
+	// An already-deleted gateway or target returns nil.
+	DeleteGatewayTarget(ctx context.Context, gatewayARN, toolName string) error
 }
 
 // resourceChecker abstracts resource health checks.

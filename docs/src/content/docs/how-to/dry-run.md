@@ -66,7 +66,7 @@ For a multi-agent pack with two agents, one tool, and one eval, the dry-run stat
     { "type": "tool_gateway", "name": "search_tool_gw", "status": "planned" },
     { "type": "a2a_endpoint", "name": "coordinator_a2a", "status": "planned" },
     { "type": "a2a_endpoint", "name": "researcher_a2a", "status": "planned" },
-    { "type": "evaluator", "name": "quality_eval", "status": "planned" }
+    { "type": "evaluator", "name": "quality", "status": "planned" }
   ],
   "pack_id": "my-pack",
   "version": "1.0.0"

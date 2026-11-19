@@ -54,6 +54,14 @@ func (c *simulatedAWSClient) CreateOnlineEvalConfig(_ context.Context, name stri
 	return fmt.Sprintf("arn:aws:bedrock:%s:%s:online-evaluation-config/%s", c.region, c.accountID, name), nil
 }
 
+func (c *simulatedAWSClient) UpdateOnlineEvalConfig(_ context.Context, arn string, _ string, _ *Config) (string, error) {
+	return arn, nil
+}
+
+func (c *simulatedAWSClient) DisassociatePolicyEngine(_ context.Context, _ *Config) error {
+	return nil
+}
+
 func (c *simulatedAWSClient) CreateMemory(_ context.Context, name string, _ *Config) (string, error) {
 	return fmt.Sprintf("arn:aws:bedrock:%s:%s:memory/%s", c.region, c.accountID, name), nil
 }
@@ -99,6 +107,11 @@ type simulatedDestroyer struct{}
 
 func (s *simulatedDestroyer) DeleteResource(_ context.Context, res ResourceState) error {
 	log.Printf("agentcore: simulated delete %s %q (arn=%s)", res.Type, res.Name, res.ARN)
+	return nil
+}
+
+func (s *simulatedDestroyer) DeleteGatewayTarget(_ context.Context, gatewayARN, toolName string) error {
+	log.Printf("agentcore: simulated delete gateway target %q (gateway=%s)", toolName, gatewayARN)
 	return nil
 }
 

@@ -16,7 +16,7 @@ The AgentCore adapter manages seven resource types. Each resource has a constant
 | `ResTypeAgentRuntime` | `agent_runtime` | Agent members (or pack ID) | Yes | Yes | Yes | Status READY |
 | `ResTypeA2AEndpoint` | `a2a_endpoint` | Multi-agent wiring | Yes | No | No-op | Always healthy |
 | `ResTypeEvaluator` | `evaluator` | Pack evals (`llm_as_judge` only) | Yes | No | Yes | Status ACTIVE |
-| `ResTypeOnlineEvalConfig` | `online_eval_config` | Wires evaluators to agent traces | Yes | No | Yes | Status ACTIVE |
+| `ResTypeOnlineEvalConfig` | `online_eval_config` | Wires evaluators to agent traces | Yes | Yes | Yes | Status ACTIVE |
 
 ## Resource status values
 
@@ -281,6 +281,7 @@ One `online_eval_config` resource is created per pack when the pack has any `llm
 | Operation | API Call | Details |
 |-----------|----------|---------|
 | Create | `CreateOnlineEvaluationConfig` | Creates an online evaluation config referencing all evaluator IDs, a CloudWatch data source, and a sampling rule. Polls until status is `ACTIVE`. |
+| Update | `UpdateOnlineEvaluationConfig` | On a later apply, replaces the config's evaluator list, data source and sampling rule with the current ones, so it never references an evaluator that is being removed. Polls until status is `ACTIVE`. A config that no longer exists is created again. |
 | Delete | `DeleteOnlineEvaluationConfig` | Deletes the config by ID. Tolerates NotFound (already deleted). |
 
 The CloudWatch log group is resolved from `observability.cloudwatch_log_group` if configured, otherwise defaults to `/aws/bedrock/agentcore/{pack_id}`. The sampling percentage defaults to 100% but can be overridden via the `sample_percentage` eval param.

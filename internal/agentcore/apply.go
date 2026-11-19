@@ -136,6 +136,9 @@ func deliverRuntime(ctx context.Context, client awsClient, cfg *Config, packJSON
 //  3. A2A wiring between agents
 //  4. Evaluators
 //
+// When every phase succeeds, the resources the prior state records and this
+// apply no longer produced are then deleted (see pruneRemovedResources).
+//
 // When DryRun is enabled in config, Apply emits planned resource events
 // without calling any AWS APIs and returns a preview of the deployment.
 func (p *Provider) Apply(
@@ -166,6 +169,10 @@ func (p *Provider) Apply(
 		return stateJSON, applyErr
 	}
 
+	// Everything wanted now exists, so what the prior state still records
+	// beyond it is what Plan marked for deletion.
+	resources, pruneErr := p.pruneRemovedResources(ctx, ac, resources)
+
 	state := AdapterState{
 		Resources: resources,
 		PackID:    ac.pack.ID,
@@ -173,10 +180,10 @@ func (p *Provider) Apply(
 	}
 	stateJSON, err := json.Marshal(state)
 	if err != nil {
-		return "", fmt.Errorf("agentcore: failed to marshal state: %w", err)
+		return "", errors.Join(pruneErr, fmt.Errorf("agentcore: failed to marshal state: %w", err))
 	}
 
-	return string(stateJSON), nil
+	return string(stateJSON), pruneErr
 }
 
 // applyDryRun generates a deployment preview without calling AWS APIs.
@@ -365,8 +372,11 @@ func applyEvalPhases(
 	ac.cfg.BuiltinEvalIDs = collectBuiltinEvalIDs(ac.pack)
 	if len(ac.cfg.EvalARNs) > 0 || len(ac.cfg.BuiltinEvalIDs) > 0 {
 		oecName := packBaseName(ac.pack) + "_online_eval"
+		// Updated rather than re-created when it exists, so it references
+		// exactly this apply's evaluators before any removed one is deleted.
 		phase := applyPhase(ctx, ac, phaseSpec{
 			create:    ac.client.CreateOnlineEvalConfig,
+			update:    ac.client.UpdateOnlineEvalConfig,
 			names:     []string{oecName},
 			resType:   ResTypeOnlineEvalConfig,
 			stepIndex: stepOnlineEvalCfg,
@@ -407,7 +417,7 @@ func applyPoliciesPhase(
 ) ([]ResourceState, error, error) {
 	names := policyResourceNames(ac.pack)
 	if len(names) == 0 {
-		return nil, nil, nil
+		return nil, releaseRemovedPolicyEngine(ctx, ac), nil
 	}
 
 	var resources []ResourceState
@@ -451,6 +461,33 @@ func applyPoliciesPhase(
 	injectPolicyEngineARNs(ac.cfg, resources)
 
 	return resources, applyErr, nil
+}
+
+// releaseRemovedPolicyEngine detaches the gateway from the policy engine of a
+// pack that no longer has any Cedar policy, so that engine can be deleted
+// once the apply succeeds. AWS refuses to delete an engine a gateway still
+// enforces. With no gateway, or no engine in the prior state, there is
+// nothing to detach.
+func releaseRemovedPolicyEngine(ctx context.Context, ac *applyContext) error {
+	if gatewayURL, _ := ac.client.GatewayEndpoint(); gatewayURL == "" {
+		return nil
+	}
+	hadEngine := false
+	for _, r := range ac.priorMap {
+		if r.Type == ResTypeCedarPolicy && r.Metadata["policy_engine_id"] != "" {
+			hadEngine = true
+			break
+		}
+	}
+	if !hadEngine {
+		return nil
+	}
+	if err := ac.client.DisassociatePolicyEngine(ctx, ac.cfg); err != nil {
+		deployErr := newDeployError("update", ResTypeToolGateway, "policy engine", err)
+		_ = ac.reporter.Error(deployErr)
+		return deployErr
+	}
+	return nil
 }
 
 // createPolicyForPrompt creates a policy engine and one Cedar policy per
@@ -772,11 +809,7 @@ func evalResourceNames(pack *prompt.Pack) []string {
 		if pack.Evals[i].Type != evalTypeLLMAsJudge {
 			continue
 		}
-		name := pack.Evals[i].ID
-		if name == "" {
-			name = fmt.Sprintf("eval_%d", i)
-		}
-		names = append(names, name)
+		names = append(names, evaluatorName(pack, i))
 	}
 	return names
 }
@@ -853,11 +886,7 @@ func buildEvalDefs(pack *prompt.Pack) map[string]evals.EvalDef {
 		if pack.Evals[i].Type != evalTypeLLMAsJudge {
 			continue
 		}
-		name := pack.Evals[i].ID
-		if name == "" {
-			name = fmt.Sprintf("eval_%d", i)
-		}
-		defs[name] = *pack.Evals[i]
+		defs[evaluatorName(pack, i)] = *pack.Evals[i]
 	}
 	return defs
 }

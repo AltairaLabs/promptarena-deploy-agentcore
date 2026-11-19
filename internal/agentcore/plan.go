@@ -178,7 +178,7 @@ func generateEvalResources(pack *prompt.Pack) []deploy.ResourceChange {
 		}
 		resources = append(resources, deploy.ResourceChange{
 			Type:   ResTypeEvaluator,
-			Name:   pack.Evals[i].ID + "_eval",
+			Name:   evaluatorName(pack, i),
 			Action: deploy.ActionCreate,
 			Detail: fmt.Sprintf("Create evaluator for %s", pack.Evals[i].ID),
 		})

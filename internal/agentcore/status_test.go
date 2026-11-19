@@ -21,6 +21,13 @@ func (d *failingDestroyer) DeleteResource(_ context.Context, res ResourceState) 
 	return nil
 }
 
+func (d *failingDestroyer) DeleteGatewayTarget(_ context.Context, _, toolName string) error {
+	if d.failOn[ResTypeToolGateway] {
+		return fmt.Errorf("simulated target delete failure for %q", toolName)
+	}
+	return nil
+}
+
 // failingChecker returns unhealthy or errors for specific resource types.
 type failingChecker struct {
 	unhealthyTypes map[string]bool
