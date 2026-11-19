@@ -1,6 +1,8 @@
 package agentcore
 
 import (
+	"context"
+	"encoding/json"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/service/bedrockagentcorecontrol/types"
@@ -607,5 +609,87 @@ func TestMapRestAPIMethod(t *testing.T) {
 				t.Errorf("mapRestAPIMethod(%q) = %q, want %q", tt.input, got, tt.want)
 			}
 		})
+	}
+}
+
+// TestPackGatewayName_IndependentOfTools: the parent gateway's name comes from
+// the pack, so adding or removing a tool can never name a different gateway.
+func TestPackGatewayName_IndependentOfTools(t *testing.T) {
+	for _, tc := range []struct{ id, want string }{
+		{"customer-support", "customer-support-gw"},
+		{"my_pack", "my-pack-gw"},
+		{"", "default-gw"},
+	} {
+		pack := &prompt.Pack{}
+		pack.ID = tc.id
+		got := packGatewayName(pack)
+		if got != tc.want {
+			t.Errorf("packGatewayName(%q) = %q, want %q", tc.id, got, tc.want)
+		}
+		if !gatewayNameRe.MatchString(got) {
+			t.Errorf("packGatewayName(%q) = %q, which AWS would reject", tc.id, got)
+		}
+	}
+}
+
+func TestPriorGatewayARN(t *testing.T) {
+	const gw = "arn:aws:bedrock-agentcore:us-east-1:123456789012:gateway/search-gw-abc"
+	prior := map[string]ResourceState{}
+	add := func(r ResourceState) { prior[resourceKey(r.Type, r.Name)] = r }
+
+	if got := priorGatewayARN(prior); got != "" {
+		t.Errorf("no prior state: got %q, want none", got)
+	}
+	add(ResourceState{Type: ResTypeToolGateway, Name: "a_planned", Status: ResStatusPlanned,
+		ARN: "arn:aws:bedrock-agentcore:us-east-1:1:gateway/planned"})
+	add(ResourceState{Type: ResTypeToolGateway, Name: "b_failed", Status: ResStatusFailed,
+		ARN: "arn:aws:bedrock-agentcore:us-east-1:1:gateway/failed"})
+	add(ResourceState{Type: ResTypeAgentRuntime, Name: "c", Status: ResStatusCreated,
+		ARN: "arn:aws:bedrock-agentcore:us-east-1:1:runtime/c"})
+	if got := priorGatewayARN(prior); got != "" {
+		t.Errorf("only planned, failed and non-tool entries: got %q, want none", got)
+	}
+	add(ResourceState{Type: ResTypeToolGateway, Name: "search", Status: ResStatusCreated, ARN: gw})
+	if got := priorGatewayARN(prior); got != gw {
+		t.Errorf("got %q, want the gateway the prior tools use: %q", got, gw)
+	}
+}
+
+// gatewayCfgClient records the gateway settings apply hands the client.
+type gatewayCfgClient struct {
+	simulatedAWSClient
+	name, prior string
+}
+
+func (c *gatewayCfgClient) CreateGatewayTool(ctx context.Context, name string, cfg *Config) (string, error) {
+	c.name, c.prior = cfg.GatewayName, cfg.PriorGatewayARN
+	return c.simulatedAWSClient.CreateGatewayTool(ctx, name, cfg)
+}
+
+// TestApply_KeepsThePriorGateway: apply tells the client which gateway the
+// existing tools use, so a deployment whose gateway was named after a tool
+// keeps it rather than getting a second one, and a new deployment's gateway
+// is named after the pack.
+func TestApply_KeepsThePriorGateway(t *testing.T) {
+	c := &gatewayCfgClient{}
+	provider := newSimulatedProvider()
+	provider.awsClientFunc = func(_ context.Context, cfg *Config) (awsClient, error) {
+		c.simulatedAWSClient = *newSimulatedAWSClient(cfg.Region)
+		return c, nil
+	}
+
+	mustApply(t, provider, applyRequest(t, evalToolPack(nil, []string{"search"}), ""))
+	if c.name != "evalpack-gw" || c.prior != "" {
+		t.Errorf("fresh deploy: name %q, prior %q; want evalpack-gw and no prior gateway", c.name, c.prior)
+	}
+
+	const legacy = "arn:aws:bedrock-agentcore:us-west-2:123456789012:gateway/search-gw-abc"
+	prior, _ := json.Marshal(AdapterState{Resources: []ResourceState{
+		{Type: ResTypeToolGateway, Name: "search", ARN: legacy, Status: ResStatusCreated},
+	}})
+	// "calc" sorts before "search": under the old naming this created a new gateway.
+	mustApply(t, provider, applyRequest(t, evalToolPack(nil, []string{"calc", "search"}), string(prior)))
+	if c.prior != legacy {
+		t.Errorf("re-apply: prior gateway %q, want the legacy one %q", c.prior, legacy)
 	}
 }

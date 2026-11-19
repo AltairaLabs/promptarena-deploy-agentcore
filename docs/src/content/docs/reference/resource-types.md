@@ -88,7 +88,9 @@ One `tool_gateway` resource is created per entry in `pack.Tools`. Resources are 
 | Create (target) | `CreateGatewayTarget` | Creates a gateway target for each tool within the shared gateway. |
 | Delete | `DeleteGateway` | Deletes the parent gateway by ID. Tolerates NotFound. |
 
-The parent gateway is created lazily on the first `CreateGatewayTool` call and reused for all subsequent targets within the same Apply invocation. The gateway name is `{first_tool_name}_gw`.
+One parent gateway holds every tool's target. When the prior state's tools already have a gateway, apply keeps that gateway, whatever it is called, and adds to it. Otherwise it creates one named `{pack_id}-gw`, with anything other than letters and digits in the pack id turned into hyphens. Because the name comes from the pack, adding or removing a tool never moves the tools to a different gateway.
+
+The resource name of a `tool_gateway` entry is the tool's name, and every entry records the parent gateway's ARN. When a tool is removed, apply deletes only its target. The gateway is deleted when no tool is left on it.
 
 ### Health check
 

@@ -166,32 +166,46 @@ func (c *realAWSClient) findGatewayByName(
 	}
 	for _, gw := range out.Items {
 		if aws.ToString(gw.Name) == name {
-			gwID := aws.ToString(gw.GatewayId)
-			// Full details for the ARN, the MCP endpoint, and how this
-			// gateway authenticates its callers.
-			detail, getErr := c.client.GetGateway(ctx, &bedrockagentcorecontrol.GetGatewayInput{
-				GatewayIdentifier: aws.String(gwID),
-			})
-			if getErr != nil {
-				return gatewayDetails{id: gwID}, getErr
-			}
-			return gatewayDetails{
-				id:             gwID,
-				arn:            aws.ToString(detail.GatewayArn),
-				url:            aws.ToString(detail.GatewayUrl),
-				authorizer:     detail.AuthorizerType,
-				authorizerConf: detail.AuthorizerConfiguration,
-			}, nil
+			return c.getGatewayDetails(ctx, aws.ToString(gw.GatewayId))
 		}
 	}
 	return gatewayDetails{}, fmt.Errorf("gateway %q not found", name)
 }
 
+// getGatewayDetails reads the ARN, name, MCP endpoint, and how the gateway
+// authenticates its callers.
+func (c *realAWSClient) getGatewayDetails(ctx context.Context, gwID string) (gatewayDetails, error) {
+	detail, err := c.client.GetGateway(ctx, &bedrockagentcorecontrol.GetGatewayInput{
+		GatewayIdentifier: aws.String(gwID),
+	})
+	if err != nil {
+		return gatewayDetails{id: gwID}, err
+	}
+	return gatewayDetails{
+		id:             gwID,
+		arn:            aws.ToString(detail.GatewayArn),
+		name:           aws.ToString(detail.Name),
+		url:            aws.ToString(detail.GatewayUrl),
+		authorizer:     detail.AuthorizerType,
+		authorizerConf: detail.AuthorizerConfiguration,
+	}, nil
+}
+
 // gatewayDetails is what an existing gateway tells us about itself.
 type gatewayDetails struct {
-	id, arn, url   string
-	authorizer     types.AuthorizerType
-	authorizerConf types.AuthorizerConfiguration
+	id, arn, name, url string
+	authorizer         types.AuthorizerType
+	authorizerConf     types.AuthorizerConfiguration
+}
+
+// useGateway makes found the parent gateway for this apply's tools.
+func (c *realAWSClient) useGateway(found *gatewayDetails) {
+	c.gatewayID = found.id
+	c.gatewayARN = found.arn
+	c.gatewayURL = found.url
+	c.gatewayName = found.name
+	c.gatewayAuthorizer = found.authorizer
+	c.gatewayAuthorizerConf = found.authorizerConf
 }
 
 // findEvaluatorByName lists evaluators and returns the ARN of one matching name.
@@ -413,16 +427,35 @@ func (c *realAWSClient) CreateGatewayTool(
 	return aws.ToString(targetOut.GatewayArn), nil
 }
 
-// createParentGateway provisions the shared gateway and waits for it to
-// become ready.
+// createParentGateway finds or provisions the shared gateway and waits for it
+// to become ready.
+//
+// The gateway the prior state's tools already use is kept, whatever it is
+// called: deployments made when the gateway was named after its first tool
+// keep that gateway. Only when there is none, or it has been deleted outside
+// promptarena, is one created, under the pack-derived cfg.GatewayName.
 func (c *realAWSClient) createParentGateway(
 	ctx context.Context, name string, cfg *Config,
 ) error {
-	// Sanitized because a Gateway name rejects underscores, which every other
-	// AgentCore resource accepts and tool names routinely contain. Unchanged
-	// for a name that was already valid, so no gateway that deploys today is
-	// renamed by this.
-	gwName := sanitizeGatewayName(name) + gatewaySuffix
+	if id := extractResourceID(cfg.PriorGatewayARN, "gateway"); id != "" {
+		found, err := c.getGatewayDetails(ctx, id)
+		if err == nil {
+			log.Printf("agentcore: keeping existing gateway %q", found.name)
+			c.useGateway(&found)
+			return nil
+		}
+		if !isNotFound(err) {
+			return fmt.Errorf("GetGateway %q for tool %q: %w", id, name, err)
+		}
+		log.Printf("agentcore: gateway %q from prior state no longer exists; creating one", id)
+	}
+
+	gwName := cfg.GatewayName
+	if gwName == "" {
+		// Sanitized because a Gateway name rejects underscores, which every
+		// other AgentCore resource accepts and tool names routinely contain.
+		gwName = sanitizeGatewayName(name) + gatewaySuffix
+	}
 	gwInput := &bedrockagentcorecontrol.CreateGatewayInput{
 		Name:           aws.String(gwName),
 		RoleArn:        aws.String(cfg.RuntimeRoleARN),
@@ -440,12 +473,7 @@ func (c *realAWSClient) createParentGateway(
 			if findErr != nil {
 				return fmt.Errorf("CreateGateway for tool %q (adopt): %w", name, findErr)
 			}
-			c.gatewayID = found.id
-			c.gatewayARN = found.arn
-			c.gatewayURL = found.url
-			c.gatewayName = gwName
-			c.gatewayAuthorizer = found.authorizer
-			c.gatewayAuthorizerConf = found.authorizerConf
+			c.useGateway(&found)
 			return nil
 		}
 		return fmt.Errorf("CreateGateway for tool %q: %w", name, err)

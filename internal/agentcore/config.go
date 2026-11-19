@@ -86,6 +86,12 @@ type Config struct {
 	// Used by Cedar tool policies that need a specific gateway resource. NOT serialized.
 	GatewayARN string `json:"-"`
 
+	// GatewayName is the name a new parent gateway is created under, and
+	// PriorGatewayARN the gateway the prior state's tools already use, which
+	// apply keeps rather than creating another. Both set at apply-time.
+	GatewayName     string `json:"-"`
+	PriorGatewayARN string `json:"-"`
+
 	// GatewayURL is the Gateway's MCP endpoint and GatewayAuth is how it
 	// authenticates callers, both read from the Gateway itself at apply-time.
 	// The runtime needs them to call its own tools.

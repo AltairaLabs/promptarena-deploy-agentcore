@@ -144,9 +144,34 @@ func generateAgentResources(pack *prompt.Pack, cfg *Config) []deploy.ResourceCha
 	return desired
 }
 
-// generateMultiAgentResources returns SDK-generated resources plus tool_gateways.
+// generateMultiAgentResources returns the resources apply makes for a
+// multi-agent pack: a runtime and an A2A wiring per member, and the tool
+// gateways.
+//
+// Named exactly as apply names them (agentRuntimeNames, a2aWiringName). The
+// SDK's GenerateAgentResourcePlan used to supply these, but it names the
+// wiring <member>_endpoint and adds a <entry>_gateway resource that this
+// adapter never creates, so every re-plan showed each wiring deleted and
+// recreated, and a gateway that never appeared.
 func generateMultiAgentResources(pack *prompt.Pack, cfg *Config) []deploy.ResourceChange {
-	desired := adaptersdk.GenerateAgentResourcePlan(pack)
+	members := agentRuntimeNames(pack)
+	var desired []deploy.ResourceChange
+	for _, name := range members {
+		desired = append(desired,
+			deploy.ResourceChange{
+				Type:   ResTypeAgentRuntime,
+				Name:   name,
+				Action: deploy.ActionCreate,
+				Detail: fmt.Sprintf("Create AgentCore runtime for %s", name),
+			},
+			deploy.ResourceChange{
+				Type:   ResTypeA2AEndpoint,
+				Name:   a2aWiringName(name),
+				Action: deploy.ActionCreate,
+				Detail: fmt.Sprintf("Create A2A endpoint for %s", name),
+			},
+		)
+	}
 
 	for _, name := range gatewayToolNames(pack, cfg) {
 		desired = append(desired, deploy.ResourceChange{

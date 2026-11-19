@@ -42,6 +42,41 @@ func gatewayToolNames(pack *prompt.Pack, cfg *Config) []string {
 	return names
 }
 
+// packGatewayName is the name a pack's parent gateway is created under.
+//
+// It comes from the pack, not from a tool. It used to be the first tool's
+// name, so adding a tool that sorted ahead of it named a different gateway:
+// apply created a second one, moved every tool to it, and left the first in
+// AWS and in no state.
+func packGatewayName(pack *prompt.Pack) string {
+	return sanitizeGatewayName(packBaseName(pack)) + gatewaySuffix
+}
+
+// priorGatewayARN is the parent gateway the prior state's tools live behind,
+// or "" when there is none.
+//
+// Apply keeps that gateway, whatever it is called, rather than creating one
+// under packGatewayName. That is what makes the naming change safe: a
+// deployment made when the gateway was named after a tool keeps its gateway
+// and is not given a second one.
+func priorGatewayARN(prior map[string]ResourceState) string {
+	keys := make([]string, 0, len(prior))
+	for k := range prior {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		r := prior[k]
+		if r.Type != ResTypeToolGateway || r.Status == ResStatusPlanned || r.Status == ResStatusFailed {
+			continue
+		}
+		if extractResourceID(r.ARN, "gateway") != "" {
+			return r.ARN
+		}
+	}
+	return ""
+}
+
 // buildTargetConfig returns the SDK TargetConfiguration for a gateway tool.
 // When the arena config provides a Lambda ARN for the tool, it builds a
 // McpLambdaTargetConfiguration with an inline tool schema so the Cedar

@@ -108,12 +108,16 @@ func (p *Provider) prepareApply(
 		return nil, fmt.Errorf("agentcore: %w", err)
 	}
 
+	priorMap := parsePriorState(req.PriorState)
+	cfg.GatewayName = packGatewayName(pack)
+	cfg.PriorGatewayARN = priorGatewayARN(priorMap)
+
 	return &applyContext{
 		pack:     pack,
 		cfg:      cfg,
 		reporter: newReporter(callback),
 		client:   client,
-		priorMap: parsePriorState(req.PriorState),
+		priorMap: priorMap,
 	}, nil
 }
 
@@ -592,7 +596,7 @@ func applyA2AWiring(
 	agents := adaptersdk.ExtractAgents(ac.pack)
 	wireNames := make([]string, len(agents))
 	for i, ag := range agents {
-		wireNames[i] = ag.Name + "_a2a"
+		wireNames[i] = a2aWiringName(ag.Name)
 	}
 	phase := applyPhase(ctx, ac, phaseSpec{
 		create:    ac.client.CreateA2AWiring,

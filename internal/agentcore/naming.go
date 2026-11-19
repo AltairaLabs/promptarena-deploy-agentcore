@@ -254,15 +254,19 @@ func collectToolNames(names map[string]string, pack *prompt.Pack, cfg *Config) {
 	}
 }
 
-// collectAgentNames adds runtime, a2a endpoint, and gateway names.
+// a2aWiringName is the name of a multi-agent member's A2A wiring resource.
+// Plan, validation and apply all take it from here.
+func a2aWiringName(member string) string {
+	return member + "_a2a"
+}
+
+// collectAgentNames adds runtime and a2a endpoint names — the names apply
+// creates, so validation checks what is actually sent.
 func collectAgentNames(names map[string]string, pack *prompt.Pack) {
 	if adaptersdk.IsMultiAgent(pack) {
 		for memberName := range pack.Agents.Members {
 			names[memberName] = ResTypeAgentRuntime
-			names[memberName+"_endpoint"] = ResTypeA2AEndpoint
-		}
-		if pack.Agents.Entry != "" {
-			names[pack.Agents.Entry+"_gateway"] = "gateway"
+			names[a2aWiringName(memberName)] = ResTypeA2AEndpoint
 		}
 		return
 	}

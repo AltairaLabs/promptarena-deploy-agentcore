@@ -145,15 +145,15 @@ func TestCollectDerivedNames_MultiAgent(t *testing.T) {
 		t.Errorf("expected worker -> agent_runtime")
 	}
 	// A2A endpoints.
-	if names["router_endpoint"] != ResTypeA2AEndpoint {
-		t.Errorf("expected router_endpoint -> a2a_endpoint")
+	if names["router_a2a"] != ResTypeA2AEndpoint {
+		t.Errorf("expected router_a2a -> a2a_endpoint")
 	}
-	if names["worker_endpoint"] != ResTypeA2AEndpoint {
-		t.Errorf("expected worker_endpoint -> a2a_endpoint")
+	if names["worker_a2a"] != ResTypeA2AEndpoint {
+		t.Errorf("expected worker_a2a -> a2a_endpoint")
 	}
-	// Gateway.
-	if names["router_gateway"] != "gateway" {
-		t.Errorf("expected router_gateway -> gateway")
+	// Apply creates no entry-agent gateway, so there is no name to check.
+	if _, ok := names["router_gateway"]; ok {
+		t.Errorf("router_gateway is never created and must not be validated")
 	}
 }
 
@@ -426,9 +426,8 @@ func TestCollectDerivedNames_FullPack(t *testing.T) {
 		"quality":              ResTypeEvaluator,
 		"router":               ResTypeAgentRuntime,
 		"worker":               ResTypeAgentRuntime,
-		"router_endpoint":      ResTypeA2AEndpoint,
-		"worker_endpoint":      ResTypeA2AEndpoint,
-		"router_gateway":       "gateway",
+		"router_a2a":           ResTypeA2AEndpoint,
+		"worker_a2a":           ResTypeA2AEndpoint,
 		"search":               ResTypeToolGateway,
 		"router_policy_engine": ResTypeCedarPolicy,
 	}

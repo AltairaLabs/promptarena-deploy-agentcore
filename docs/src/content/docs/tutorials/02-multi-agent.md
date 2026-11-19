@@ -269,7 +269,7 @@ For the `content-team` pack with three agents and one tool, the plan shows:
 ```
 Planning agentcore deployment...
 
-  tool_gateway    web_search_tool_gw    CREATE  Create tool gateway for web_search
+  tool_gateway    web_search            CREATE  Create tool gateway for web_search
   agent_runtime   coordinator           CREATE  Create AgentCore runtime for coordinator
   agent_runtime   researcher            CREATE  Create AgentCore runtime for researcher
   agent_runtime   writer                CREATE  Create AgentCore runtime for writer
@@ -290,7 +290,7 @@ If your pack includes validators, tool policies, memory, or evaluators, addition
 ```
   memory          content-team_memory   CREATE  Create memory store (session) for content-team
   cedar_policy    coordinator_prompt    CREATE  Create Cedar policy for prompt coordinator_prompt
-  tool_gateway    web_search_tool_gw    CREATE  Create tool gateway for web_search
+  tool_gateway    web_search            CREATE  Create tool gateway for web_search
   agent_runtime   coordinator           CREATE  Create AgentCore runtime for coordinator
   agent_runtime   researcher            CREATE  Create AgentCore runtime for researcher
   agent_runtime   writer                CREATE  Create AgentCore runtime for writer
@@ -313,8 +313,8 @@ The adapter creates resources in 6 dependency-ordered phases. Watch the progress
 ```
 Deploying to agentcore...
 
-  [  0%] Creating tool_gateway: web_search_tool_gw
-  [  5%] Created tool_gateway: web_search_tool_gw
+  [  0%] Creating tool_gateway: web_search
+  [  5%] Created tool_gateway: web_search
          ARN: arn:aws:bedrock:us-west-2:123456789012:gateway-tool/gw-abcd1234
 
   [ 20%] Creating cedar_policy: coordinator_prompt
@@ -378,7 +378,7 @@ Expected output for a healthy multi-agent deployment:
 ```
 AgentCore deployment status: deployed
 
-  tool_gateway    web_search_tool_gw  healthy
+  tool_gateway    web_search          healthy
   agent_runtime   coordinator         healthy
   agent_runtime   researcher          healthy
   agent_runtime   writer              healthy
@@ -413,7 +413,7 @@ Destroying agentcore deployment...
   Deleted agent_runtime "researcher"
   Deleted agent_runtime "writer"
   Step 4: deleting tool_gateway resources (1)
-  Deleted tool_gateway "web_search_tool_gw"
+  Deleted tool_gateway "web_search"
 
 Destroy complete.
 ```
