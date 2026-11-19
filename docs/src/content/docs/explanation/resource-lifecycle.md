@@ -116,9 +116,15 @@ Apply does **not** abort on the first error. Each phase processes all its resour
 
 2. Reported via the progress callback as an error event, so the caller can display or log it in real time.
 
-3. Recorded in state with `status: "failed"` (no ARN).
+3. Accumulated into a combined error that is returned alongside the state JSON.
 
-4. Accumulated into a combined error that is returned alongside the state JSON. The caller receives both the partial state (with successful resources) and the combined error.
+The state returned with the error describes everything that exists after the failure, because the PromptArena CLI saves it in place of the stored state (the adapter advertises the `partial_apply_state` capability):
+
+- A resource the apply created or updated is recorded as it now is.
+- A resource whose create or update failed keeps its entry from the prior state. It is left out when it had none, because its create never happened.
+- A prior resource the apply never reached is kept as it was.
+
+When the apply created or updated nothing, it returns the prior state unchanged, and the CLI keeps what it has stored.
 
 Error classification is automatic. The adapter inspects the AWS error message for keywords like "access denied" (permission), "connection refused" (network), "did not become ready" (timeout), and "validation" (configuration). Unrecognised errors default to the `resource` category.
 
@@ -157,7 +163,7 @@ The adapter returns and accepts state as a JSON string with this shape:
 
 Key points:
 
-- **`resources`** is an ordered list matching the creation sequence. Each entry records the type, name, ARN (if creation succeeded), status (`created`, `updated`, `failed`, or `planned` for dry-run), and optional metadata.
+- **`resources`** is an ordered list matching the creation sequence. Each entry records the type, name, ARN (if creation succeeded), status (`created`, `updated`, or `planned` for dry-run), and optional metadata.
 - **`pack_id`** and **`version`** are copied from the pack manifest for traceability.
 - **`metadata`** is type-specific. Cedar policies store their engine ID, engine ARN, and policy ID so that `Destroy` can delete both the policy and its engine.
 - The state is opaque to PromptKit -- only this adapter reads and writes it. It is passed verbatim between `Apply`, `Plan`, `Destroy`, and `Status` calls via `PriorState`.

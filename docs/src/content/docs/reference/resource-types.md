@@ -26,7 +26,7 @@ Resources pass through these status values during their lifecycle:
 |--------|----------|---------|
 | `created` | `ResStatusCreated` | Resource was successfully created during Apply. |
 | `updated` | `ResStatusUpdated` | Resource was successfully updated during Apply (redeployment). |
-| `failed` | `ResStatusFailed` | Resource creation or update failed. The error is reported via callback. |
+| `failed` | `ResStatusFailed` | Resource creation or update failed. The error is reported via callback. A failed apply's state never records it; see [Error handling](/explanation/resource-lifecycle/#error-handling). |
 | `planned` | `ResStatusPlanned` | Resource would be created (dry-run mode only). |
 
 Health check status values returned by Status:

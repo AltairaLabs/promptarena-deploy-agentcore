@@ -4,6 +4,7 @@ package agentcore
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -155,6 +156,15 @@ func (p *Provider) Apply(
 	}
 
 	resources, applyErr := p.executeApplyPhases(ctx, ac)
+	if applyErr != nil {
+		// The CLI replaces its stored state with this one, so carry forward the
+		// prior resources this apply never reached.
+		stateJSON, merr := partialApplyState(req.PriorState, resources, ac.pack.ID, ac.pack.Version)
+		if merr != nil {
+			return "", errors.Join(applyErr, fmt.Errorf("agentcore: failed to marshal state: %w", merr))
+		}
+		return stateJSON, applyErr
+	}
 
 	state := AdapterState{
 		Resources: resources,
@@ -166,7 +176,7 @@ func (p *Provider) Apply(
 		return "", fmt.Errorf("agentcore: failed to marshal state: %w", err)
 	}
 
-	return string(stateJSON), applyErr
+	return string(stateJSON), nil
 }
 
 // applyDryRun generates a deployment preview without calling AWS APIs.

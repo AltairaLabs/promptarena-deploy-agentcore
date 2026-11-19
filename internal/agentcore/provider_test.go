@@ -3,9 +3,11 @@ package agentcore
 import (
 	"bytes"
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 
+	"github.com/AltairaLabs/promptarena/v2/deploy"
 	"github.com/AltairaLabs/promptarena/v2/deploy/adaptersdk"
 )
 
@@ -74,8 +76,12 @@ func TestGetProviderInfo(t *testing.T) {
 	if info.Version == "" {
 		t.Error("version is empty")
 	}
-	if len(info.Capabilities) != 6 {
-		t.Errorf("capabilities = %v, want 6 items", info.Capabilities)
+	if len(info.Capabilities) != 7 {
+		t.Errorf("capabilities = %v, want 7 items", info.Capabilities)
+	}
+	if !slices.Contains(info.Capabilities, deploy.PartialApplyStateCapability) {
+		t.Errorf("capabilities = %v, want %q: a failed apply returns the full state",
+			info.Capabilities, deploy.PartialApplyStateCapability)
 	}
 	if info.ConfigSchema == "" {
 		t.Error("config_schema is empty")
