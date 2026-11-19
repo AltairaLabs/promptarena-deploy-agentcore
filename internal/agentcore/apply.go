@@ -372,8 +372,11 @@ func applyEvalPhases(
 	ac.cfg.BuiltinEvalIDs = collectBuiltinEvalIDs(ac.pack)
 	if len(ac.cfg.EvalARNs) > 0 || len(ac.cfg.BuiltinEvalIDs) > 0 {
 		oecName := packBaseName(ac.pack) + "_online_eval"
+		// Updated rather than re-created when it exists, so it references
+		// exactly this apply's evaluators before any removed one is deleted.
 		phase := applyPhase(ctx, ac, phaseSpec{
 			create:    ac.client.CreateOnlineEvalConfig,
+			update:    ac.client.UpdateOnlineEvalConfig,
 			names:     []string{oecName},
 			resType:   ResTypeOnlineEvalConfig,
 			stepIndex: stepOnlineEvalCfg,
@@ -414,7 +417,7 @@ func applyPoliciesPhase(
 ) ([]ResourceState, error, error) {
 	names := policyResourceNames(ac.pack)
 	if len(names) == 0 {
-		return nil, nil, nil
+		return nil, releaseRemovedPolicyEngine(ctx, ac), nil
 	}
 
 	var resources []ResourceState
@@ -458,6 +461,33 @@ func applyPoliciesPhase(
 	injectPolicyEngineARNs(ac.cfg, resources)
 
 	return resources, applyErr, nil
+}
+
+// releaseRemovedPolicyEngine detaches the gateway from the policy engine of a
+// pack that no longer has any Cedar policy, so that engine can be deleted
+// once the apply succeeds. AWS refuses to delete an engine a gateway still
+// enforces. With no gateway, or no engine in the prior state, there is
+// nothing to detach.
+func releaseRemovedPolicyEngine(ctx context.Context, ac *applyContext) error {
+	if gatewayURL, _ := ac.client.GatewayEndpoint(); gatewayURL == "" {
+		return nil
+	}
+	hadEngine := false
+	for _, r := range ac.priorMap {
+		if r.Type == ResTypeCedarPolicy && r.Metadata["policy_engine_id"] != "" {
+			hadEngine = true
+			break
+		}
+	}
+	if !hadEngine {
+		return nil
+	}
+	if err := ac.client.DisassociatePolicyEngine(ctx, ac.cfg); err != nil {
+		deployErr := newDeployError("update", ResTypeToolGateway, "policy engine", err)
+		_ = ac.reporter.Error(deployErr)
+		return deployErr
+	}
+	return nil
 }
 
 // createPolicyForPrompt creates a policy engine and one Cedar policy per

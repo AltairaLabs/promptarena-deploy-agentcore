@@ -276,7 +276,9 @@ func TestPlanAndApply_KeepExistingEvaluatorNames(t *testing.T) {
 
 // TestApply_RenamedEntryForAKeptResourceIsNotDeleted covers a state entry
 // for the same AWS resource the apply just kept under another name: only the
-// stale entry goes, the resource itself is left alone.
+// stale entry goes, the resource itself is left alone. No released apply wrote
+// "quality_eval" (the real migration is TestPlanAndApply_KeepExistingEvaluatorNames);
+// this pins the guard for any future rename.
 func TestApply_RenamedEntryForAKeptResourceIsNotDeleted(t *testing.T) {
 	prior, _ := json.Marshal(AdapterState{Resources: []ResourceState{
 		{Type: ResTypeEvaluator, Name: "quality_eval",
@@ -453,5 +455,156 @@ func TestResourcesWithARN_PlaceholdersMatchNothing(t *testing.T) {
 		if got := resourcesWithARN(rs, arn); len(got) != 0 {
 			t.Errorf("resourcesWithARN(%q) = %v, want none", arn, got)
 		}
+	}
+}
+
+// orderingClient and orderingDestroyer write every call into one shared log,
+// so a test can assert what AWS would see first. Its gateway endpoint is
+// empty when noGateway is set, as the real client's is when no tool made one.
+type orderingClient struct {
+	sharedGatewayClient
+	log             *[]string
+	noGateway       bool
+	disassociateErr error
+}
+
+func (c *orderingClient) GatewayEndpoint() (string, string) {
+	if c.noGateway {
+		return "", ""
+	}
+	return c.sharedGatewayClient.GatewayEndpoint()
+}
+
+func (c *orderingClient) UpdateOnlineEvalConfig(_ context.Context, arn, name string, cfg *Config) (string, error) {
+	names := make([]string, 0, len(cfg.EvalARNs))
+	for n := range cfg.EvalARNs {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	*c.log = append(*c.log, "update "+name+" ["+strings.Join(names, ",")+"]")
+	return arn, nil
+}
+
+func (c *orderingClient) DisassociatePolicyEngine(context.Context, *Config) error {
+	*c.log = append(*c.log, "disassociate")
+	return c.disassociateErr
+}
+
+type orderingDestroyer struct{ log *[]string }
+
+func (d *orderingDestroyer) DeleteResource(_ context.Context, res ResourceState) error {
+	*d.log = append(*d.log, "delete "+resourceKey(res.Type, res.Name))
+	return nil
+}
+
+func (d *orderingDestroyer) DeleteGatewayTarget(_ context.Context, _, toolName string) error {
+	*d.log = append(*d.log, "delete target "+toolName)
+	return nil
+}
+
+func orderingProvider(c *orderingClient) *Provider {
+	return &Provider{
+		awsClientFunc: func(_ context.Context, cfg *Config) (awsClient, error) {
+			c.simulatedAWSClient = *newSimulatedAWSClient(cfg.Region)
+			return c, nil
+		},
+		destroyerFunc: func(context.Context, *Config) (resourceDestroyer, error) {
+			return &orderingDestroyer{log: c.log}, nil
+		},
+		checkerFunc: newSimulatedProvider().checkerFunc,
+	}
+}
+
+// TestApply_OnlineEvalConfigDropsAnEvaluatorBeforeItIsDeleted: the kept
+// online eval config is updated to reference only the evaluators that remain,
+// and that happens before the removed evaluator is deleted.
+func TestApply_OnlineEvalConfigDropsAnEvaluatorBeforeItIsDeleted(t *testing.T) {
+	var log []string
+	provider := orderingProvider(&orderingClient{log: &log})
+	_, v1 := mustApply(t, provider, applyRequest(t, evalToolPack([]string{"quality", "retired"}, nil), ""))
+	log = nil
+
+	mustApply(t, provider, applyRequest(t, evalToolPack([]string{"quality"}, nil), v1))
+
+	want := []string{
+		"update evalpack_online_eval [quality]",
+		"delete " + resourceKey(ResTypeEvaluator, "retired"),
+	}
+	if strings.Join(log, " | ") != strings.Join(want, " | ") {
+		t.Errorf("calls = %v, want %v", log, want)
+	}
+}
+
+func cedarPrior(t *testing.T, prior string) string {
+	t.Helper()
+	var s AdapterState
+	if err := json.Unmarshal([]byte(prior), &s); err != nil {
+		t.Fatal(err)
+	}
+	s.Resources = append(s.Resources, ResourceState{
+		Type: ResTypeCedarPolicy, Name: "chat", ARN: "arn:policy",
+		Status: ResStatusCreated, Metadata: map[string]string{"policy_engine_id": "pe-chat"},
+	})
+	b, _ := json.Marshal(s)
+	return string(b)
+}
+
+// TestApply_GatewayReleasesARemovedPolicyEngineBeforeItIsDeleted: when the
+// pack drops its last Cedar policy but keeps its gateway, the gateway lets go
+// of the engine before the engine is deleted.
+func TestApply_GatewayReleasesARemovedPolicyEngineBeforeItIsDeleted(t *testing.T) {
+	var log []string
+	provider := orderingProvider(&orderingClient{log: &log})
+	_, v1 := mustApply(t, provider, applyRequest(t, evalToolPack(nil, []string{"search"}), ""))
+	log = nil
+
+	mustApply(t, provider, applyRequest(t, evalToolPack(nil, []string{"search"}), cedarPrior(t, v1)))
+
+	want := []string{"disassociate", "delete " + resourceKey(ResTypeCedarPolicy, "chat")}
+	if strings.Join(log, " | ") != strings.Join(want, " | ") {
+		t.Errorf("calls = %v, want %v", log, want)
+	}
+}
+
+func TestApply_NoPolicyEngineReleaseWithoutGatewayOrEngine(t *testing.T) {
+	var log []string
+	noGateway := orderingProvider(&orderingClient{log: &log, noGateway: true})
+	_, v1 := mustApply(t, noGateway, applyRequest(t, evalToolPack(nil, nil), ""))
+	mustApply(t, noGateway, applyRequest(t, evalToolPack(nil, nil), cedarPrior(t, v1)))
+	for _, call := range log {
+		if call == "disassociate" {
+			t.Error("no gateway: there is nothing to detach the engine from")
+		}
+	}
+
+	log = nil
+	withGateway := orderingProvider(&orderingClient{log: &log})
+	_, v1 = mustApply(t, withGateway, applyRequest(t, evalToolPack(nil, []string{"search"}), ""))
+	mustApply(t, withGateway, applyRequest(t, evalToolPack(nil, []string{"search"}), v1))
+	if len(log) != 0 {
+		t.Errorf("no prior engine: calls = %v, want none", log)
+	}
+}
+
+// TestApply_PolicyEngineReleaseFailureDeletesNothing: if the gateway cannot
+// let go of the engine, the apply fails and the engine is kept.
+func TestApply_PolicyEngineReleaseFailureDeletesNothing(t *testing.T) {
+	var log []string
+	c := &orderingClient{log: &log}
+	provider := orderingProvider(c)
+	_, v1 := mustApply(t, provider, applyRequest(t, evalToolPack(nil, []string{"search"}), ""))
+	log = nil
+	c.disassociateErr = errors.New("throttled")
+
+	_, stateStr, err := collectEvents(t, provider,
+		applyRequest(t, evalToolPack(nil, []string{"search"}), cedarPrior(t, v1)))
+	if err == nil {
+		t.Fatal("expected the failed release to fail the apply")
+	}
+	if strings.Join(log, ",") != "disassociate" {
+		t.Errorf("calls = %v, want only the failed disassociate", log)
+	}
+	if _, ok := stateByKey(decodeState(t, stateStr))[resourceKey(ResTypeCedarPolicy, "chat")]; !ok {
+		t.Error("the engine was not deleted and must stay in the state")
 	}
 }

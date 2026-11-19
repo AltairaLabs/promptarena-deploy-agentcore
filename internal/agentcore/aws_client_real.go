@@ -503,6 +503,35 @@ func (c *realAWSClient) AssociatePolicyEngine(
 	return nil
 }
 
+// DisassociatePolicyEngine removes the gateway's policy engine, leaving the
+// gateway otherwise as it is. UpdateGateway is a full replace, so sending it
+// without a PolicyEngineConfiguration clears the association.
+//
+// Apply calls this when the pack no longer has any Cedar policy but keeps its
+// gateway: the engine it used is about to be deleted, and AWS refuses to
+// delete an engine a gateway still enforces.
+func (c *realAWSClient) DisassociatePolicyEngine(ctx context.Context, cfg *Config) error {
+	if c.gatewayID == "" {
+		return nil
+	}
+	_, err := c.client.UpdateGateway(ctx, &bedrockagentcorecontrol.UpdateGatewayInput{
+		GatewayIdentifier:       aws.String(c.gatewayID),
+		Name:                    aws.String(c.gatewayName),
+		RoleArn:                 aws.String(cfg.RuntimeRoleARN),
+		ProtocolType:            types.GatewayProtocolTypeMcp,
+		AuthorizerType:          c.gatewayAuthorizer,
+		AuthorizerConfiguration: c.gatewayAuthorizerConf,
+	})
+	if err != nil {
+		return fmt.Errorf("UpdateGateway to remove policy engine: %w", err)
+	}
+	log.Printf("agentcore: removed policy engine from gateway %s", c.gatewayID)
+	if err := c.waitForGatewayReady(ctx, c.gatewayID); err != nil {
+		return fmt.Errorf("gateway not ready after removing policy engine: %w", err)
+	}
+	return nil
+}
+
 // CreateA2AWiring registers a logical A2A endpoint. No separate AWS API
 // call is required; the runtime exposes A2A when configured.
 func (c *realAWSClient) CreateA2AWiring(
@@ -740,6 +769,57 @@ func (c *realAWSClient) CreateOnlineEvalConfig(
 	}
 
 	return aws.ToString(out.OnlineEvaluationConfigArn), nil
+}
+
+// UpdateOnlineEvalConfig points an existing online evaluation config at the
+// evaluators this apply produced.
+//
+// Without it a re-apply adopted the existing config unchanged, so an
+// evaluator dropped from the pack stayed referenced by it, and deleting that
+// evaluator afterwards either failed or left the config pointing at nothing.
+// A config that is gone is created again.
+func (c *realAWSClient) UpdateOnlineEvalConfig(
+	ctx context.Context, arn string, name string, cfg *Config,
+) (string, error) {
+	id := extractResourceID(arn, "online-evaluation-config")
+	if id == "" {
+		return c.CreateOnlineEvalConfig(ctx, name, cfg)
+	}
+	evalRefs := buildEvaluatorReferences(cfg.EvalARNs, cfg.BuiltinEvalIDs)
+	if len(evalRefs) == 0 {
+		return "", fmt.Errorf("UpdateOnlineEvaluationConfig %q: no evaluator references available", name)
+	}
+	if logGroup := resolveLogGroup(cfg); logGroup != defaultTraceLogGroup {
+		if err := c.ensureLogGroup(ctx, logGroup); err != nil {
+			return "", fmt.Errorf("UpdateOnlineEvaluationConfig %q: %w", name, err)
+		}
+	}
+	_, err := c.client.UpdateOnlineEvaluationConfig(ctx, &bedrockagentcorecontrol.UpdateOnlineEvaluationConfigInput{
+		OnlineEvaluationConfigId:   aws.String(id),
+		EvaluationExecutionRoleArn: aws.String(cfg.RuntimeRoleARN),
+		DataSourceConfig: &types.DataSourceConfigMemberCloudWatchLogs{
+			Value: types.CloudWatchLogsInputConfig{
+				LogGroupNames: []string{resolveLogGroup(cfg)},
+				ServiceNames:  []string{cfg.ResourceTags[TagKeyPackID] + ".DEFAULT"},
+			},
+		},
+		Evaluators: evalRefs,
+		Rule: &types.Rule{
+			SamplingConfig: &types.SamplingConfig{
+				SamplingPercentage: aws.Float64(resolveSamplingPercentage(cfg)),
+			},
+		},
+	})
+	if err != nil {
+		if isNotFound(err) {
+			return c.CreateOnlineEvalConfig(ctx, name, cfg)
+		}
+		return "", fmt.Errorf("UpdateOnlineEvaluationConfig %q: %w", name, err)
+	}
+	if err := c.waitForOnlineEvalConfigReady(ctx, id); err != nil {
+		return arn, fmt.Errorf("online eval config %q updated but not active: %w", name, err)
+	}
+	return arn, nil
 }
 
 // resolveLogGroup returns the CloudWatch log group for online eval config.
