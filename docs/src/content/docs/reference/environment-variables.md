@@ -75,7 +75,7 @@ Set when [`runtime_override.image`](/reference/configuration/#runtime_override) 
 PROMPTPACK_PACK_JSON={"id":"my-agent","version":"v1.0.0","prompts":{...}}
 ```
 
-AgentCore caps an environment value at 5,000 characters. A larger pack is uploaded to `s3://bedrock-agentcore-code-<account>-<region>/promptkit/<pack>/<version>/pack.json` and named by `PROMPTPACK_PACK_URI` instead; the runtime role needs `s3:GetObject` on it.
+AgentCore caps an environment value at 5,000 characters. A larger pack is uploaded to `s3://bedrock-agentcore-code-<account>-<region>/promptkit/<pack>/<version>/pack.json` and named by `PROMPTPACK_PACK_URI` instead. The bucket must already exist, the runtime role needs `s3:GetObject` on the object, and destroy does not delete it.
 
 ### PROMPTPACK_LOG_GROUP
 

@@ -33,6 +33,7 @@ type recordingAWSClient struct {
 	uploadKeys  []string
 	uploadBytes [][]byte
 	uploadErr   error
+	updated     []string
 }
 
 func newRecordingClient() *recordingAWSClient {
@@ -47,6 +48,13 @@ func (c *recordingAWSClient) CreateRuntime(ctx context.Context, name string, cfg
 	c.runtimeEnv[name] = runtimeEnvVarsForAgent(cfg, name)
 	c.artifacts[name] = buildRuntimeArtifact(cfg)
 	return c.simulatedAWSClient.CreateRuntime(ctx, name, cfg)
+}
+
+func (c *recordingAWSClient) UpdateRuntime(ctx context.Context, arn, name string, cfg *Config) (string, error) {
+	c.runtimeEnv[name] = runtimeEnvVarsForAgent(cfg, name)
+	c.artifacts[name] = buildRuntimeArtifact(cfg)
+	c.updated = append(c.updated, name)
+	return c.simulatedAWSClient.UpdateRuntime(ctx, arn, name, cfg)
 }
 
 func (c *recordingAWSClient) UploadCodePackage(_ context.Context, data []byte, bucket, key string) error {
@@ -161,6 +169,7 @@ func TestValidate_RuntimeOverride(t *testing.T) {
 		{name: "aws prefix", override: `{"image":"` + testOverrideImage + `","env":{"AWS_REGION":"eu-west-1"}}`, want: []string{"reserved"}},
 		{name: "otlp endpoint", override: `{"image":"` + testOverrideImage + `","env":{"OTEL_EXPORTER_OTLP_ENDPOINT":"x"}}`, want: []string{"reserved"}},
 		{name: "control character", override: `{"image":"` + testOverrideImage + `","env":{"CFG":"{\n}"}}`, want: []string{"control character"}},
+		{name: "too many variables", override: `{"image":"` + testOverrideImage + `","env":` + manyEnv(maxEnvVars-maxAdapterEnvVars+1) + `}`, want: []string{"so at most"}},
 		{name: "value too long", override: `{"image":"` + testOverrideImage + `","env":{"BIG":"` + long + `"}}`, want: []string{"at most 5000"}},
 	}
 	for _, tt := range tests {
@@ -407,5 +416,61 @@ func TestStageOverridePack_CompactsIndentedPack(t *testing.T) {
 
 	if err := stageOverridePack(context.Background(), newRecordingClient(), cfg, "{not json"); err == nil {
 		t.Error("a pack that is not JSON should be refused")
+	}
+}
+
+// manyEnv returns a JSON object of n distinct variables.
+func manyEnv(n int) string {
+	parts := make([]string, n)
+	for i := range parts {
+		parts[i] = fmt.Sprintf(`"V%d":"x"`, i)
+	}
+	return "{" + strings.Join(parts, ",") + "}"
+}
+
+func TestApply_RuntimeOverride_ValidatedWithoutPlan(t *testing.T) {
+	client := newRecordingClient()
+	req := &deploy.PlanRequest{
+		ArenaConfig:  validArenaConfigJSON,
+		PackJSON:     singleAgentPack(),
+		DeployConfig: overrideConfig(`{"image":"` + testOverrideImage + `","env":{"AWS_REGION":"eu-west-1"}}`),
+	}
+	_, _, err := collectEvents(t, providerWith(client), req)
+	if err == nil || !strings.Contains(err.Error(), "invalid runtime_override") {
+		t.Fatalf("err = %v, want an invalid runtime_override error", err)
+	}
+	if len(client.runtimeEnv) != 0 || len(client.uploadKeys) != 0 {
+		t.Error("Apply acted on an invalid override")
+	}
+}
+
+func TestApply_RuntimeOverride_UpdatesMultiAgentRuntimes(t *testing.T) {
+	client := newRecordingClient()
+	prior := AdapterState{PackID: "multipack", Version: "v1.0.0", Resources: []ResourceState{
+		{Type: ResTypeAgentRuntime, Name: "coordinator", Status: ResStatusCreated,
+			ARN: "arn:aws:bedrock-agentcore:us-west-2:123456789012:runtime/coordinator"},
+		{Type: ResTypeAgentRuntime, Name: "worker", Status: ResStatusCreated,
+			ARN: "arn:aws:bedrock-agentcore:us-west-2:123456789012:runtime/worker"},
+	}}
+	priorJSON, _ := json.Marshal(prior)
+	req := &deploy.PlanRequest{
+		ArenaConfig:  validArenaConfigJSON,
+		PackJSON:     multiAgentPack(),
+		PriorState:   string(priorJSON),
+		DeployConfig: overrideConfig(`{"image":"` + testOverrideImage + `"}`),
+	}
+	if _, _, err := collectEvents(t, providerWith(client), req); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	for _, name := range []string{"coordinator", "worker"} {
+		if !slices.Contains(client.updated, name) {
+			t.Errorf("runtime %s was not updated", name)
+		}
+		if _, ok := client.artifacts[name].(*types.AgentRuntimeArtifactMemberContainerConfiguration); !ok {
+			t.Errorf("%s artifact = %T, want a container configuration", name, client.artifacts[name])
+		}
+		if got := client.runtimeEnv[name][deploy.EnvAgent]; got != name {
+			t.Errorf("%s %s = %q", name, deploy.EnvAgent, got)
+		}
 	}
 }

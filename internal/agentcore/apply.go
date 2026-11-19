@@ -98,6 +98,11 @@ func (p *Provider) prepareApply(
 		return nil, fmt.Errorf("agentcore: eval model not available: %s", strings.Join(errs, "; "))
 	}
 
+	// Apply can run without Plan, and the override merge below relies on the
+	// names having been checked, so check them here too, before anything exists.
+	if errs := validateRuntimeOverride(cfg.RuntimeOverride); len(errs) > 0 {
+		return nil, fmt.Errorf("agentcore: invalid runtime_override: %s", strings.Join(errs, "; "))
+	}
 	if err := deliverRuntime(ctx, client, cfg, req.PackJSON); err != nil {
 		return nil, fmt.Errorf("agentcore: %w", err)
 	}

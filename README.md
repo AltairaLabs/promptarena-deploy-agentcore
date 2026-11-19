@@ -117,12 +117,13 @@ The runtime role must be able to pull it:
 { "Effect": "Allow", "Action": "ecr:GetAuthorizationToken", "Resource": "*" }
 ```
 
-**What runs, and when.** AgentCore starts the container when a runtime session
-begins (the first `InvokeAgentRuntime` call for a session id) and stops it when
-the session ends. It sends `POST /invocations` and `GET /ping` to port 8080.
-A container that serves neither still starts and runs for the session, but
-every invocation fails with a 424. A container that only makes outbound
-connections still needs a session to be started before it runs.
+**The container must serve AgentCore's runtime contract.** AgentCore sends
+`POST /invocations` and `GET /ping` to port 8080, and decides from them whether
+the container is healthy. It starts containers for runtime sessions (an
+`InvokeAgentRuntime` call starts one) and stops them when the session ends; do
+not rely on a container running while no session is active. A container that
+serves neither route still starts and runs, but every invocation fails with a
+424, and AgentCore may stop and start it repeatedly.
 
 Every apply updates each existing runtime, so a change to `runtime_override`
 takes effect on the next apply. The plan names the override image on each
@@ -167,12 +168,11 @@ Things to know:
 - **The key is stored in plain text** on the runtime, because AgentCore has no
   secret environment variables. Anyone who can call `GetAgentRuntime` can read
   it. Scope that permission accordingly.
-- **The container runs only inside a session.** Nothing dials home until
-  something starts a runtime session with `InvokeAgentRuntime`, and the
-  connection closes when the session ends (by default after 15 minutes idle).
-  Invocations themselves fail with a 424, because omnia-dialhome serves
-  neither `/invocations` nor `/ping`: conversations reach it through Omnia,
-  over the channel.
+- **It does not serve AgentCore's runtime contract.** omnia-dialhome answers
+  `/healthz` and `/readyz`, not `/ping` or `/invocations`, so invocations fail
+  with a 424 and AgentCore may stop and restart its containers repeatedly, each
+  restart re-dialling. Conversations reach it through Omnia, over the channel,
+  never through `InvokeAgentRuntime`.
 - A pack over 5,000 characters is staged to S3 as `PROMPTPACK_PACK_URI`, and
   omnia-dialhome refuses a staged pack. Keep the pack small, or build an image
   `FROM` omnia-dialhome with the pack copied in and set `OMNIA_DIALHOME_PACK`

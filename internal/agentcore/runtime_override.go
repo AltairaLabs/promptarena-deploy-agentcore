@@ -26,6 +26,15 @@ const (
 // PROMPTPACK_PACK_JSON and is staged to S3 instead.
 const maxEnvValueLen = 5000
 
+// maxEnvVars is the most environment variables CreateAgentRuntime accepts.
+// maxAdapterEnvVars is the most the adapter sets itself: every Env* name in
+// envvars.go and toolenv.go, AWS_REGION, and the pack handoff. An override may
+// add the rest.
+const (
+	maxEnvVars        = 50
+	maxAdapterEnvVars = 21
+)
+
 // overridePackFile is the S3 object name a pack too large to pass inline is
 // staged under, beside where the code package would go.
 const overridePackFile = "pack.json"
@@ -80,6 +89,11 @@ func validateRuntimeOverride(o *deploy.RuntimeOverride) []string {
 				"image into an ECR repository and name it as <account>.dkr.ecr.<region>.amazonaws.com/<repo>:<tag> "+
 				"(or public.ecr.aws/<repo>:<tag>)",
 			key, o.Image))
+	}
+	if limit := maxEnvVars - maxAdapterEnvVars; len(o.Env) > limit {
+		errs = append(errs, fmt.Sprintf(
+			"%s.env sets %d variables: AgentCore accepts %d in all and the adapter may set %d, so at most %d",
+			key, len(o.Env), maxEnvVars, maxAdapterEnvVars, limit))
 	}
 	for _, name := range sortedStringKeys(o.Env) {
 		errs = append(errs, checkEnvValue(name, o.Env[name])...)

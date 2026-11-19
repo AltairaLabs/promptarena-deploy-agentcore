@@ -171,23 +171,24 @@ container the pack under the deploy SDK's names:
 | Variable | Value |
 |----------|-------|
 | `PROMPTPACK_PACK_JSON` | The compiled pack, as single-line JSON, when it fits in one environment value (5,000 characters). |
-| `PROMPTPACK_PACK_URI` | Otherwise, `s3://bedrock-agentcore-code-<account>-<region>/promptkit/<pack>/<version>/pack.json`. The runtime role needs `s3:GetObject` on it. |
-| `PROMPTPACK_AGENT` | The prompt the runtime serves. For a single-agent pack, its one prompt. |
+| `PROMPTPACK_PACK_URI` | Otherwise, `s3://bedrock-agentcore-code-<account>-<region>/promptkit/<pack>/<version>/pack.json`. The bucket must already exist (it is the one code deploys use), the runtime role needs `s3:GetObject` on the object, and destroy leaves it in place. |
+| `PROMPTPACK_AGENT` | The prompt the runtime serves: each member's name in a multi-agent pack, or the one prompt of a single-prompt pack. A single-agent pack with several prompts gets none, and the container must choose. |
 
 Without an `image`, the override's `env` is added to the adapter's own runtime,
 which still reads the pack from its code package.
 
 Validation rejects an override variable that starts with `PROMPTPACK_` or
 `AWS_`, is `OTEL_EXPORTER_OTLP_ENDPOINT` (set from `observability`), is longer
-than 5,000 characters, or contains a control character such as a newline. Write
-a JSON value on one line.
+than 5,000 characters, or contains a control character such as a newline, and
+more than 29 override variables (AgentCore accepts 50 in all, and the adapter
+may set 21). Write a JSON value on one line.
 
 The image must be built for `linux/arm64`, and the runtime role must be able to
 pull it (`ecr:BatchGetImage`, `ecr:GetDownloadUrlForLayer` on the repository and
-`ecr:GetAuthorizationToken`). AgentCore starts the container when a session
-begins, calls `POST /invocations` and `GET /ping` on port 8080, and stops it
-when the session ends. A container that serves neither still starts, and
-invocations to it fail.
+`ecr:GetAuthorizationToken`). AgentCore calls `POST /invocations` and
+`GET /ping` on port 8080, and starts and stops containers for runtime sessions.
+A container that serves neither route still starts, but invocations to it fail
+and AgentCore may restart it repeatedly.
 
 Every apply updates each existing runtime, so a change to `runtime_override`
 takes effect on the next apply. The plan names the override image on each
