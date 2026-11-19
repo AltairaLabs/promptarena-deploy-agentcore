@@ -246,6 +246,45 @@ func TestDestroy_SkipsResourcesThatFailedToCreate(t *testing.T) {
 	}
 }
 
+// Every tool's entry records the one gateway the pack's tools share. Destroy
+// must delete that gateway once: a second DeleteGateway on a gateway that is
+// already DELETING fails in AWS, and each tool after the first reported it.
+func TestDestroy_DeletesASharedGatewayOnce(t *testing.T) {
+	d := &recordingDestroyer{}
+	p := pruneProvider(d)
+	gw := "arn:aws:bedrock-agentcore:us-west-2:1:gateway/pack-gw-abc"
+	state := &AdapterState{Resources: []ResourceState{
+		{Type: ResTypeToolGateway, Name: "lookup_b", ARN: gw, Status: ResStatusCreated},
+		{Type: ResTypeToolGateway, Name: "search_d", ARN: gw, Status: ResStatusCreated},
+		{Type: ResTypeToolGateway, Name: "other", ARN: gw + "-2", Status: ResStatusCreated},
+	}}
+
+	var deleted []string
+	cb := func(e *deploy.DestroyEvent) error {
+		if e.Type == "error" {
+			t.Errorf("unexpected error event: %s", e.Message)
+		}
+		if e.Resource != nil && e.Resource.Status == ResStatusDeleted {
+			deleted = append(deleted, e.Resource.Name)
+		}
+		return nil
+	}
+	if err := p.Destroy(context.Background(), &deploy.DestroyRequest{
+		DeployConfig: validDestroyConfig(),
+		PriorState:   mustJSON(t, state),
+	}, cb); err != nil {
+		t.Fatalf("Destroy returned error: %v", err)
+	}
+
+	want := []string{"tool_gateway/lookup_b", "tool_gateway/other"}
+	if fmt.Sprint(d.deleted) != fmt.Sprint(want) {
+		t.Errorf("DeleteResource calls = %v, want %v", d.deleted, want)
+	}
+	if len(deleted) != 3 {
+		t.Errorf("deleted events = %v, want all three tools reported deleted", deleted)
+	}
+}
+
 func TestDestroy_InvalidState(t *testing.T) {
 	p := newSimulatedProvider()
 

@@ -82,12 +82,23 @@ func destroyResourceGroup(
 	ctx context.Context, destroyer resourceDestroyer,
 	resources []ResourceState, callback deploy.DestroyCallback,
 ) {
+	// Every tool_gateway entry records the ARN of the one gateway all the
+	// pack's tools share, and deleting an entry deletes that gateway. Once one
+	// entry has deleted it, the gateway is DELETING, and AWS rejects a second
+	// DeleteGateway on it, so each later entry would report a failure for a
+	// gateway that is going away.
+	deletedGateways := map[string]bool{}
 	for _, res := range resources {
 		// A resource recorded as failed was never created, so there is
 		// nothing in AWS to delete. Asking anyway sends its bare name where
 		// an AWS-generated ID is expected, which fails ID-format validation
 		// and reports a confusing error for a resource that never existed.
 		if res.Status == ResStatusFailed {
+			continue
+		}
+		sharedGateway := res.Type == ResTypeToolGateway && res.ARN != ""
+		if sharedGateway && deletedGateways[res.ARN] {
+			emitDeleted(callback, res)
 			continue
 		}
 		if err := destroyer.DeleteResource(ctx, res); err != nil {
@@ -103,15 +114,23 @@ func destroyResourceGroup(
 			})
 			continue
 		}
-		_ = callback(&deploy.DestroyEvent{
-			Type:    ErrCategoryResource,
-			Message: fmt.Sprintf("Deleted %s %q", res.Type, res.Name),
-			Resource: &deploy.ResourceResult{
-				Type: res.Type, Name: res.Name,
-				Action: deploy.ActionDelete, Status: ResStatusDeleted,
-			},
-		})
+		if sharedGateway {
+			deletedGateways[res.ARN] = true
+		}
+		emitDeleted(callback, res)
 	}
+}
+
+// emitDeleted reports one resource deleted.
+func emitDeleted(callback deploy.DestroyCallback, res ResourceState) {
+	_ = callback(&deploy.DestroyEvent{
+		Type:    ErrCategoryResource,
+		Message: fmt.Sprintf("Deleted %s %q", res.Type, res.Name),
+		Resource: &deploy.ResourceResult{
+			Type: res.Type, Name: res.Name,
+			Action: deploy.ActionDelete, Status: ResStatusDeleted,
+		},
+	})
 }
 
 // destroyUnorderedResources handles resource types not in the standard

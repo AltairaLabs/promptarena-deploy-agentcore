@@ -86,7 +86,7 @@ One `tool_gateway` resource is created per entry in `pack.Tools`. Resources are 
 |-----------|----------|---------|
 | Create (parent) | `CreateGateway` | Lazily creates a shared parent gateway on the first tool. The gateway uses MCP protocol type and no authorizer. Polls until READY. |
 | Create (target) | `CreateGatewayTarget` | Creates a gateway target for each tool within the shared gateway. |
-| Delete | `DeleteGateway` | Deletes the parent gateway by ID. Tolerates NotFound. |
+| Delete | `DeleteGateway` | Deletes the parent gateway by ID. Tolerates NotFound. Destroy deletes a gateway that several tools share once, and reports each tool deleted. |
 
 One parent gateway holds every tool's target. When the prior state's tools already have a gateway, apply keeps that gateway, whatever it is called, and adds to it. Otherwise it creates one named `{pack_id}-gw`. The pack id is made AWS-safe first: leading digits are dropped, any other character that is not a letter or digit becomes a hyphen, the name is cut to fit the 48-character limit, and an empty id gives `default-gw`. Because the name comes from the pack, adding or removing a tool never moves the tools to a different gateway. A prior gateway that is being deleted or failed to create is replaced; the old one is then deleted.
 
@@ -117,7 +117,11 @@ Not supported. Redeployment creates new gateway targets.
 
 ### Pack mapping
 
-One `cedar_policy` resource is created per prompt that has `validators` or `tool_policy` defined. The adapter generates Cedar policy statements from these definitions.
+One `cedar_policy` resource is created per prompt whose `tool_policy` has a `blocklist`. Validators, `max_rounds` and `max_tool_calls_per_turn` are enforced by the runtime and produce no Cedar.
+
+Each blocklisted tool that is on the gateway becomes one forbid policy on the action `<target>___<tool>`. The target is the tool's gateway target name, which has the tool's underscores as hyphens, so `search_d` is the action `search-d___search_d`. A policy engine denies every call no policy permits, so the forbids are followed by one permit for every action on the gateway. A forbid overrides a permit, so the blocklisted tools are denied and the rest are allowed.
+
+The policies are created with the `IGNORE_ALL_FINDINGS` validation mode. The Cedar analyzer reports every blocklist forbid as "Overly Restrictive", because it denies every call to that tool, which is the point of a blocklist.
 
 ### AWS API calls
 
