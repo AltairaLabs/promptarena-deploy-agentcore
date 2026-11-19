@@ -7,8 +7,13 @@ import (
 	"github.com/AltairaLabs/promptarena/v2/deploy"
 )
 
-// configSchema is the JSON Schema for the agentcore provider config.
-const configSchema = `{
+// configSchema is the JSON Schema for the agentcore provider config. The
+// runtime_override block comes from the deploy SDK, so it reads the same in
+// every adapter's schema.
+var configSchema = withRuntimeOverride(baseConfigSchema)
+
+// baseConfigSchema is the schema for every field the adapter defines itself.
+const baseConfigSchema = `{
   "$schema": "http://json-schema.org/draft-07/schema#",
   "type": "object",
   "required": ["region", "runtime_role_arn"],
@@ -169,7 +174,7 @@ func (p *Provider) GetProviderInfo(_ context.Context) (*deploy.ProviderInfo, err
 	return &deploy.ProviderInfo{
 		Name:         "agentcore",
 		Version:      Version,
-		Capabilities: []string{"plan", "apply", "destroy", "status", "diagnose"},
+		Capabilities: []string{"plan", "apply", "destroy", "status", "diagnose", deploy.RuntimeOverrideCapability},
 		ConfigSchema: configSchema,
 	}, nil
 }

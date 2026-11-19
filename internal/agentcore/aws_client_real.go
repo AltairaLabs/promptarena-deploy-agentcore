@@ -242,9 +242,15 @@ func (c *realAWSClient) findPolicyEngineByName(ctx context.Context, name string)
 	return "", "", fmt.Errorf("policy engine %q not found", name)
 }
 
-// buildRuntimeArtifact returns the CodeConfiguration artifact referencing the
-// S3 code package uploaded during prepareApply.
+// buildRuntimeArtifact returns the runtime_override image as a container
+// artifact when one is set, and otherwise the CodeConfiguration artifact
+// referencing the S3 code package uploaded during prepareApply.
 func buildRuntimeArtifact(cfg *Config) types.AgentRuntimeArtifact {
+	if image := cfg.overrideImage(); image != "" {
+		return &types.AgentRuntimeArtifactMemberContainerConfiguration{
+			Value: types.ContainerConfiguration{ContainerUri: aws.String(image)},
+		}
+	}
 	accountID := extractAccountFromARN(cfg.RuntimeRoleARN)
 	bucket := codeDeployS3Bucket(accountID, cfg.Region)
 	packID := cfg.ResourceTags[TagKeyPackID]

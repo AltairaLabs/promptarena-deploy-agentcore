@@ -13,7 +13,8 @@ The AgentCore adapter injects environment variables into agent runtimes via the 
 | `PROMPTPACK_PROVIDERS` | `providers` config field, or the arena config | Always (code deploy) | JSON array of resolved provider bindings, one per role. The runtime wires one SDK provider per entry. |
 | `PROMPTPACK_PROVIDER_TYPE` | Primary provider binding | Always (code deploy) | LLM provider type of the primary binding. Legacy — superseded by `PROMPTPACK_PROVIDERS`. |
 | `PROMPTPACK_PROVIDER_MODEL` | Primary provider binding | Always (code deploy) | Model ID of the primary binding. Legacy — superseded by `PROMPTPACK_PROVIDERS`. |
-| `PROMPTPACK_PACK_JSON` | Pack file contents | Always (code deploy) | The full pack JSON, injected so the runtime can load the pack without a separate file. |
+| `PROMPTPACK_PACK_JSON` | Pack file contents | `runtime_override.image` deploys, when the pack fits in one value | The full pack as single-line JSON, for a replacement container. A code deploy carries the pack in its package instead. |
+| `PROMPTPACK_PACK_URI` | Pack staged to S3 | `runtime_override.image` deploys, when the pack is over 5,000 characters | `s3://` URI of the staged pack. |
 | `PROMPTPACK_LOG_GROUP` | `observability.cloudwatch_log_group` | When `cloudwatch_log_group` is a non-empty string | CloudWatch log group name for structured logging. |
 | `PROMPTPACK_TRACING_ENABLED` | `observability.tracing_enabled` | When `tracing_enabled` is `true` | Enables AWS X-Ray tracing. Value is the string `"true"`. |
 | `PROMPTPACK_MEMORY_STORE` | `memory_store` config field | When `memory_store` is set | Memory store type: `"session"` or `"persistent"`. |
@@ -25,7 +26,7 @@ The AgentCore adapter injects environment variables into agent runtimes via the 
 | `PROMPTPACK_METRICS_CONFIG` | Pack evals with metrics | When at least one eval defines a `metric` | JSON `MetricsConfig` object describing CloudWatch metrics for eval reporting. |
 | `PROMPTPACK_DASHBOARD_CONFIG` | Pack structure (agents + evals) | When the pack has agents or eval metrics | JSON `DashboardConfig` object describing a CloudWatch dashboard layout. |
 | `PROMPTPACK_PROTOCOL` | `protocol` config field | When `protocol` is set to a non-empty value | Server protocol mode: `"http"`, `"a2a"`, or `"both"`. Controls which servers the runtime starts. See [Runtime Protocols](/reference/runtime-protocols/). |
-| `PROMPTPACK_AGENT` | Pack prompt/agent name | Multi-agent packs; set per-runtime | The agent name this runtime serves. Omitted for single-agent packs to allow auto-discovery. |
+| `PROMPTPACK_AGENT` | Pack prompt/agent name | Multi-agent packs; set per-runtime. Also single-prompt packs deployed with `runtime_override.image` | The agent name this runtime serves. Otherwise omitted for single-agent packs to allow auto-discovery. |
 
 ## Variable details
 
@@ -68,11 +69,13 @@ PROMPTPACK_PROVIDER_MODEL=claude-3-5-haiku-20241022
 
 ### PROMPTPACK_PACK_JSON
 
-Injected during code deploy. Contains the entire compiled pack JSON so the runtime can load the pack directly from the environment without needing a separate file on disk.
+Set when [`runtime_override.image`](/reference/configuration/#runtime_override) deploys a replacement container. Contains the entire compiled pack, compacted onto one line because AgentCore refuses an environment value with a control character. A code deploy does not set it: the pack is in the code package beside the runtime binary.
 
 ```
 PROMPTPACK_PACK_JSON={"id":"my-agent","version":"v1.0.0","prompts":{...}}
 ```
+
+AgentCore caps an environment value at 5,000 characters. A larger pack is uploaded to `s3://bedrock-agentcore-code-<account>-<region>/promptkit/<pack>/<version>/pack.json` and named by `PROMPTPACK_PACK_URI` instead. The bucket must already exist, the runtime role needs `s3:GetObject` on the object, and destroy does not delete it.
 
 ### PROMPTPACK_LOG_GROUP
 

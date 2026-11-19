@@ -74,8 +74,8 @@ func TestGetProviderInfo(t *testing.T) {
 	if info.Version == "" {
 		t.Error("version is empty")
 	}
-	if len(info.Capabilities) != 5 {
-		t.Errorf("capabilities = %v, want 5 items", info.Capabilities)
+	if len(info.Capabilities) != 6 {
+		t.Errorf("capabilities = %v, want 6 items", info.Capabilities)
 	}
 	if info.ConfigSchema == "" {
 		t.Error("config_schema is empty")
