@@ -11,12 +11,21 @@ type simulatedAWSClient struct {
 	region    string
 	accountID string
 
-	// availableModels overrides the model set returned by
-	// ListAvailableModels. Nil means "availability unknown", which is what
+	// availableModels is the set of on-demand models EvalModelCatalog
+	// reports. Nil means "availability unknown", which is what
 	// the real client reports when the lookup fails.
 	availableModels map[string]bool
-	// listModelsErr, when set, makes ListAvailableModels fail.
+	// modelCatalog, when set, is returned by EvalModelCatalog in place of
+	// one built from availableModels.
+	modelCatalog *evalModelCatalog
+	// listModelsErr, when set, makes EvalModelCatalog fail.
 	listModelsErr error
+
+	// missingLogGroups names log groups LogGroupExists reports absent; every
+	// other group exists.
+	missingLogGroups map[string]bool
+	// logGroupErr, when set, makes LogGroupExists fail.
+	logGroupErr error
 }
 
 func newSimulatedAWSClient(region string) *simulatedAWSClient {
@@ -95,11 +104,28 @@ func (c *simulatedAWSClient) UploadCodePackage(
 	return nil
 }
 
-func (c *simulatedAWSClient) ListAvailableModels(_ context.Context) (map[string]bool, error) {
+func (c *simulatedAWSClient) EvalModelCatalog(_ context.Context) (*evalModelCatalog, error) {
 	if c.listModelsErr != nil {
 		return nil, c.listModelsErr
 	}
-	return c.availableModels, nil
+	if c.modelCatalog != nil {
+		return c.modelCatalog, nil
+	}
+	if c.availableModels == nil {
+		return nil, nil
+	}
+	catalog := newEvalModelCatalog()
+	for id := range c.availableModels {
+		catalog.addFoundationModel(id, "", true)
+	}
+	return catalog, nil
+}
+
+func (c *simulatedAWSClient) LogGroupExists(_ context.Context, name string) (bool, error) {
+	if c.logGroupErr != nil {
+		return false, c.logGroupErr
+	}
+	return !c.missingLogGroups[name], nil
 }
 
 // simulatedDestroyer is a placeholder that logs intent without calling AWS.

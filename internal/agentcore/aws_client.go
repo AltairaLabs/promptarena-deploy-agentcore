@@ -30,10 +30,15 @@ type awsClient interface {
 	DisassociatePolicyEngine(ctx context.Context, cfg *Config) error
 	UploadCodePackage(ctx context.Context, zipData []byte, bucket, key string) error
 
-	// ListAvailableModels returns the set of Bedrock foundation model IDs
-	// offered in the configured region, used to pre-flight evaluator models.
-	// An error means availability is unknown, not that models are missing.
-	ListAvailableModels(ctx context.Context) (map[string]bool, error)
+	// EvalModelCatalog returns the foundation models and inference profiles
+	// the configured region offers an evaluator, used to pre-flight evaluator
+	// models and pick the default one. An error means availability is
+	// unknown, not that models are missing.
+	EvalModelCatalog(ctx context.Context) (*evalModelCatalog, error)
+
+	// LogGroupExists reports whether a CloudWatch log group exists, used to
+	// pre-flight the online eval config's log group. An error means unknown.
+	LogGroupExists(ctx context.Context, name string) (bool, error)
 }
 
 // resourceDestroyer abstracts resource deletion so that real AWS calls

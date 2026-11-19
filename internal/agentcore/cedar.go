@@ -3,6 +3,7 @@ package agentcore
 import (
 	"fmt"
 	"log"
+	"slices"
 	"sort"
 	"strings"
 
@@ -89,7 +90,7 @@ func cedarToolBlocklist(toolName, gatewayARN string) string {
 }
 
 // policyResourceNames returns a sorted list of prompt names that have
-// tool policy blocklist entries. Used by both plan and apply.
+// tool policy blocklist entries.
 func policyResourceNames(pack *prompt.Pack) []string {
 	var names []string
 	for name, p := range pack.Prompts {
@@ -99,6 +100,89 @@ func policyResourceNames(pack *prompt.Pack) []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+// gatewayBlockedTools returns, sorted, the blocklisted pack tools that no
+// prompt in the pack may call. These are the tools the gateway can refuse.
+//
+// A gateway takes one policy engine, and every prompt of the pack calls its
+// tools through the same gateway, which cannot tell one prompt from another.
+// Giving each prompt its own engine meant each association replaced the last,
+// so only the last prompt's blocklist was ever enforced. A single engine that
+// forbade the union would be wrong the other way: a tool one prompt blocks and
+// another uses would be refused to both.
+//
+// So a tool is forbidden at the gateway when every prompt either blocklists it
+// or cannot use it. A prompt that lists no tools is taken to be able to use
+// any, which errs toward leaving a tool callable. A tool that some prompt
+// blocks and another may use is left to the runtime, which enforces each
+// prompt's own blocklist on its tool calls (see gatewayRuntimeOnlyTools).
+func gatewayBlockedTools(pack *prompt.Pack) []string {
+	blocked, _ := splitBlocklistedTools(pack)
+	return blocked
+}
+
+// gatewayRuntimeOnlyTools returns, sorted, the blocklisted pack tools that
+// some other prompt may still call, so the gateway cannot refuse them.
+func gatewayRuntimeOnlyTools(pack *prompt.Pack) []string {
+	_, runtimeOnly := splitBlocklistedTools(pack)
+	return runtimeOnly
+}
+
+// splitBlocklistedTools partitions every blocklisted pack tool into those the
+// gateway can refuse and those only the runtime can. Blocklist entries that
+// name no pack tool are dropped: such a tool cannot be called anyway.
+func splitBlocklistedTools(pack *prompt.Pack) (blocked, runtimeOnly []string) {
+	if pack == nil {
+		return nil, nil
+	}
+	candidates := map[string]bool{}
+	for _, name := range policyResourceNames(pack) {
+		for _, tool := range pack.Prompts[name].ToolPolicy.Blocklist {
+			if _, ok := pack.Tools[tool]; ok {
+				candidates[tool] = true
+			}
+		}
+	}
+	for tool := range candidates {
+		if anyPromptMayCall(pack, tool) {
+			runtimeOnly = append(runtimeOnly, tool)
+		} else {
+			blocked = append(blocked, tool)
+		}
+	}
+	sort.Strings(blocked)
+	sort.Strings(runtimeOnly)
+	return blocked, runtimeOnly
+}
+
+// anyPromptMayCall reports whether some prompt of the pack can use tool and
+// does not blocklist it.
+func anyPromptMayCall(pack *prompt.Pack, tool string) bool {
+	for _, p := range pack.Prompts {
+		if p == nil {
+			continue
+		}
+		if len(p.Tools) > 0 && !slices.Contains(p.Tools, tool) {
+			continue
+		}
+		if p.ToolPolicy != nil && slices.Contains(p.ToolPolicy.Blocklist, tool) {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+// packCedarStatements builds the statements of the pack's one policy engine:
+// a forbid for each tool in gatewayBlockedTools and, when there is a gateway,
+// the permit that lets every other tool through.
+func packCedarStatements(pack *prompt.Pack, gatewayARN string) []string {
+	blocked := gatewayBlockedTools(pack)
+	if len(blocked) == 0 {
+		return nil
+	}
+	return generateCedarStatements(nil, &prompt.ToolPolicyPack{Blocklist: blocked}, gatewayARN, nil)
 }
 
 // hasPolicyRules returns true if the prompt has a tool policy with

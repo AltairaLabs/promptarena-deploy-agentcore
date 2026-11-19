@@ -1,6 +1,8 @@
 package agentcore
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"regexp"
 	"sort"
@@ -56,6 +58,18 @@ func packBaseName(pack *prompt.Pack) string {
 // this safe to introduce: no deployment that works today is renamed, and the
 // only names that change are ones that could never have been deployed.
 func sanitizeAWSName(name string) string {
+	out := sanitizeAWSChars(name)
+	// Suffixes like "_online_eval" are appended to this, so leave room; the
+	// cap has to cover the whole name AWS finally receives.
+	if len(out) > maxAWSNameLen {
+		out = strings.TrimRight(out[:maxAWSNameLen], "_")
+	}
+	return out
+}
+
+// sanitizeAWSChars applies sanitizeAWSName's character rules without its
+// length cap.
+func sanitizeAWSChars(name string) string {
 	var b strings.Builder
 	lastUnderscore := false
 	for _, r := range name {
@@ -78,12 +92,39 @@ func sanitizeAWSName(name string) string {
 	if out == "" {
 		return defaultPackName
 	}
-	// Suffixes like "_online_eval" are appended to this, so leave room; the
-	// cap has to cover the whole name AWS finally receives.
-	if len(out) > maxAWSNameLen {
-		out = strings.TrimRight(out[:maxAWSNameLen], "_")
-	}
 	return out
+}
+
+// packScopedNameHashLen is the length of the hash that ends a pack-scoped
+// name too long for AWS.
+const packScopedNameHashLen = 8
+
+// packScopedName is the name of a pack-level resource whose own identity comes
+// from inside the pack — an eval's id — or that has none of its own: the pack's
+// base name, an underscore, then suffix.
+//
+// Evaluators and policy engines used to be named after the eval or the prompt
+// alone ("quality", "assistant_policy_engine"). Those names are account-wide,
+// so two packs with an eval or prompt of the same name asked for the same
+// resource, and apply's adopt-on-conflict path quietly took over the other
+// pack's. Prefixing the pack keeps them apart and makes them findable by pack.
+//
+// A name over the AWS limit keeps its start and ends in a short hash of the
+// whole, so two long names that share a prefix stay distinct rather than
+// truncating to the same thing.
+func packScopedName(pack *prompt.Pack, suffix string) string {
+	name := sanitizeAWSChars(packBaseName(pack) + "_" + suffix)
+	if len(name) <= maxAWSNameLen {
+		return name
+	}
+	sum := sha256.Sum256([]byte(name))
+	hash := hex.EncodeToString(sum[:])[:packScopedNameHashLen]
+	return strings.TrimRight(name[:maxAWSNameLen-packScopedNameHashLen-1], "_") + "_" + hash
+}
+
+// policyEngineName is the name of the pack's one Cedar policy engine.
+func policyEngineName(pack *prompt.Pack) string {
+	return packScopedName(pack, "policy_engine")
 }
 
 // isASCIILetter reports whether r may start an AWS resource name.
@@ -202,30 +243,30 @@ func collectDerivedNames(pack *prompt.Pack, cfg *Config) map[string]string {
 	return names
 }
 
-// collectPackLevelNames adds memory, cedar policy, and online eval names.
+// collectPackLevelNames adds memory and policy engine names.
 func collectPackLevelNames(names map[string]string, pack *prompt.Pack, cfg *Config) {
 	if cfg.HasMemory() {
 		names[packBaseName(pack)+"_memory"] = ResTypeMemory
 	}
-	for _, policyName := range policyResourceNames(pack) {
-		names[policyName+"_policy_engine"] = ResTypeCedarPolicy
+	if len(gatewayBlockedTools(pack)) > 0 {
+		names[policyEngineName(pack)] = ResTypeCedarPolicy
 	}
 }
 
 // evaluatorName is the name of the evaluator created for pack.Evals[i]: the
-// eval's id, or eval_<index> when it has none.
+// pack's base name and the eval's id, or eval_<index> when it has none (see
+// packScopedName).
 //
-// Plan, validation and apply all take the name from here. Plan and validation
-// used to append "_eval" while apply never did, so every plan after the first
-// deploy showed each evaluator as created under one name and deleted under the
-// other. The apply name is the one kept, because it is the name every deployed
-// evaluator already has in AWS and in state: changing it would orphan or
-// duplicate them.
+// Plan, validation and apply all take the name from here, so they cannot
+// disagree about it. An evaluator deployed under the old, unscoped name is
+// recorded under that name in state; the next apply creates the scoped one,
+// re-points the online eval config at it, and deletes the old one.
 func evaluatorName(pack *prompt.Pack, i int) string {
-	if id := pack.Evals[i].ID; id != "" {
-		return id
+	id := pack.Evals[i].ID
+	if id == "" {
+		id = fmt.Sprintf("eval_%d", i)
 	}
-	return fmt.Sprintf("eval_%d", i)
+	return packScopedName(pack, id)
 }
 
 // collectEvalNames adds evaluator and online eval config names.

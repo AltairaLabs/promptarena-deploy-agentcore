@@ -240,7 +240,7 @@ All three are implemented by `realAWSClient` for production and by simulated/fai
 **Deploy Phases (Apply):**
 
 1. **Tools** (0-17%): `CreateGatewayTool` for each pack tool (lazy parent gateway)
-2. **Policies** (17-33%): `CreatePolicyEngine` + `CreateCedarPolicy` per prompt with validators
+2. **Policies** (17-33%): one `CreatePolicyEngine` per pack + a `CreateCedarPolicy` per gateway-blocked tool
 3. **Runtimes** (33-50%): `CreateRuntime` per agent member (polls until READY)
 4. **A2A** (50-67%): `CreateA2AWiring` per agent (logical resource)
 5. **Evaluators** (67-83%): `CreateEvaluator` per eval (`llm_as_judge` only)

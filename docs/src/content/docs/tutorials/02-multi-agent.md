@@ -432,9 +432,9 @@ Tool gateways expose MCP tool endpoints to the AgentCore runtimes. They are crea
 
 ### Phase 2: Policies (20-40%)
 
-**Creates:** `cedar_policy` resources for prompts that define `validators` or `tool_policy`.
+**Creates:** one `cedar_policy` resource for the pack when a prompt's `tool_policy` has a `blocklist`.
 
-Each policy consists of two AWS resources: a Cedar policy engine and a Cedar policy attached to it. The policy engine ARN is injected into the runtime configuration via `PROMPTPACK_POLICY_ENGINE_ARN`, so this phase must complete before runtimes are created.
+It is one Cedar policy engine for the whole pack, attached to the pack's gateway, holding a policy for each tool the gateway can block. The policy engine ARN is injected into the runtime configuration via `PROMPTPACK_POLICY_ENGINE_ARN`, so this phase must complete before runtimes are created.
 
 ### Phase 3: Runtimes (40-60%)
 

@@ -22,7 +22,7 @@ The AgentCore adapter injects environment variables into agent runtimes via the 
 | `PROMPTPACK_AGENTS` | Runtime resource ARNs | Multi-agent packs only, after all runtimes are created | JSON object mapping agent member names to their runtime ARNs. Injected on the entry agent only. |
 | `PROMPTPACK_A2A_AUTH_MODE` | `a2a_auth.mode` | When `a2a_auth` is configured with a non-empty `mode` | A2A authentication mode: `"iam"` or `"jwt"`. |
 | `PROMPTPACK_A2A_AUTH_ROLE` | `runtime_role_arn` | When `a2a_auth.mode` is `"iam"` | The IAM role ARN used for A2A authentication between agents. |
-| `PROMPTPACK_POLICY_ENGINE_ARN` | Cedar policy resource ARNs | After Cedar policy creation during Apply | Comma-separated list of policy engine ARNs. Set when prompts define validators or tool_policy. |
+| `PROMPTPACK_POLICY_ENGINE_ARN` | Cedar policy resource ARNs | After Cedar policy creation during Apply | The pack's policy engine ARN. Set when a prompt's tool_policy blocklist is enforced at the gateway. |
 | `PROMPTPACK_METRICS_CONFIG` | Pack evals with metrics | When at least one eval defines a `metric` | JSON `MetricsConfig` object describing CloudWatch metrics for eval reporting. |
 | `PROMPTPACK_DASHBOARD_CONFIG` | Pack structure (agents + evals) | When the pack has agents or eval metrics | JSON `DashboardConfig` object describing a CloudWatch dashboard layout. |
 | `PROMPTPACK_PROTOCOL` | `protocol` config field | When `protocol` is set to a non-empty value | Server protocol mode: `"http"`, `"a2a"`, or `"both"`. Controls which servers the runtime starts. See [Runtime Protocols](/reference/runtime-protocols/). |
@@ -141,10 +141,10 @@ PROMPTPACK_A2A_AUTH_ROLE=arn:aws:iam::123456789012:role/AgentCoreRuntime
 
 ### PROMPTPACK_POLICY_ENGINE_ARN
 
-Injected after all Cedar policy resources are created. Contains a comma-separated list of policy engine ARNs, one per prompt that has validators or tool_policy.
+Injected after the Cedar policy engine is created. Contains the ARN of the pack's one policy engine.
 
 ```
-PROMPTPACK_POLICY_ENGINE_ARN=arn:aws:bedrock:us-west-2:123456789012:policy-engine/pe-001,arn:aws:bedrock:us-west-2:123456789012:policy-engine/pe-002
+PROMPTPACK_POLICY_ENGINE_ARN=arn:aws:bedrock:us-west-2:123456789012:policy-engine/pe-001
 ```
 
 ### PROMPTPACK_METRICS_CONFIG

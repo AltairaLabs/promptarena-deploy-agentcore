@@ -117,7 +117,9 @@ Not supported. Redeployment creates new gateway targets.
 
 ### Pack mapping
 
-One `cedar_policy` resource is created per prompt whose `tool_policy` has a `blocklist`. Validators, `max_rounds` and `max_tool_calls_per_turn` are enforced by the runtime and produce no Cedar.
+One `cedar_policy` resource is created per pack, named `{pack}_policy_engine`, when a prompt's `tool_policy.blocklist` can be enforced at the gateway. Validators, `max_rounds` and `max_tool_calls_per_turn` are enforced by the runtime and produce no Cedar.
+
+A gateway takes one policy engine, and every prompt of the pack calls its tools through the same gateway, which cannot tell one prompt from another. So the pack's one engine forbids a blocklisted tool only when **no prompt may call it**: every prompt either blocklists it or does not list it in its `tools`. A prompt that lists no `tools` is taken to be able to use any tool. A tool that one prompt blocks and another may call is not forbidden at the gateway; the runtime still refuses it to the prompt that blocks it, and apply logs that only the runtime enforces it. A blocklist entry that names no pack tool is ignored.
 
 Each blocklisted tool that is on the gateway becomes one forbid policy on the action `<target>___<tool>`. The target is the tool's gateway target name, which has the tool's underscores as hyphens, so `search_d` is the action `search-d___search_d`. A policy engine denies every call no policy permits, so the forbids are followed by one permit for every action on the gateway. A forbid overrides a permit, so the blocklisted tools are denied and the rest are allowed.
 
@@ -127,7 +129,7 @@ The policies are created with the `IGNORE_ALL_FINDINGS` validation mode. The Ced
 
 | Operation | API Call | Details |
 |-----------|----------|---------|
-| Create (engine) | `CreatePolicyEngine` | Creates a policy engine per prompt. Polls until engine status is `ACTIVE`. |
+| Create (engine) | `CreatePolicyEngine` | Creates the pack's policy engine and associates it with the pack's gateway. Polls until engine status is `ACTIVE`. |
 | Create (policy) | `CreatePolicy` | Creates a Cedar policy within the engine using the generated statement. |
 | Delete (policy) | `DeletePolicy` | Deletes the Cedar policy by engine ID and policy ID. Tolerates NotFound. |
 | Delete (engine) | `DeletePolicyEngine` | Deletes the policy engine by ID. Tolerates NotFound. |
@@ -154,7 +156,9 @@ The resource state stores additional metadata used for deletion and health check
 
 ### Side effects
 
-After all policy resources are created, the adapter injects `PROMPTPACK_POLICY_ENGINE_ARN` into the runtime config as a comma-separated list of engine ARNs.
+After the policy engine is created, the adapter injects its ARN into the runtime config as `PROMPTPACK_POLICY_ENGINE_ARN`.
+
+A deployment made before v0.4.5 has one engine per prompt, named `{prompt}_policy_engine`. The next apply creates the pack's engine, associates it with the gateway in their place, and then deletes them.
 
 ### Update support
 
@@ -236,7 +240,9 @@ Not supported.
 
 ### Pack mapping
 
-One `evaluator` resource is created per `llm_as_judge` eval in `pack.Evals`. Other eval types (regex, contains, etc.) are local-only and do not create AWS resources. The resource name is the eval's `ID` field, or `eval_{index}` if the ID is empty.
+One `evaluator` resource is created per `llm_as_judge` eval in `pack.Evals`. Other eval types (regex, contains, etc.) are local-only and do not create AWS resources. The resource name is `{pack}_{eval id}`, or `{pack}_eval_{index}` if the ID is empty, where `{pack}` is the pack id with every character AWS does not accept replaced by `_`. A name over 48 characters keeps its start and ends in a short hash of the whole.
+
+Evaluator names are account-wide, so the pack prefix keeps two packs with an eval of the same id apart. Before v0.4.5 the name was the eval id alone; the next apply creates the prefixed evaluator, points the online eval config at it, and then deletes the old one.
 
 ### AWS API calls
 
@@ -252,8 +258,14 @@ The `params` map supports the following keys:
 | Key | Default | Description |
 |-----|---------|-------------|
 | `instructions` | `"Evaluate the agent response quality."` | Evaluation instructions for the LLM judge. |
-| `model` | `anthropic.claude-sonnet-4-20250514-v1:0` | Bedrock model ID for evaluation. |
+| `model` | The first model the region can serve (see below) | Bedrock foundation model ID, inference profile ID, or either's ARN. |
 | `rating_scale_size` | `5` | Number of levels in the numerical 1–N rating scale. |
+
+`CreateEvaluator` takes a foundation model that the region runs on demand, or an inference profile. Current Claude models are offered only through inference profiles, so in us-east-1 `anthropic.claude-haiku-4-5-20251001-v1:0` is refused and `us.anthropic.claude-haiku-4-5-20251001-v1:0` works.
+
+Before creating anything, Apply lists the region's foundation models (`ListFoundationModels`) and inference profiles (`ListInferenceProfiles`) and refuses an eval whose model the region cannot serve to an evaluator. A base model ID that the region serves only through a profile is refused with the profile ID to use instead. If the lookup fails, Apply logs it and carries on.
+
+When `model` is not set, the default is the first of Claude Sonnet 4.5, Claude Sonnet 4, Claude Haiku 4.5, Amazon Nova Pro and Amazon Nova Lite that the region can serve: the model ID itself if it runs on demand, otherwise its inference profile, preferring a geographic profile (`us.`, `eu.`, ...) over a `global.` one. In us-east-1 that is `us.anthropic.claude-sonnet-4-5-20250929-v1:0`. If the region's models cannot be listed, the default is Claude Sonnet 4.5's profile for the region's geography: `us.` for `us-*` and `ca-*`, `eu.` for `eu-*`, and `global.` elsewhere.
 
 ### Health check
 
@@ -292,7 +304,19 @@ One `online_eval_config` resource is created per pack when the pack has any `llm
 | Update | `UpdateOnlineEvaluationConfig` | On a later apply, replaces the config's evaluator list, data source and sampling rule with the current ones, so it never references an evaluator that is being removed. Polls until status is `ACTIVE`. A config that no longer exists is created again. |
 | Delete | `DeleteOnlineEvaluationConfig` | Deletes the config by ID. Tolerates NotFound (already deleted). |
 
-The CloudWatch log group is resolved from `observability.cloudwatch_log_group` if configured, otherwise defaults to `/aws/bedrock/agentcore/{pack_id}`. The sampling percentage defaults to 100% but can be overridden via the `sample_percentage` eval param.
+The CloudWatch log group is resolved from `observability.cloudwatch_log_group` if configured, otherwise defaults to `aws/spans`, the group AgentCore writes spans to when [CloudWatch Transaction Search](https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/Enable-TransactionSearch.html) is enabled. AWS creates `aws/spans` when Transaction Search is enabled, and it cannot be created by hand, so Apply checks it exists before creating anything and refuses the deploy if it does not: enable Transaction Search in the region, or set `observability.cloudwatch_log_group`. The sampling percentage defaults to 100% but can be overridden via the `sample_percentage` eval param.
+
+A configured `cloudwatch_log_group` that does not exist is created by Apply, tagged `promptpack:online-eval-config={pack}_online_eval`, and its name is recorded in the resource's state. Destroy deletes it after the config, but only when it carries that tag with this config's name, so a group that existed before the deploy, or that another pack created, is left alone. A group created by a release before v0.4.5 has no tag and is left in place.
+
+### What destroy leaves behind
+
+AgentCore itself creates log groups that this adapter does not manage, and destroy does not delete them:
+
+- `/aws/bedrock-agentcore/runtimes/<runtime-id>-DEFAULT` for each agent runtime.
+- `/aws/bedrock-agentcore/evaluations/results/<online-eval-config-id>` for the online eval config.
+- `aws/spans`, which belongs to Transaction Search and is shared by everything in the region.
+
+They keep the deployment's logs and evaluation results after it is gone. Delete them with `aws logs delete-log-group` when they are no longer needed.
 
 ### Health check
 

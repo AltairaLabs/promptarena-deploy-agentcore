@@ -190,7 +190,7 @@ The deploy adapter is a JSON-RPC 2.0 subprocess that PromptKit discovers and inv
 **Deploy Phases (Apply)**:
 
 1. **Tools** (0-17%): Create gateway tools for each pack tool
-2. **Policies** (17-33%): Create Cedar policy engine and policies per prompt
+2. **Policies** (17-33%): Create the pack's Cedar policy engine and its policies
 3. **Runtimes** (33-50%): Create agent runtime (polls until READY)
 4. **A2A** (50-67%): Wire A2A endpoint per agent
 5. **Evaluators** (67-83%): Create evaluators (`llm_as_judge`)

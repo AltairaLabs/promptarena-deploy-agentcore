@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/AltairaLabs/PromptKit/runtime/v2/prompt"
 	"github.com/AltairaLabs/promptarena/v2/deploy"
@@ -97,13 +98,15 @@ func generateDesiredResources(pack *prompt.Pack, cfg *Config) []deploy.ResourceC
 		})
 	}
 
-	// Cedar policy resources (per prompt with validators or tool_policy).
-	for _, name := range policyResourceNames(pack) {
+	// The pack's one Cedar policy engine, when a blocklist can be enforced at
+	// the gateway.
+	if blocked := gatewayBlockedTools(pack); len(blocked) > 0 {
 		desired = append(desired, deploy.ResourceChange{
 			Type:   ResTypeCedarPolicy,
-			Name:   name,
+			Name:   policyEngineName(pack),
 			Action: deploy.ActionCreate,
-			Detail: fmt.Sprintf("Create Cedar policy for prompt %s", name),
+			Detail: fmt.Sprintf("Create Cedar policy engine blocking %s at the gateway",
+				strings.Join(blocked, ", ")),
 		})
 	}
 
