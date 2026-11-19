@@ -608,3 +608,75 @@ func TestApply_PolicyEngineReleaseFailureDeletesNothing(t *testing.T) {
 		t.Error("the engine was not deleted and must stay in the state")
 	}
 }
+
+// movingGatewayClient puts every tool on a gateway other than the prior one,
+// as the real client does when the prior gateway is gone or unusable.
+type movingGatewayClient struct{ simulatedAWSClient }
+
+const newGatewayARN = "arn:aws:bedrock-agentcore:us-west-2:123456789012:gateway/evalpack-gw-new"
+
+func (c *movingGatewayClient) CreateGatewayTool(context.Context, string, *Config) (string, error) {
+	return newGatewayARN, nil
+}
+
+// TestApply_DeletesAGatewayItsToolsMovedOff: the kept tools moved to a new
+// gateway, so the one they left is deleted rather than orphaned, and a failed
+// delete keeps it recorded for the next apply.
+func TestApply_DeletesAGatewayItsToolsMovedOff(t *testing.T) {
+	const oldGW = "arn:aws:bedrock-agentcore:us-west-2:123456789012:gateway/search-gw-old"
+	prior, _ := json.Marshal(AdapterState{Resources: []ResourceState{
+		{Type: ResTypeToolGateway, Name: "calc", ARN: oldGW, Status: ResStatusCreated},
+		{Type: ResTypeToolGateway, Name: "search", ARN: oldGW, Status: ResStatusCreated},
+	}})
+	for _, fail := range []bool{false, true} {
+		d := &recordingDestroyer{}
+		if fail {
+			d.failOn = map[string]bool{ResTypeToolGateway: true}
+		}
+		provider := pruneProvider(d)
+		provider.awsClientFunc = func(_ context.Context, cfg *Config) (awsClient, error) {
+			return &movingGatewayClient{simulatedAWSClient: *newSimulatedAWSClient(cfg.Region)}, nil
+		}
+		_, stateStr, err := collectEvents(t, provider,
+			applyRequest(t, evalToolPack(nil, []string{"calc", "search"}), string(prior)))
+
+		byKey := stateByKey(decodeState(t, stateStr))
+		stale := byKey[resourceKey(ResTypeToolGateway, "calc"+previousGatewaySuffix)]
+		if !fail {
+			if err != nil {
+				t.Fatalf("apply: %v", err)
+			}
+			want := resourceKey(ResTypeToolGateway, "calc"+previousGatewaySuffix)
+			if strings.Join(d.deleted, ",") != want {
+				t.Errorf("deleted %v, want the old gateway once (%s)", d.deleted, want)
+			}
+			if stale.ARN != "" {
+				t.Errorf("the deleted old gateway is still in the state: %+v", stale)
+			}
+		} else {
+			if err == nil {
+				t.Fatal("expected the failed delete to be reported")
+			}
+			if stale.ARN != oldGW {
+				t.Errorf("the undeleted old gateway must stay recorded, got %+v", stale)
+			}
+		}
+		for _, name := range []string{"calc", "search"} {
+			if got := byKey[resourceKey(ResTypeToolGateway, name)].ARN; got != newGatewayARN {
+				t.Errorf("%s ARN = %q, want the new gateway", name, got)
+			}
+		}
+	}
+}
+
+func TestDiffResources_DoesNotDeleteUnrealPriorEntries(t *testing.T) {
+	prior := &AdapterState{Resources: []ResourceState{
+		{Type: ResTypeA2AEndpoint, Name: "router_endpoint", Status: ResStatusPlanned},
+		{Type: ResTypeEvaluator, Name: "broken", Status: ResStatusFailed},
+		{Type: ResTypeEvaluator, Name: "real", ARN: "arn:real", Status: ResStatusCreated},
+	}}
+	changes := diffResources(nil, prior)
+	if len(changes) != 1 || changes[0].Name != "real" || changes[0].Action != deploy.ActionDelete {
+		t.Errorf("changes = %+v, want only the real evaluator deleted", changes)
+	}
+}

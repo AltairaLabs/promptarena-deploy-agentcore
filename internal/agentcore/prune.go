@@ -71,6 +71,7 @@ func removedResources(prior map[string]ResourceState, kept []ResourceState) []Re
 		}
 		removed = append(removed, r)
 	}
+	removed = append(removed, supersededGateways(prior, kept, keptKeys)...)
 	sort.Slice(removed, func(i, j int) bool {
 		oi, oj := destroyRank(removed[i].Type), destroyRank(removed[j].Type)
 		if oi != oj {
@@ -79,6 +80,52 @@ func removedResources(prior map[string]ResourceState, kept []ResourceState) []Re
 		return resourceKey(removed[i].Type, removed[i].Name) < resourceKey(removed[j].Type, removed[j].Name)
 	})
 	return removed
+}
+
+// previousGatewaySuffix names the state entry for a parent gateway the apply
+// moved its tools off.
+const previousGatewaySuffix = "_previous_gateway"
+
+// supersededGateways returns an entry for each parent gateway the prior
+// state's kept tools were on that no kept resource uses any more.
+//
+// A kept tool keeps its state key while its ARN moves, so removedResources
+// cannot see the gateway it left. That happens when the prior gateway was
+// gone or unusable and apply made a new one, or when an older state had tools
+// on two gateways and apply gathered them onto one. Each such gateway gets an
+// entry under its own name, so it is deleted like any removed resource and,
+// if that fails, stays recorded for the next apply or destroy.
+func supersededGateways(
+	prior map[string]ResourceState, kept []ResourceState, keptKeys map[string]bool,
+) []ResourceState {
+	// Compared by gateway id rather than whole ARN, so two spellings of one
+	// gateway's ARN can never make a live gateway look abandoned.
+	inUse := make(map[string]bool, len(kept))
+	for _, r := range kept {
+		if id := extractResourceID(r.ARN, "gateway"); id != "" {
+			inUse[id] = true
+		}
+	}
+	keys := make([]string, 0, len(prior))
+	for k := range prior {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	var out []ResourceState
+	for _, k := range keys {
+		r := prior[k]
+		id := extractResourceID(r.ARN, "gateway")
+		if r.Type != ResTypeToolGateway || !keptKeys[k] || id == "" || inUse[id] {
+			continue
+		}
+		inUse[id] = true // one entry per gateway
+		out = append(out, ResourceState{
+			Type: ResTypeToolGateway, Name: r.Name + previousGatewaySuffix,
+			ARN: r.ARN, Status: r.Status, Metadata: r.Metadata,
+		})
+	}
+	return out
 }
 
 // destroyRank is a type's position in destroyOrder; unknown types go last, as

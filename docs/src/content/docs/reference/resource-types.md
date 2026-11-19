@@ -88,7 +88,11 @@ One `tool_gateway` resource is created per entry in `pack.Tools`. Resources are 
 | Create (target) | `CreateGatewayTarget` | Creates a gateway target for each tool within the shared gateway. |
 | Delete | `DeleteGateway` | Deletes the parent gateway by ID. Tolerates NotFound. |
 
-The parent gateway is created lazily on the first `CreateGatewayTool` call and reused for all subsequent targets within the same Apply invocation. The gateway name is `{first_tool_name}_gw`.
+One parent gateway holds every tool's target. When the prior state's tools already have a gateway, apply keeps that gateway, whatever it is called, and adds to it. Otherwise it creates one named `{pack_id}-gw`. The pack id is made AWS-safe first: leading digits are dropped, any other character that is not a letter or digit becomes a hyphen, the name is cut to fit the 48-character limit, and an empty id gives `default-gw`. Because the name comes from the pack, adding or removing a tool never moves the tools to a different gateway. A prior gateway that is being deleted or failed to create is replaced; the old one is then deleted.
+
+Releases before 0.4.3 named the gateway after the alphabetically first tool. If you added a tool that sorted ahead of it under one of those releases, an earlier gateway may be left in your account that no state records. Once you have confirmed it has no targets, delete it in the AgentCore console.
+
+The resource name of a `tool_gateway` entry is the tool's name, and every entry records the parent gateway's ARN. When a tool is removed, apply deletes only its target. The gateway is deleted when no tool is left on it.
 
 ### Health check
 

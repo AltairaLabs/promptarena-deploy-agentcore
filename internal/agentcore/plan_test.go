@@ -154,9 +154,10 @@ func TestPlan_FirstDeploy_MultiAgent(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Multi-agent with 2 members: 2 agent_runtime + 2 a2a_endpoint + 1 gateway = 5.
-	if len(resp.Changes) != 5 {
-		t.Fatalf("expected 5 changes, got %d: %+v", len(resp.Changes), resp.Changes)
+	// Multi-agent with 2 members: 2 agent_runtime + 2 a2a_endpoint = 4. Apply
+	// creates no entry-agent gateway, so the plan shows none.
+	if len(resp.Changes) != 4 {
+		t.Fatalf("expected 4 changes, got %d: %+v", len(resp.Changes), resp.Changes)
 	}
 
 	// All should be CREATE.
@@ -177,11 +178,11 @@ func TestPlan_FirstDeploy_MultiAgent(t *testing.T) {
 	if typeCounts["a2a_endpoint"] != 2 {
 		t.Errorf("expected 2 a2a_endpoint, got %d", typeCounts["a2a_endpoint"])
 	}
-	if typeCounts["gateway"] != 1 {
-		t.Errorf("expected 1 gateway, got %d", typeCounts["gateway"])
+	if typeCounts["gateway"] != 0 {
+		t.Errorf("expected no gateway, got %d", typeCounts["gateway"])
 	}
 
-	if resp.Summary != "Plan: 5 to create, 0 to update, 0 to delete" {
+	if resp.Summary != "Plan: 4 to create, 0 to update, 0 to delete" {
 		t.Errorf("summary = %q", resp.Summary)
 	}
 }
@@ -197,9 +198,9 @@ func TestPlan_MultiAgent_WithToolsAndEvals(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// 2 agent_runtime + 2 a2a_endpoint + 1 gateway + 1 tool_gateway (tool) + 1 evaluator + 1 online_eval_config = 8.
-	if len(resp.Changes) != 8 {
-		t.Fatalf("expected 8 changes, got %d: %+v", len(resp.Changes), resp.Changes)
+	// 2 agent_runtime + 2 a2a_endpoint + 1 tool_gateway (tool) + 1 evaluator + 1 online_eval_config = 7.
+	if len(resp.Changes) != 7 {
+		t.Fatalf("expected 7 changes, got %d: %+v", len(resp.Changes), resp.Changes)
 	}
 
 	typeCounts := map[string]int{}
@@ -268,8 +269,7 @@ func TestPlan_UpdateMixed(t *testing.T) {
 	priorState := AdapterState{
 		Resources: []ResourceState{
 			{Type: "agent_runtime", Name: "router"},
-			{Type: "a2a_endpoint", Name: "router_endpoint"},
-			{Type: "gateway", Name: "router_gateway"},
+			{Type: "a2a_endpoint", Name: "router_a2a"},
 		},
 	}
 	priorJSON, _ := json.Marshal(priorState)
@@ -290,13 +290,40 @@ func TestPlan_UpdateMixed(t *testing.T) {
 		actionCounts[c.Action]++
 	}
 
-	// router agent_runtime, router a2a_endpoint, router_gateway -> 3 UPDATE
+	// router agent_runtime, router a2a_endpoint -> 2 UPDATE
 	// worker agent_runtime, worker a2a_endpoint -> 2 CREATE
-	if actionCounts[deploy.ActionUpdate] != 3 {
-		t.Errorf("expected 3 updates, got %d", actionCounts[deploy.ActionUpdate])
+	if actionCounts[deploy.ActionUpdate] != 2 {
+		t.Errorf("expected 2 updates, got %d", actionCounts[deploy.ActionUpdate])
 	}
 	if actionCounts[deploy.ActionCreate] != 2 {
 		t.Errorf("expected 2 creates, got %d", actionCounts[deploy.ActionCreate])
+	}
+	if actionCounts[deploy.ActionDelete] != 0 {
+		t.Errorf("expected no deletes, got %d", actionCounts[deploy.ActionDelete])
+	}
+}
+
+// TestPlan_MultiAgent_MatchesWhatApplyRecorded is the plan/apply contract for
+// multi-agent packs: planning against the state an apply just wrote, with the
+// pack unchanged, creates and deletes nothing.
+func TestPlan_MultiAgent_MatchesWhatApplyRecorded(t *testing.T) {
+	provider := newSimulatedProvider()
+	_, stateStr := mustApply(t, provider, &deploy.PlanRequest{
+		PackJSON: multiAgentPack(), DeployConfig: validConfig(t), ArenaConfig: validArenaConfigJSON,
+	})
+
+	actions := planActions(t, provider, &deploy.PlanRequest{
+		PackJSON: multiAgentPack(), ArenaConfig: validArenaConfigJSON, PriorState: stateStr,
+	})
+	for key, action := range actions {
+		if action != deploy.ActionUpdate {
+			t.Errorf("%s: %s, want UPDATE for an unchanged pack (all: %v)", key, action, actions)
+		}
+	}
+	for _, r := range decodeState(t, stateStr).Resources {
+		if _, ok := actions[resourceKey(r.Type, r.Name)]; !ok {
+			t.Errorf("apply recorded %s/%s, which the plan does not describe", r.Type, r.Name)
+		}
 	}
 }
 

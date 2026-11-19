@@ -3,6 +3,7 @@ package agentcore
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"sort"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -40,6 +41,51 @@ func gatewayToolNames(pack *prompt.Pack, cfg *Config) []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+// packGatewayName is the name a pack's parent gateway is created under.
+//
+// It comes from the pack, not from a tool. It used to be the first tool's
+// name, so adding a tool that sorted ahead of it named a different gateway:
+// apply created a second one, moved every tool to it, and left the first in
+// AWS and in no state.
+func packGatewayName(pack *prompt.Pack) string {
+	return sanitizeGatewayName(packBaseName(pack)) + gatewaySuffix
+}
+
+// priorGatewayARN is the parent gateway the prior state's tools live behind,
+// or "" when there is none.
+//
+// Apply keeps that gateway, whatever it is called, rather than creating one
+// under packGatewayName. That is what makes the naming change safe: a
+// deployment made when the gateway was named after a tool keeps its gateway
+// and is not given a second one.
+//
+// An older state can have tools on more than one gateway. The one most tools
+// use is kept (ties go to the lowest ARN, for a stable answer); apply then
+// gathers every tool onto it, and the others are deleted as superseded (see
+// supersededGateways).
+func priorGatewayARN(prior map[string]ResourceState) string {
+	counts := map[string]int{}
+	for _, r := range prior {
+		if r.Type != ResTypeToolGateway || r.Status == ResStatusPlanned || r.Status == ResStatusFailed {
+			continue
+		}
+		if extractResourceID(r.ARN, "gateway") != "" {
+			counts[r.ARN]++
+		}
+	}
+	best := ""
+	for arn, n := range counts {
+		if best == "" || n > counts[best] || (n == counts[best] && arn < best) {
+			best = arn
+		}
+	}
+	if len(counts) > 1 {
+		log.Printf("agentcore: prior state has tools on %d gateways; keeping %s and moving the rest onto it",
+			len(counts), best)
+	}
+	return best
 }
 
 // buildTargetConfig returns the SDK TargetConfiguration for a gateway tool.

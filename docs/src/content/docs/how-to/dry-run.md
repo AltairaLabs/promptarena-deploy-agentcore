@@ -63,7 +63,7 @@ For a multi-agent pack with two agents, one tool, and one eval, the dry-run stat
     { "type": "memory", "name": "my-pack_memory", "status": "planned" },
     { "type": "agent_runtime", "name": "coordinator", "status": "planned" },
     { "type": "agent_runtime", "name": "researcher", "status": "planned" },
-    { "type": "tool_gateway", "name": "search_tool_gw", "status": "planned" },
+    { "type": "tool_gateway", "name": "search", "status": "planned" },
     { "type": "a2a_endpoint", "name": "coordinator_a2a", "status": "planned" },
     { "type": "a2a_endpoint", "name": "researcher_a2a", "status": "planned" },
     { "type": "evaluator", "name": "quality", "status": "planned" }
