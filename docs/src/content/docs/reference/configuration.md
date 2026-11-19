@@ -43,6 +43,7 @@ This page documents every field, its type, constraints, and validation behavior.
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
 | `region` | string | Yes | -- | AWS region for the AgentCore deployment. Must match `^[a-z]{2}-[a-z]+-\d+$` (e.g. `us-west-2`). |
+| `runtime_binary_path` | string | Yes, unless `runtime_override.image` is set | -- | Path to the cross-compiled Linux ARM64 runtime binary (`make build-runtime-arm64`), packaged with the pack and deployed as AgentCore code. Unused when `runtime_override.image` is set. |
 | `runtime_role_arn` | string | Yes | -- | IAM role ARN assumed by the AgentCore runtime. Must match `^arn:aws:iam::\d{12}:role/.+$`. The role needs `AmazonBedrockFullAccess` and `CloudWatchLogsReadOnlyAccess` (required when the pack includes evals). `bedrock:ListFoundationModels` is optional but lets Apply pre-flight evaluator models before creating anything. |
 | `memory_store` | string | No | -- | Memory store type. Allowed values: `"session"`, `"persistent"`, or compound/object forms. See [memory_store config](/how-to/configure#memory_store). |
 | `dry_run` | boolean | No | `false` | When `true`, Apply simulates resource creation without calling AWS APIs. Resources are emitted with status `"planned"`. |
@@ -52,6 +53,7 @@ This page documents every field, its type, constraints, and validation behavior.
 | `a2a_auth` | object | No | -- | Agent-to-agent authentication settings. See [a2a_auth](#a2a_auth). |
 | `protocol` | string | No | `"both"` | Server protocol mode. Controls which servers the runtime starts. See [protocol](#protocol). |
 | `providers` | object[] | No | -- | Provider bindings declaring what the runtime uses and in what role. See [providers](#providers). |
+| `runtime_override` | object | No | -- | Run another container in place of the runtime. See [runtime_override](#runtime_override). |
 | `tool_targets` | map[string]object | No | -- | Per-tool AWS target config (`lambda_arn`, `api_gateway`, `openapi`, `smithy`, `credential`), merged into the arena tool specs. A tool with an AWS target runs through the Gateway whatever its arena `mode`. A tool without one runs inside the runtime: `mode: mock` as a mock, `mode: live` as an HTTP call to its `http.url`. Plan refuses a `live` tool with no `http.url`, and any other mode (`mcp`, `exec`, `client`). |
 
 ## `providers`
@@ -148,6 +150,49 @@ When omitted, defaults to `"both"`. The value is injected as `PROMPTPACK_PROTOCO
 
 For details on the HTTP bridge endpoints and payload formats, see [Runtime Protocols](/reference/runtime-protocols/).
 
+## `runtime_override`
+
+`runtime_override` runs a container of your choosing in place of the adapter's
+runtime. The block is defined by PromptArena's deploy SDK and reads the same
+for every adapter that supports it.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `runtime_override.image` | string | Container image to deploy instead of the code package. Must be an Amazon ECR image: `<account>.dkr.ecr.<region>.amazonaws.com/<repo>:<tag>` (or `@<digest>`), or `public.ecr.aws/<repo>:<tag>`. `runtime_binary_path` is then unused. |
+| `runtime_override.env` | map[string]string | Added to the runtime's environment. |
+| `runtime_override.secret_env` | object | Rejected. AgentCore sets plain environment values only. |
+| `runtime_override.command` | string[] | Rejected. AgentCore runs the image's own entrypoint. |
+| `runtime_override.args` | string[] | Rejected, for the same reason. |
+
+With an `image`, the adapter still sets its usual
+[environment variables](/reference/environment-variables/), and hands the
+container the pack under the deploy SDK's names:
+
+| Variable | Value |
+|----------|-------|
+| `PROMPTPACK_PACK_JSON` | The compiled pack, as single-line JSON, when it fits in one environment value (5,000 characters). |
+| `PROMPTPACK_PACK_URI` | Otherwise, `s3://bedrock-agentcore-code-<account>-<region>/promptkit/<pack>/<version>/pack.json`. The runtime role needs `s3:GetObject` on it. |
+| `PROMPTPACK_AGENT` | The prompt the runtime serves. For a single-agent pack, its one prompt. |
+
+Without an `image`, the override's `env` is added to the adapter's own runtime,
+which still reads the pack from its code package.
+
+Validation rejects an override variable that starts with `PROMPTPACK_` or
+`AWS_`, is `OTEL_EXPORTER_OTLP_ENDPOINT` (set from `observability`), is longer
+than 5,000 characters, or contains a control character such as a newline. Write
+a JSON value on one line.
+
+The image must be built for `linux/arm64`, and the runtime role must be able to
+pull it (`ecr:BatchGetImage`, `ecr:GetDownloadUrlForLayer` on the repository and
+`ecr:GetAuthorizationToken`). AgentCore starts the container when a session
+begins, calls `POST /invocations` and `GET /ping` on port 8080, and stops it
+when the session ends. A container that serves neither still starts, and
+invocations to it fail.
+
+Every apply updates each existing runtime, so a change to `runtime_override`
+takes effect on the next apply. The plan names the override image on each
+runtime it creates or updates.
+
 ## `tags`
 
 Tags are a flat `map[string]string` with the following constraints:
@@ -172,6 +217,8 @@ The adapter validates the config in `ValidateConfig` before any Plan or Apply ca
 5. If `a2a_auth.mode` is `"jwt"`, `discovery_url` is required.
 6. If `protocol` is set, it must be `"http"`, `"a2a"`, or `"both"`.
 7. Tag count must not exceed 50; individual key and value lengths are checked.
+8. `runtime_binary_path` is required unless `runtime_override.image` is set.
+9. If `runtime_override` is set, it must pass the checks in [runtime_override](#runtime_override).
 
 In addition to hard validation errors, the adapter runs diagnostic checks that emit non-fatal warnings (prefixed with `warning:`).
 
@@ -382,6 +429,29 @@ Tag limit exceeded:
     "runtime_binary_path": {
       "type": "string",
       "description": "Path to the pre-compiled Go runtime binary for code deploy"
+    },
+    "runtime_override": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Run another container in place of the adapter's runtime. The adapter still delivers the pack under PROMPTPACK_PACK_JSON or PROMPTPACK_PACK_URI, and the agent name under PROMPTPACK_AGENT.",
+      "properties": {
+        "image": { "type": "string" },
+        "command": { "type": "array", "items": { "type": "string" } },
+        "args": { "type": "array", "items": { "type": "string" } },
+        "env": { "type": "object", "additionalProperties": { "type": "string" } },
+        "secret_env": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "required": ["name"],
+            "additionalProperties": false,
+            "properties": {
+              "name": { "type": "string" },
+              "version": { "type": "string" }
+            }
+          }
+        }
+      }
     },
     "protocol": {
       "type": "string",

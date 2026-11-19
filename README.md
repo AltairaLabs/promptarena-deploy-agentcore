@@ -51,7 +51,7 @@ spec:
     provider: agentcore
     config:
       region: us-west-2
-      runtime_binary_path: /path/to/promptkit-runtime   # cross-compiled runtime binary
+      runtime_binary_path: /path/to/promptkit-runtime   # cross-compiled runtime binary (or runtime_override.image)
       runtime_role_arn: arn:aws:iam::123456789012:role/my-agent-role
 
       providers:                   # what to deploy, and in what role
@@ -71,9 +71,112 @@ spec:
 
 ### Deployment Types
 
-The adapter supports **code deploy** for runtime deployment:
+The adapter deploys a runtime in one of two ways:
 
-- **Code deploy**: Packages the runtime binary with a launcher script, uploads to S3, and deploys via AgentCore's code deployment. The runtime binary is cross-compiled for Linux ARM64 (`make build-runtime-arm64`).
+- **Code deploy** (default): Packages the runtime binary with a launcher script, uploads to S3, and deploys via AgentCore's code deployment. The runtime binary is cross-compiled for Linux ARM64 (`make build-runtime-arm64`).
+- **Container**: Deploys a container image named by [`runtime_override`](#run-another-container). `runtime_binary_path` is then not needed.
+
+## Run another container
+
+`runtime_override` deploys a container of your choosing in place of the
+adapter's runtime. The adapter still creates one runtime per agent, still sets
+its [environment variables](docs/src/content/docs/reference/environment-variables.md),
+and hands the container the pack: `PROMPTPACK_PACK_JSON` (the pack as
+single-line JSON) when it fits in one environment value, otherwise
+`PROMPTPACK_PACK_URI` (an `s3://` URI the adapter staged it to), plus
+`PROMPTPACK_AGENT`.
+
+| Field | On AgentCore |
+|---|---|
+| `image` | Deployed as a container artifact instead of the code package. Must be in Amazon ECR (below) and built for `linux/arm64` |
+| `env` | Added to the runtime's environment. A name may not start with `PROMPTPACK_` or `AWS_`, or be `OTEL_EXPORTER_OTLP_ENDPOINT`. A value may be at most 5,000 characters, with no control characters: write JSON on one line |
+| `secret_env` | Refused. AgentCore's environment takes plain values only, and they are readable by anyone who can describe the runtime. Have the container read a secret from Secrets Manager with the runtime role instead |
+| `command`, `args` | Refused. AgentCore runs an image's own entrypoint and has no way to change it |
+
+**The image must be in Amazon ECR.** AgentCore pulls only from a private ECR
+repository (`<account>.dkr.ecr.<region>.amazonaws.com/...`) or ECR Public
+(`public.ecr.aws/...`), and validation refuses anything else. To run an image
+published elsewhere, copy it into a repository in the runtime's region:
+
+```bash
+aws ecr create-repository --region us-east-1 --repository-name my-runtime
+aws ecr get-login-password --region us-east-1 \
+  | crane auth login 123456789012.dkr.ecr.us-east-1.amazonaws.com -u AWS --password-stdin
+crane copy ghcr.io/example/my-runtime:v1 \
+  123456789012.dkr.ecr.us-east-1.amazonaws.com/my-runtime:v1
+```
+
+The runtime role must be able to pull it:
+
+```json
+{
+  "Effect": "Allow",
+  "Action": ["ecr:BatchGetImage", "ecr:GetDownloadUrlForLayer"],
+  "Resource": "arn:aws:ecr:us-east-1:123456789012:repository/my-runtime"
+},
+{ "Effect": "Allow", "Action": "ecr:GetAuthorizationToken", "Resource": "*" }
+```
+
+**What runs, and when.** AgentCore starts the container when a runtime session
+begins (the first `InvokeAgentRuntime` call for a session id) and stops it when
+the session ends. It sends `POST /invocations` and `GET /ping` to port 8080.
+A container that serves neither still starts and runs for the session, but
+every invocation fails with a 424. A container that only makes outbound
+connections still needs a session to be started before it runs.
+
+Every apply updates each existing runtime, so a change to `runtime_override`
+takes effect on the next apply. The plan names the override image on each
+runtime it creates or updates.
+
+### Run omnia-dialhome
+
+[omnia-dialhome](https://github.com/AltairaLabs/omnia-dialhome) runs a pack as
+the runtime of an agent in an Omnia workspace: the container opens one
+outbound connection to the agent's relay and serves its conversations over it,
+with policy, sessions, evals and memory staying in Omnia. It reads the pack and
+the agent from the adapter's `PROMPTPACK_PACK_JSON` and `PROMPTPACK_AGENT`.
+
+1. Copy the image into ECR, as above:
+   `ghcr.io/altairalabs/omnia-dialhome:<version>`. It is published for
+   `linux/arm64`.
+2. Deploy with the override. Omnia issues the dial-home URL and key together,
+   in the agent's `<agent>-dial-home-key` Secret (keys `url` and `key`):
+
+   ```yaml
+   deploy:
+     provider: agentcore
+     config:
+       region: us-east-1
+       runtime_role_arn: arn:aws:iam::123456789012:role/my-agent-role
+       providers:
+         - { name: default, role: llm, type: claude, model: claude-sonnet-4 }
+       runtime_override:
+         image: 123456789012.dkr.ecr.us-east-1.amazonaws.com/omnia-dialhome:v0.2.0
+         env:
+           OMNIA_DIAL_HOME_URL: wss://my-agent-dial-home.example.com/v1/channel
+           OMNIA_DIAL_HOME_KEY: <key>
+           OMNIA_DIALHOME_PORT: "8080"
+   ```
+
+`OMNIA_DIALHOME_PORT` makes it listen on the port AgentCore expects.
+`providers` is still required by the adapter, but omnia-dialhome takes its
+model provider from Omnia over the channel and ignores `PROMPTPACK_PROVIDERS`.
+
+Things to know:
+
+- **The key is stored in plain text** on the runtime, because AgentCore has no
+  secret environment variables. Anyone who can call `GetAgentRuntime` can read
+  it. Scope that permission accordingly.
+- **The container runs only inside a session.** Nothing dials home until
+  something starts a runtime session with `InvokeAgentRuntime`, and the
+  connection closes when the session ends (by default after 15 minutes idle).
+  Invocations themselves fail with a 424, because omnia-dialhome serves
+  neither `/invocations` nor `/ping`: conversations reach it through Omnia,
+  over the channel.
+- A pack over 5,000 characters is staged to S3 as `PROMPTPACK_PACK_URI`, and
+  omnia-dialhome refuses a staged pack. Keep the pack small, or build an image
+  `FROM` omnia-dialhome with the pack copied in and set `OMNIA_DIALHOME_PACK`
+  in `env`.
 
 ## Architecture
 

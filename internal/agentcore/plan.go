@@ -66,6 +66,7 @@ func (p *Provider) Plan(ctx context.Context, req *deploy.PlanRequest) (*deploy.P
 	// 9. Drift joins the plan ahead of the changes it explains: each entry
 	// says why the resource below it is being created rather than updated.
 	changes = append(drift, changes...)
+	annotateRuntimeOverride(changes, cfg)
 
 	return &deploy.PlanResponse{
 		Changes: changes,

@@ -8,6 +8,7 @@ import (
 
 	"github.com/AltairaLabs/PromptKit/runtime/v2/evals"
 	"github.com/AltairaLabs/PromptKit/runtime/v2/prompt"
+	"github.com/AltairaLabs/promptarena/v2/deploy"
 )
 
 // Protocol mode constants for the runtime server protocol.
@@ -47,6 +48,13 @@ type Config struct {
 	// so that buildTargetConfig can find Lambda ARNs and other
 	// target configuration supplied via the deploy section.
 	ToolTargets map[string]*ArenaToolSpec `json:"tool_targets,omitempty"`
+
+	// RuntimeOverride runs another container in place of the runtime, with
+	// extra environment. An image deploys as a container artifact instead of
+	// the code package, so runtime_binary_path is then unused. AgentCore takes
+	// an image URI and plain environment values only, so command, args and
+	// secret_env are refused.
+	RuntimeOverride *deploy.RuntimeOverride `json:"runtime_override,omitempty"`
 
 	// PackJSON holds the raw pack JSON content to inject as an env var
 	// on the runtime container. Populated at apply-time from PlanRequest.
@@ -305,6 +313,13 @@ func parseConfig(raw string) (*Config, error) {
 	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
 		return nil, fmt.Errorf("invalid config JSON: %w", err)
 	}
+	// Read the override strictly, as the CLI does: a misspelled key would
+	// otherwise decode to an empty block and deploy the adapter's own runtime.
+	override, err := deploy.RuntimeOverrideFromConfig(raw)
+	if err != nil {
+		return nil, err
+	}
+	cfg.RuntimeOverride = override
 	return &cfg, nil
 }
 
@@ -324,9 +339,10 @@ func (c *Config) validate() []string {
 		errs = append(errs, fmt.Sprintf("runtime_role_arn %q is not a valid IAM role ARN", c.RuntimeRoleARN))
 	}
 
-	if c.RuntimeBinaryPath == "" {
+	if c.RuntimeBinaryPath == "" && !c.usesContainerImage() {
 		errs = append(errs,
-			"runtime_binary_path is required (path to pre-compiled Go runtime binary)")
+			"runtime_binary_path is required (path to pre-compiled Go runtime binary), "+
+				"unless runtime_override.image is set")
 	}
 
 	if c.Protocol != "" && !validProtocols[c.Protocol] {
@@ -335,13 +351,16 @@ func (c *Config) validate() []string {
 			c.Protocol, ProtocolHTTP, ProtocolA2A, ProtocolBoth))
 	}
 
-	errs = append(errs, validateRuntimeBinary(c.RuntimeBinaryPath)...)
+	if !c.usesContainerImage() {
+		errs = append(errs, validateRuntimeBinary(c.RuntimeBinaryPath)...)
+	}
 	errs = append(errs, validateObservability(c.Observability)...)
 	errs = append(errs, validateMemory(&c.Memory)...)
 	errs = append(errs, validateA2AAuth(c.A2AAuth)...)
 	errs = append(errs, validateTags(c.Tags)...)
 	errs = append(errs, validateToolTargetNames(c.ToolTargets)...)
 	errs = append(errs, validateProviderBindings(c)...)
+	errs = append(errs, validateRuntimeOverride(c.RuntimeOverride)...)
 
 	return errs
 }

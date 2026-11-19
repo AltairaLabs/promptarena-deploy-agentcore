@@ -98,7 +98,7 @@ func (p *Provider) prepareApply(
 		return nil, fmt.Errorf("agentcore: eval model not available: %s", strings.Join(errs, "; "))
 	}
 
-	if err := uploadCodePackage(ctx, client, cfg, req.PackJSON); err != nil {
+	if err := deliverRuntime(ctx, client, cfg, req.PackJSON); err != nil {
 		return nil, fmt.Errorf("agentcore: %w", err)
 	}
 
@@ -109,6 +109,18 @@ func (p *Provider) prepareApply(
 		client:   client,
 		priorMap: parsePriorState(req.PriorState),
 	}, nil
+}
+
+// deliverRuntime gets the runtime and its pack where AgentCore will read them:
+// the code package uploaded to S3 for the adapter's own runtime, or, for a
+// runtime_override image, the pack handed over under the deploy SDK's names
+// along with the override's environment.
+func deliverRuntime(ctx context.Context, client awsClient, cfg *Config, packJSON string) error {
+	applyRuntimeOverrideEnv(cfg.RuntimeEnvVars, cfg.RuntimeOverride)
+	if cfg.usesContainerImage() {
+		return stageOverridePack(ctx, client, cfg, packJSON)
+	}
+	return uploadCodePackage(ctx, client, cfg, packJSON)
 }
 
 // Apply executes a deployment plan, streaming progress events via the callback.
@@ -179,6 +191,7 @@ func (p *Provider) applyDryRun(
 
 	reporter := newReporter(callback)
 	desired := generateDesiredResources(pack, cfg)
+	annotateRuntimeOverride(desired, cfg)
 
 	resources, cbErr := emitDryRunResources(reporter, desired)
 	if cbErr != nil {

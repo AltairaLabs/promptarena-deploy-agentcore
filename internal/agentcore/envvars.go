@@ -135,8 +135,15 @@ func runtimeEnvVarsForAgent(cfg *Config, agentName string) map[string]string {
 	// If PromptNames is populated and the agent name is not a known
 	// prompt, skip setting PROMPTPACK_AGENT to let the runtime
 	// auto-discover from the pack.
-	if len(cfg.PromptNames) == 0 || cfg.PromptNames[agentName] {
+	switch {
+	case len(cfg.PromptNames) == 0 || cfg.PromptNames[agentName]:
 		env[EnvAgentName] = agentName
+	case cfg.usesContainerImage():
+		// A replacement container cannot auto-discover the way the adapter's
+		// runtime does, so it is told the pack's one prompt when there is one.
+		if sole := soleAgentName(cfg.PromptNames); sole != "" {
+			env[EnvAgentName] = sole
+		}
 	}
 	return env
 }
