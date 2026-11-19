@@ -1235,6 +1235,12 @@ func (c *realAWSClient) CreateCedarPolicy(
 				Statement: aws.String(cedarStatement),
 			},
 		},
+		// A blocklist entry is an unconditional forbid on one tool, which the
+		// Cedar analyzer always reports as "Overly Restrictive: Policy Engine
+		// will deny every request" for that action. That is the point of a
+		// blocklist, and under the default FAIL_ON_ANY_FINDINGS no blocklist
+		// policy could ever be created.
+		ValidationMode: types.PolicyValidationModeIgnoreAllFindings,
 	})
 	if err != nil {
 		if isConflictError(err) {

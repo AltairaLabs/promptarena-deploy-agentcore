@@ -39,6 +39,14 @@ func generateCedarStatements(
 // in the gateway's Cedar schema. Tools not registered on the gateway cannot
 // be blocked (and cannot be invoked anyway). The registeredTools set filters
 // the blocklist to only tools that exist on the gateway.
+//
+// An AgentCore policy engine denies by default: once one is attached to the
+// gateway, a tool call that no permit matches is refused with "No policy
+// applies to the request (denied by default)". A blocklist made only of
+// forbids therefore blocked every tool on the gateway, not just the listed
+// ones. So when there is a gateway, the forbids are followed by one permit for
+// every action on it; a forbid overrides a permit in Cedar, so the blocklisted
+// tools stay denied and the rest are allowed.
 func cedarFromToolPolicy(tp *prompt.ToolPolicyPack, gatewayARN string, registeredTools map[string]bool) []string {
 	var blocks []string
 	for _, tool := range tp.Blocklist {
@@ -48,14 +56,27 @@ func cedarFromToolPolicy(tp *prompt.ToolPolicyPack, gatewayARN string, registere
 		}
 		blocks = append(blocks, cedarToolBlocklist(tool, gatewayARN))
 	}
+	if len(blocks) > 0 && gatewayARN != "" {
+		blocks = append(blocks, cedarGatewayPermit(gatewayARN))
+	}
 	return blocks
 }
 
+// cedarGatewayPermit allows every action on the gateway, so that the policy
+// engine's default deny applies only where a forbid says so.
+func cedarGatewayPermit(gatewayARN string) string {
+	return fmt.Sprintf(`permit (principal, action, resource == AgentCore::Gateway::%q);`, gatewayARN)
+}
+
 // cedarToolBlocklist generates a forbid block for a blocked tool.
-// Uses the AgentCore Cedar action format: AgentCore::Action::"ToolName___ToolName"
-// (three underscores). The resource is constrained to the specific gateway ARN
-// as required by AWS.
+// Uses the AgentCore Cedar action format: AgentCore::Action::"<target>___<tool>"
+// (three underscores), where <target> is the gateway target's name and <tool>
+// the tool's name in the target's inline schema. The target is named by
+// sanitizeGatewayTargetName, which turns underscores into hyphens, so a tool
+// called search_d is the action "search-d___search_d". The resource is
+// constrained to the specific gateway ARN as required by AWS.
 func cedarToolBlocklist(toolName, gatewayARN string) string {
+	escapedTarget := escapeCedarString(sanitizeGatewayTargetName(toolName))
 	escapedName := escapeCedarString(toolName)
 	resourceClause := "resource"
 	if gatewayARN != "" {
@@ -63,7 +84,7 @@ func cedarToolBlocklist(toolName, gatewayARN string) string {
 	}
 	return fmt.Sprintf(
 		`forbid (principal, action == AgentCore::Action::"%s___%s", %s);`,
-		escapedName, escapedName, resourceClause,
+		escapedTarget, escapedName, resourceClause,
 	)
 }
 

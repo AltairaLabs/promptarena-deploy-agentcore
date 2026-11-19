@@ -67,10 +67,13 @@ func TestCedarToolBlocklist(t *testing.T) {
 	}
 	result := strings.Join(generateCedarStatements(nil, tp, "", nil), "\n\n")
 
-	if !strings.Contains(result, `AgentCore::Action::"dangerous_tool___dangerous_tool"`) {
+	// The action is <target>___<tool>, and the gateway target name has the
+	// tool's underscores as hyphens: AWS rejects "dangerous_tool___dangerous_tool"
+	// as an unrecognized action.
+	if !strings.Contains(result, `AgentCore::Action::"dangerous-tool___dangerous_tool"`) {
 		t.Errorf("expected blocklist rule for dangerous_tool, got:\n%s", result)
 	}
-	if !strings.Contains(result, `AgentCore::Action::"risky_tool___risky_tool"`) {
+	if !strings.Contains(result, `AgentCore::Action::"risky-tool___risky_tool"`) {
 		t.Errorf("expected blocklist rule for risky_tool, got:\n%s", result)
 	}
 	if !strings.Contains(result, "forbid") {
@@ -86,14 +89,41 @@ func TestCedarToolBlocklistWithGatewayARN(t *testing.T) {
 	tools := map[string]bool{"exec": true}
 	blocks := generateCedarStatements(nil, tp, arn, tools)
 
-	if len(blocks) != 1 {
-		t.Fatalf("expected 1 block, got %d", len(blocks))
+	if len(blocks) != 2 {
+		t.Fatalf("expected a forbid and the gateway permit, got %d:\n%s", len(blocks), strings.Join(blocks, "\n"))
 	}
 	if !strings.Contains(blocks[0], arn) {
 		t.Errorf("expected gateway ARN in block, got:\n%s", blocks[0])
 	}
 	if !strings.Contains(blocks[0], `AgentCore::Gateway::`) {
 		t.Errorf("expected AgentCore::Gateway:: resource, got:\n%s", blocks[0])
+	}
+}
+
+// A policy engine denies by default, so a blocklist of forbids alone denied
+// every tool on the gateway. The statements must end with a permit for every
+// action on the gateway, which the forbids then override.
+func TestCedarToolBlocklistPermitsTheRestOfTheGateway(t *testing.T) {
+	tp := &prompt.ToolPolicyPack{Blocklist: []string{"search_d"}}
+	arn := "arn:aws:bedrock-agentcore:us-east-1:123456789012:gateway/pack-gw-abc"
+	blocks := generateCedarStatements(nil, tp, arn, map[string]bool{"search_d": true, "lookup_b": true})
+
+	want := []string{
+		`forbid (principal, action == AgentCore::Action::"search-d___search_d", resource == AgentCore::Gateway::"` + arn + `");`,
+		`permit (principal, action, resource == AgentCore::Gateway::"` + arn + `");`,
+	}
+	if strings.Join(blocks, "\n") != strings.Join(want, "\n") {
+		t.Errorf("statements =\n%s\nwant\n%s", strings.Join(blocks, "\n"), strings.Join(want, "\n"))
+	}
+}
+
+// With every blocklist entry filtered out there is nothing to enforce, and a
+// lone permit must not be created.
+func TestCedarNoForbidsMeansNoPermit(t *testing.T) {
+	tp := &prompt.ToolPolicyPack{Blocklist: []string{"unregistered"}}
+	arn := "arn:aws:bedrock-agentcore:us-east-1:123456789012:gateway/pack-gw-abc"
+	if blocks := generateCedarStatements(nil, tp, arn, map[string]bool{"other": true}); len(blocks) != 0 {
+		t.Errorf("expected no statements, got:\n%s", strings.Join(blocks, "\n"))
 	}
 }
 
@@ -106,8 +136,8 @@ func TestCedarToolBlocklistFiltersUnregisteredTools(t *testing.T) {
 	tools := map[string]bool{"search": true}
 	blocks := generateCedarStatements(nil, tp, arn, tools)
 
-	if len(blocks) != 1 {
-		t.Fatalf("expected 1 block (only registered tool), got %d", len(blocks))
+	if len(blocks) != 2 {
+		t.Fatalf("expected 1 forbid (only registered tool) and the gateway permit, got %d", len(blocks))
 	}
 	if !strings.Contains(blocks[0], `"search___search"`) {
 		t.Errorf("expected search block, got:\n%s", blocks[0])
