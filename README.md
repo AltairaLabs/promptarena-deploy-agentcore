@@ -138,8 +138,8 @@ with policy, sessions, evals and memory staying in Omnia. It reads the pack and
 the agent from the adapter's `PROMPTPACK_PACK_JSON` and `PROMPTPACK_AGENT`.
 
 1. Copy the image into ECR, as above:
-   `ghcr.io/altairalabs/omnia-dialhome:<version>`. It is published for
-   `linux/arm64`.
+   `ghcr.io/altairalabs/omnia-dialhome:<version>`, v0.2.1 or later. It is
+   published for `linux/arm64`.
 2. Deploy with the override. Omnia issues the dial-home URL and key together,
    in the agent's `<agent>-dial-home-key` Secret (keys `url` and `key`):
 
@@ -152,7 +152,7 @@ the agent from the adapter's `PROMPTPACK_PACK_JSON` and `PROMPTPACK_AGENT`.
        providers:
          - { name: default, role: llm, type: claude, model: claude-sonnet-4 }
        runtime_override:
-         image: 123456789012.dkr.ecr.us-east-1.amazonaws.com/omnia-dialhome:v0.2.0
+         image: 123456789012.dkr.ecr.us-east-1.amazonaws.com/omnia-dialhome:v0.2.1
          env:
            OMNIA_DIAL_HOME_URL: wss://my-agent-dial-home.example.com/v1/channel
            OMNIA_DIAL_HOME_KEY: <key>
@@ -168,11 +168,14 @@ Things to know:
 - **The key is stored in plain text** on the runtime, because AgentCore has no
   secret environment variables. Anyone who can call `GetAgentRuntime` can read
   it. Scope that permission accordingly.
-- **It does not serve AgentCore's runtime contract.** omnia-dialhome answers
-  `/healthz` and `/readyz`, not `/ping` or `/invocations`, so invocations fail
-  with a 424 and AgentCore may stop and restart its containers repeatedly, each
-  restart re-dialling. Conversations reach it through Omnia, over the channel,
-  never through `InvokeAgentRuntime`.
+- **A session starts it.** Nothing runs, and nothing dials home, until
+  something calls `InvokeAgentRuntime` to start a runtime session. That call
+  fails with a 424, because omnia-dialhome answers `/invocations` with a 501:
+  conversations reach it through Omnia, over the channel, never through
+  `InvokeAgentRuntime`. The session's container keeps running, and keeps
+  dialling home, after the 424.
+- **Use v0.2.1 or later.** Earlier versions do not answer AgentCore's
+  `/ping`, and AgentCore stops and restarts their containers repeatedly.
 - A pack over 5,000 characters is staged to S3 as `PROMPTPACK_PACK_URI`, and
   omnia-dialhome refuses a staged pack. Keep the pack small, or build an image
   `FROM` omnia-dialhome with the pack copied in and set `OMNIA_DIALHOME_PACK`
