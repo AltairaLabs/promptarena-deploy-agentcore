@@ -407,12 +407,7 @@ func (c *realAWSClient) CreateRuntime(
 	if len(envVars) > 0 {
 		input.EnvironmentVariables = envVars
 	}
-	if authCfg := buildAuthorizerConfig(cfg); authCfg != nil {
-		input.AuthorizerConfiguration = authCfg
-	}
-	if hdrs := buildRequestHeaderConfig(cfg); hdrs != nil {
-		input.RequestHeaderConfiguration = hdrs
-	}
+	input.AuthorizerConfiguration, input.RequestHeaderConfiguration = runtimeAccess(cfg)
 	if tags := tagsWithAgent(cfg.ResourceTags, name); len(tags) > 0 {
 		input.Tags = tags
 	}
@@ -461,12 +456,7 @@ func (c *realAWSClient) UpdateRuntime(
 	if len(envVars) > 0 {
 		input.EnvironmentVariables = envVars
 	}
-	if authCfg := buildAuthorizerConfig(cfg); authCfg != nil {
-		input.AuthorizerConfiguration = authCfg
-	}
-	if hdrs := buildRequestHeaderConfig(cfg); hdrs != nil {
-		input.RequestHeaderConfiguration = hdrs
-	}
+	input.AuthorizerConfiguration, input.RequestHeaderConfiguration = runtimeAccess(cfg)
 	_, err := c.client.UpdateAgentRuntime(ctx, input)
 	if err != nil {
 		return arn, fmt.Errorf("UpdateAgentRuntime %q: %w", name, err)
@@ -1074,6 +1064,13 @@ func buildAuthorizerConfig(cfg *Config) types.AuthorizerConfiguration {
 			AllowedClients:  cfg.A2AAuth.AllowedClts,
 		},
 	}
+}
+
+// runtimeAccess is how the runtime authenticates its callers and which of
+// their headers it receives: the JWT authorizer and the header allowlist, nil
+// for either that is not configured.
+func runtimeAccess(cfg *Config) (types.AuthorizerConfiguration, types.RequestHeaderConfiguration) {
+	return buildAuthorizerConfig(cfg), buildRequestHeaderConfig(cfg)
 }
 
 // buildRequestHeaderConfig returns the runtime's request header allowlist,
