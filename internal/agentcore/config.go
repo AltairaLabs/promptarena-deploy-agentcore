@@ -38,6 +38,16 @@ type Config struct {
 	Observability     *ObservabilityConfig `json:"observability,omitempty"`
 	A2AAuth           *A2AAuthConfig       `json:"a2a_auth,omitempty"`
 
+	// RequestHeaderAllowlist names the request headers AgentCore passes from
+	// an invocation to the container (requestHeaderConfiguration). Only
+	// Authorization and X-Amzn-Bedrock-AgentCore-Runtime-Custom-* headers
+	// are accepted, and Authorization only with a JWT authorizer (a2a_auth
+	// mode "jwt"). With Authorization listed, the container receives the
+	// caller's bearer token, which AgentCore has validated: a runtime that
+	// verifies its caller's identity itself, such as omnia-dialhome's front
+	// door, reads it there.
+	RequestHeaderAllowlist []string `json:"request_header_allowlist,omitempty"`
+
 	// Providers declares which providers the deployed runtime uses and in
 	// what role. When empty the adapter falls back to deriving a single LLM
 	// provider from the arena config, which is deprecated.
@@ -368,6 +378,7 @@ func (c *Config) validate() []string {
 	errs = append(errs, validateObservability(c.Observability)...)
 	errs = append(errs, validateMemory(&c.Memory)...)
 	errs = append(errs, validateA2AAuth(c.A2AAuth)...)
+	errs = append(errs, validateRequestHeaders(c.RequestHeaderAllowlist, c.A2AAuth)...)
 	errs = append(errs, validateTags(c.Tags)...)
 	errs = append(errs, validateToolTargetNames(c.ToolTargets)...)
 	errs = append(errs, validateProviderBindings(c)...)
@@ -472,6 +483,42 @@ func extractAccountFromARN(arn string) string {
 		return ""
 	}
 	return parts[arnAccountIndex]
+}
+
+// Request header allowlist limits, as AgentCore states them.
+const (
+	maxAllowlistHeaders     = 20
+	customHeaderPrefix      = "x-amzn-bedrock-agentcore-runtime-custom-"
+	authorizationHeaderName = "authorization"
+)
+
+var headerNamePattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]{0,255}$`)
+
+// validateRequestHeaders checks request_header_allowlist: at most 20 names,
+// each Authorization or an X-Amzn-Bedrock-AgentCore-Runtime-Custom-* header,
+// and Authorization only with a JWT authorizer, which is the only case in
+// which AgentCore passes it on.
+func validateRequestHeaders(names []string, auth *A2AAuthConfig) []string {
+	var errs []string
+	if len(names) > maxAllowlistHeaders {
+		errs = append(errs, fmt.Sprintf("request_header_allowlist has %d headers; at most %d",
+			len(names), maxAllowlistHeaders))
+	}
+	for _, n := range names {
+		lower := strings.ToLower(n)
+		switch {
+		case !headerNamePattern.MatchString(n):
+			errs = append(errs, fmt.Sprintf("request_header_allowlist: %q is not a header name", n))
+		case lower == authorizationHeaderName:
+			if auth == nil || auth.Mode != A2AAuthModeJWT {
+				errs = append(errs, "request_header_allowlist: Authorization needs a2a_auth mode \"jwt\"")
+			}
+		case !strings.HasPrefix(lower, customHeaderPrefix):
+			errs = append(errs, fmt.Sprintf(
+				"request_header_allowlist: %q is neither Authorization nor an X-Amzn-Bedrock-AgentCore-Runtime-Custom-* header", n))
+		}
+	}
+	return errs
 }
 
 // validateA2AAuth checks A2A auth configuration.

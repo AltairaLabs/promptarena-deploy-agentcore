@@ -172,6 +172,22 @@ protocol: both
 
 Use `"http"` for external-facing agents that do not participate in A2A networks. Use `"a2a"` for internal worker agents that are only called by other agents. See [Runtime Protocols](/reference/runtime-protocols/) for details on the HTTP bridge endpoints.
 
+### `request_header_allowlist`
+
+Request headers AgentCore passes from an invocation to the container (`requestHeaderConfiguration`). At most 20 names.
+
+| Header | When |
+|--------|------|
+| `Authorization` | Only with `a2a_auth` mode `"jwt"`. The container receives the caller's bearer token, which AgentCore's JWT authorizer has already validated. |
+| `X-Amzn-Bedrock-AgentCore-Runtime-Custom-*` | Any custom header the caller sets. |
+
+```yaml
+request_header_allowlist:
+  - Authorization
+```
+
+Use this when the runtime verifies its caller's identity itself, as omnia-dialhome does for turns it serves on `InvokeAgentRuntime`.
+
 ### `a2a_auth`
 
 Authentication configuration for Agent-to-Agent (A2A) communication in multi-agent packs. The `mode` field is required when this object is present.
