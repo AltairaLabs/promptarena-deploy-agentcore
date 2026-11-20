@@ -169,11 +169,28 @@ Things to know:
   secret environment variables. Anyone who can call `GetAgentRuntime` can read
   it. Scope that permission accordingly.
 - **A session starts it.** Nothing runs, and nothing dials home, until
-  something calls `InvokeAgentRuntime` to start a runtime session. That call
-  fails with a 424, because omnia-dialhome answers `/invocations` with a 501:
-  conversations reach it through Omnia, over the channel, never through
-  `InvokeAgentRuntime`. The session's container keeps running, and keeps
-  dialling home, after the 424.
+  something calls `InvokeAgentRuntime` to start a runtime session. With
+  omnia-dialhome v0.6.0 or later that call is either a turn (below), or Omnia
+  starting a container for its own turns. Earlier versions answer
+  `/invocations` with a 501, which AgentCore reports as a 424; the container
+  keeps running, and dialling home, after it.
+- **Callers can use `InvokeAgentRuntime` itself** (omnia-dialhome v0.6.0 or
+  later). The container runs each such turn and Omnia governs it. Omnia
+  verifies who the caller is from a token the container forwards. To have
+  AgentCore check the caller's JWT and pass it on, configure a JWT authorizer
+  and allowlist `Authorization`:
+
+  ```yaml
+  a2a_auth:
+    mode: jwt
+    discovery_url: https://cognito-idp.us-east-1.amazonaws.com/us-east-1_abc123/.well-known/openid-configuration
+    allowed_clients: [my-app-client-id]
+  request_header_allowlist: [Authorization]
+  ```
+
+  Then call the runtime's HTTPS endpoint with `Authorization: Bearer <token>`.
+  The agent's Omnia `AgentRuntime` lists the same issuer under
+  `spec.frontDoor.trustedIssuers`.
 - **Use v0.2.1 or later.** Earlier versions do not answer AgentCore's
   `/ping`, and AgentCore stops and restarts their containers repeatedly.
 - A pack over 5,000 characters is staged to S3 as `PROMPTPACK_PACK_URI`, and

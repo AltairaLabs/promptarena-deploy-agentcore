@@ -410,6 +410,9 @@ func (c *realAWSClient) CreateRuntime(
 	if authCfg := buildAuthorizerConfig(cfg); authCfg != nil {
 		input.AuthorizerConfiguration = authCfg
 	}
+	if hdrs := buildRequestHeaderConfig(cfg); hdrs != nil {
+		input.RequestHeaderConfiguration = hdrs
+	}
 	if tags := tagsWithAgent(cfg.ResourceTags, name); len(tags) > 0 {
 		input.Tags = tags
 	}
@@ -460,6 +463,9 @@ func (c *realAWSClient) UpdateRuntime(
 	}
 	if authCfg := buildAuthorizerConfig(cfg); authCfg != nil {
 		input.AuthorizerConfiguration = authCfg
+	}
+	if hdrs := buildRequestHeaderConfig(cfg); hdrs != nil {
+		input.RequestHeaderConfiguration = hdrs
 	}
 	_, err := c.client.UpdateAgentRuntime(ctx, input)
 	if err != nil {
@@ -1067,6 +1073,17 @@ func buildAuthorizerConfig(cfg *Config) types.AuthorizerConfiguration {
 			AllowedAudience: cfg.A2AAuth.AllowedAud,
 			AllowedClients:  cfg.A2AAuth.AllowedClts,
 		},
+	}
+}
+
+// buildRequestHeaderConfig returns the runtime's request header allowlist,
+// or nil when none is configured.
+func buildRequestHeaderConfig(cfg *Config) types.RequestHeaderConfiguration {
+	if len(cfg.RequestHeaderAllowlist) == 0 {
+		return nil
+	}
+	return &types.RequestHeaderConfigurationMemberRequestHeaderAllowlist{
+		Value: append([]string(nil), cfg.RequestHeaderAllowlist...),
 	}
 }
 

@@ -67,6 +67,12 @@ const baseConfigSchema = `{
       "type": "boolean",
       "description": "When true, Apply simulates resource creation without calling AWS APIs"
     },
+    "request_header_allowlist": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {"type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,255}$"},
+      "description": "Headers AgentCore passes to the container: Authorization (jwt a2a_auth) or custom ones"
+    },
     "a2a_auth": {
       "type": "object",
       "required": ["mode"],

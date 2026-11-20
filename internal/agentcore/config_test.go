@@ -2,6 +2,8 @@ package agentcore
 
 import (
 	"testing"
+
+	"github.com/aws/aws-sdk-go-v2/service/bedrockagentcorecontrol/types"
 )
 
 func TestParseConfig(t *testing.T) {
@@ -916,5 +918,41 @@ func TestValidateObservability(t *testing.T) {
 				t.Errorf("expected an error containing %q, got %v", tt.wantError, errs)
 			}
 		})
+	}
+}
+
+func TestValidateRequestHeaders(t *testing.T) {
+	jwt := &A2AAuthConfig{Mode: A2AAuthModeJWT, DiscoveryURL: "https://idp/.well-known/openid-configuration"}
+	if errs := validateRequestHeaders([]string{"Authorization", "X-Amzn-Bedrock-AgentCore-Runtime-Custom-Omnia-Identity"}, jwt); len(errs) != 0 {
+		t.Fatalf("valid allowlist refused: %v", errs)
+	}
+	if errs := validateRequestHeaders(nil, nil); len(errs) != 0 {
+		t.Fatalf("no allowlist refused: %v", errs)
+	}
+	cases := map[string]struct {
+		names []string
+		auth  *A2AAuthConfig
+	}{
+		"authorization without jwt": {[]string{"Authorization"}, nil},
+		"authorization with iam":    {[]string{"Authorization"}, &A2AAuthConfig{Mode: A2AAuthModeIAM}},
+		"not a custom header":       {[]string{"X-Custom"}, jwt},
+		"not a header name":         {[]string{"bad header"}, jwt},
+		"too many":                  {make([]string, 21), jwt},
+	}
+	for name, tc := range cases {
+		if errs := validateRequestHeaders(tc.names, tc.auth); len(errs) == 0 {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+}
+
+func TestBuildRequestHeaderConfig(t *testing.T) {
+	if buildRequestHeaderConfig(&Config{}) != nil {
+		t.Error("no allowlist built a configuration")
+	}
+	got := buildRequestHeaderConfig(&Config{RequestHeaderAllowlist: []string{"Authorization"}})
+	m, ok := got.(*types.RequestHeaderConfigurationMemberRequestHeaderAllowlist)
+	if !ok || len(m.Value) != 1 || m.Value[0] != "Authorization" {
+		t.Errorf("configuration = %#v", got)
 	}
 }
