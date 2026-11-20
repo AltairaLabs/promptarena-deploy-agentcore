@@ -119,7 +119,22 @@ Not supported. Redeployment creates new gateway targets.
 
 One `cedar_policy` resource is created per pack, named `{pack}_policy_engine`, when a prompt's `tool_policy.blocklist` can be enforced at the gateway. Validators, `max_rounds` and `max_tool_calls_per_turn` are enforced by the runtime and produce no Cedar.
 
-A gateway takes one policy engine, and every prompt of the pack calls its tools through the same gateway, which cannot tell one prompt from another. So the pack's one engine forbids a blocklisted tool only when **no prompt may call it**: every prompt either blocklists it or does not list it in its `tools`. A prompt that lists no `tools` is taken to be able to use any tool. A tool that one prompt blocks and another may call is not forbidden at the gateway; the runtime still refuses it to the prompt that blocks it, and apply logs that only the runtime enforces it. A blocklist entry that names no pack tool is ignored.
+#### How a blocklist is enforced
+
+A prompt's `tool_policy.blocklist` is enforced in two places:
+
+1. **The runtime is the primary control.** It enforces each prompt's own `tool_policy`. When the model asks for a tool its prompt blocklists, the runtime refuses the call before it runs and returns `Tool <name> is blocked by policy` to the model. This holds for every tool, wherever it runs.
+2. **The gateway is defence in depth.** The pack's Cedar policy engine is a floor for the whole pack. It holds even when something calls the gateway directly, without going through the runtime.
+
+The gateway's floor covers the whole pack because the gateway cannot tell which prompt a call came from. Every prompt of the pack calls its tools through the same gateway, and a gateway takes only one policy engine. So the engine forbids a tool only when **no prompt may use it**: every prompt either blocklists the tool or leaves it out of its `tools` list.
+
+- **A tool blocked by one prompt and allowed by another** is not forbidden at the gateway, because that would refuse it to the prompt that is allowed it. For the prompt that blocks it, only the runtime enforces the blocklist. Apply logs a warning naming each such tool: `tool "<name>" is blocklisted by some prompts but callable by others; the shared gateway cannot tell prompts apart, so only the runtime enforces it`.
+- **A prompt with no `tools` list** counts as allowing every tool. A tool it does not blocklist is therefore never forbidden at the gateway. Give each prompt an explicit `tools` list if you want the gateway to forbid tools that only some prompts use.
+- **A blocklist entry that names no pack tool** is ignored. That tool cannot be called anyway.
+
+When no tool meets that rule, the pack gets no policy engine, and the runtime alone enforces the blocklists.
+
+For example, suppose `billing` uses `[lookup]` and blocklists `refund`, and `support` uses `[lookup, refund]`. The gateway does not forbid `refund`, because `support` may call it. The runtime still refuses `refund` to `billing`. If `support` also blocklisted `refund`, or did not list it, the gateway would forbid it as well.
 
 Each blocklisted tool that is on the gateway becomes one forbid policy on the action `<target>___<tool>`. The target is the tool's gateway target name, which has the tool's underscores as hyphens, so `search_d` is the action `search-d___search_d`. A policy engine denies every call no policy permits, so the forbids are followed by one permit for every action on the gateway. A forbid overrides a permit, so the blocklisted tools are denied and the rest are allowed.
 

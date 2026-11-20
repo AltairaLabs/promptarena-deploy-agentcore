@@ -198,6 +198,15 @@ The deploy adapter is a JSON-RPC 2.0 subprocess that PromptKit discovers and inv
 
 **Destroy** runs in reverse dependency order.
 
+### Tool blocklists and Cedar
+
+A prompt's `tool_policy.blocklist` is enforced in two layers:
+
+- **Runtime (primary).** The runtime enforces each prompt's own `tool_policy`. It refuses a blocked tool call before the tool runs.
+- **Gateway (defence in depth).** The pack has one Cedar policy engine, attached to its tool gateway. It is a floor for the whole pack, and it holds even when something calls the gateway directly.
+
+The gateway cannot tell which prompt a call came from, so it forbids only the tools that **no** prompt may use. If one prompt blocks a tool that another prompt allows, the gateway leaves that tool open. The runtime still blocks it for the first prompt, and apply logs a warning. A prompt with no `tools` list counts as allowing every tool. See [`cedar_policy`](docs/src/content/docs/reference/resource-types.md#cedar_policy) for the details.
+
 ### Runtime Binary
 
 The `agentcore-runtime` binary runs inside AgentCore and serves two protocols:
