@@ -301,8 +301,8 @@ func TestApply_SingleAgent_StreamsCorrectEvents(t *testing.T) {
 
 	// Verify state.
 	state := decodeState(t, stateStr)
-	if len(state.Resources) != 1 {
-		t.Errorf("expected 1 resource in state, got %d", len(state.Resources))
+	if len(state.Resources) != 2 {
+		t.Errorf("expected the runtime and its live endpoint in state, got %d", len(state.Resources))
 	}
 	if state.PackID != "mypack" {
 		t.Errorf("state.PackID = %q, want mypack", state.PackID)
@@ -325,9 +325,10 @@ func TestApply_SingleAgentWithTools(t *testing.T) {
 	// Should have tool_gateway events before agent_runtime events.
 	types := resourceEventTypes(events)
 
-	// Expect: calc, search (tool_gateway sorted), then toolpack (runtime).
-	if len(types) != 3 {
-		t.Fatalf("expected 3 resource events, got %d: %v", len(types), types)
+	// Expect: calc, search (tool_gateway sorted), then toolpack (runtime)
+	// and its live endpoint.
+	if len(types) != 4 {
+		t.Fatalf("expected 4 resource events, got %d: %v", len(types), types)
 	}
 	if types[0] != "tool_gateway" || types[1] != "tool_gateway" {
 		t.Errorf("first two resources should be tool_gateway, got %v", types[:2])
@@ -336,10 +337,10 @@ func TestApply_SingleAgentWithTools(t *testing.T) {
 		t.Errorf("third resource should be agent_runtime, got %s", types[2])
 	}
 
-	// Check state has all 3 resources.
+	// Check state has all 4 resources.
 	state := decodeState(t, stateStr)
-	if len(state.Resources) != 3 {
-		t.Errorf("expected 3 resources in state, got %d", len(state.Resources))
+	if len(state.Resources) != 4 {
+		t.Errorf("expected 4 resources in state, got %d", len(state.Resources))
 	}
 }
 
@@ -360,19 +361,20 @@ func TestApply_MultiAgent_DependencyOrder(t *testing.T) {
 	resourceTypes := resourceEventTypes(events)
 
 	// Expected order: tool_gateway(s) -> agent_runtime(s) -> a2a_endpoint(s).
-	// Multi-agent pack has 1 tool, 2 runtimes, 2 a2a endpoints = 5 total.
-	if len(resourceTypes) != 5 {
-		t.Fatalf("expected 5 resource events, got %d: %v", len(resourceTypes), resourceTypes)
+	// Multi-agent pack has 1 tool, 2 runtimes, 2 live endpoints, 2 a2a endpoints = 7 total.
+	if len(resourceTypes) != 7 {
+		t.Fatalf("expected 7 resource events, got %d: %v", len(resourceTypes), resourceTypes)
 	}
 
 	// Verify ordering: gateway before runtime before a2a.
 	assertAllBefore(t, resourceTypes, "tool_gateway", "agent_runtime")
 	assertAllBefore(t, resourceTypes, "agent_runtime", "a2a_endpoint")
+	assertAllBefore(t, resourceTypes, "agent_runtime", "runtime_endpoint")
 
 	// Verify state blob.
 	state := decodeState(t, stateStr)
-	if len(state.Resources) != 5 {
-		t.Errorf("expected 5 resources in state, got %d", len(state.Resources))
+	if len(state.Resources) != 7 {
+		t.Errorf("expected 7 resources in state, got %d", len(state.Resources))
 	}
 	assertAllCreated(t, state.Resources)
 }
@@ -393,19 +395,19 @@ func TestApply_MultiAgentWithEvals(t *testing.T) {
 	// Collect resource types.
 	resourceTypes := resourceEventTypes(events)
 
-	// 2 runtimes + 2 a2a + 2 evaluators + 1 online_eval_config = 7 (no tools in this pack).
-	if len(resourceTypes) != 7 {
-		t.Fatalf("expected 7 resource events, got %d: %v", len(resourceTypes), resourceTypes)
+	// 2 runtimes + 2 live endpoints + 2 a2a + 2 evaluators + 1 online_eval_config = 9 (no tools).
+	if len(resourceTypes) != 9 {
+		t.Fatalf("expected 9 resource events, got %d: %v", len(resourceTypes), resourceTypes)
 	}
 
 	// Evaluators should come after a2a, online_eval_config after evaluators.
 	assertAllBefore(t, resourceTypes, "a2a_endpoint", "evaluator")
 	assertAllBefore(t, resourceTypes, "evaluator", "online_eval_config")
 
-	// State should have all 7.
+	// State should have all 9.
 	state := decodeState(t, stateStr)
-	if len(state.Resources) != 7 {
-		t.Errorf("expected 7 resources in state, got %d", len(state.Resources))
+	if len(state.Resources) != 9 {
+		t.Errorf("expected 9 resources in state, got %d", len(state.Resources))
 	}
 }
 
@@ -626,13 +628,13 @@ func TestApply_EmptyPack_CreatesRuntimeOnly(t *testing.T) {
 			resourceCount++
 		}
 	}
-	if resourceCount != 1 {
-		t.Errorf("expected 1 resource event (runtime only), got %d", resourceCount)
+	if resourceCount != 2 {
+		t.Errorf("expected 2 resource events (runtime and its live endpoint), got %d", resourceCount)
 	}
 
 	state := decodeState(t, stateStr)
-	if len(state.Resources) != 1 {
-		t.Errorf("expected 1 resource in state, got %d", len(state.Resources))
+	if len(state.Resources) != 2 {
+		t.Errorf("expected the runtime and its live endpoint in state, got %d", len(state.Resources))
 	}
 	if state.Resources[0].Type != "agent_runtime" {
 		t.Errorf("expected agent_runtime, got %s", state.Resources[0].Type)
@@ -1014,8 +1016,8 @@ func TestApply_SingleAgent_Update(t *testing.T) {
 
 	// State should have the resource with status=updated and the prior ARN.
 	state := decodeState(t, stateStr)
-	if len(state.Resources) != 1 {
-		t.Fatalf("expected 1 resource, got %d", len(state.Resources))
+	if len(state.Resources) != 2 {
+		t.Fatalf("expected the runtime and its live endpoint, got %d", len(state.Resources))
 	}
 	r := state.Resources[0]
 	if r.Status != "updated" {
@@ -1135,8 +1137,8 @@ func TestApply_WithMemory_CreatesMemoryResource(t *testing.T) {
 	// Should have memory + runtime resource events.
 	resourceTypes := resourceEventTypes(events)
 
-	if len(resourceTypes) != 2 {
-		t.Fatalf("expected 2 resource events (memory + runtime), got %d: %v",
+	if len(resourceTypes) != 3 {
+		t.Fatalf("expected 3 resource events (memory + runtime + live endpoint), got %d: %v",
 			len(resourceTypes), resourceTypes)
 	}
 	if resourceTypes[0] != ResTypeMemory {
@@ -1148,8 +1150,8 @@ func TestApply_WithMemory_CreatesMemoryResource(t *testing.T) {
 
 	// Verify state.
 	state := decodeState(t, stateStr)
-	if len(state.Resources) != 2 {
-		t.Fatalf("expected 2 resources in state, got %d", len(state.Resources))
+	if len(state.Resources) != 3 {
+		t.Fatalf("expected 3 resources in state, got %d", len(state.Resources))
 	}
 
 	// Memory resource should have a valid ARN.
@@ -1498,8 +1500,8 @@ func TestApply_DryRun_SingleAgent_NoAWSCalls(t *testing.T) {
 
 	// State should have planned resources with no ARNs.
 	state := decodeState(t, stateStr)
-	if len(state.Resources) != 1 {
-		t.Errorf("expected 1 resource in state, got %d", len(state.Resources))
+	if len(state.Resources) != 2 {
+		t.Errorf("expected the runtime and its live endpoint in state, got %d", len(state.Resources))
 	}
 	assertPlannedWithoutARN(t, state.Resources)
 	if state.PackID != "mypack" {
@@ -1614,8 +1616,8 @@ func TestApply_DryRun_WithMemory_PlansMemoryResource(t *testing.T) {
 	// Should have memory + runtime planned resources.
 	resourceTypes := resourceEventTypes(events)
 
-	if len(resourceTypes) != 2 {
-		t.Fatalf("expected 2 resource events (memory + runtime), got %d: %v",
+	if len(resourceTypes) != 3 {
+		t.Fatalf("expected 3 resource events (memory + runtime + live endpoint), got %d: %v",
 			len(resourceTypes), resourceTypes)
 	}
 

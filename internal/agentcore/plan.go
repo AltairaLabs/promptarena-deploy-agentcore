@@ -58,11 +58,25 @@ func (p *Provider) Plan(ctx context.Context, req *deploy.PlanRequest) (*deploy.P
 	// plan reflects reality rather than the last thing we wrote down.
 	prior, drift := p.verifiedPriorState(ctx, cfg, prior)
 
-	// 7. Generate desired resources.
-	desired := generateDesiredResources(pack, cfg)
+	// 7. A promote makes no version and changes nothing but each runtime's
+	// live endpoint.
+	if cfg.stage() == StagePromote {
+		if err := validateStageForPack(cfg, pack); err != nil {
+			return nil, fmt.Errorf("agentcore: %w", err)
+		}
+		drift = append(drift, withoutDeletes(planEndpoints(runtimeNamesIn(prior), cfg, prior))...)
+		return &deploy.PlanResponse{Changes: drift, Summary: buildSummary(drift)}, nil
+	}
 
-	// 8. Diff against the verified prior state.
-	changes := diffResources(desired, prior)
+	// 8. Generate desired resources, and diff them against the verified prior
+	// state. Endpoints are planned on their own: one this deploy does not
+	// repoint stays where it is rather than being deleted.
+	if err := validateStageForPack(cfg, pack); err != nil {
+		return nil, fmt.Errorf("agentcore: %w", err)
+	}
+	desired := generateDesiredResources(pack, cfg)
+	changes := diffResources(desired, withoutEndpoints(prior))
+	changes = append(changes, planEndpoints(agentRuntimeNames(pack), cfg, prior)...)
 
 	// 9. Drift joins the plan ahead of the changes it explains: each entry
 	// says why the resource below it is being created rather than updated.

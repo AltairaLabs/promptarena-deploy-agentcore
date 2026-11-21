@@ -44,8 +44,14 @@ func TestConsoleLinksShape(t *testing.T) {
 // The invoke command is what a URL is for the other adapters: the thing you
 // run to talk to what you just deployed. It has to carry the real ARN.
 func TestInvokeHintCarriesTheARN(t *testing.T) {
-	got := invokeHint(testRuntimeARN)
+	got := invokeHint(testRuntimeARN, "live")
 
+	if !strings.Contains(got, "--qualifier live ") {
+		t.Errorf("invokeHint = %q, want it to name the live endpoint", got)
+	}
+	if strings.Contains(invokeHint(testRuntimeARN, ""), "--qualifier") {
+		t.Error("invokeHint without a qualifier should not pass one")
+	}
 	if !strings.Contains(got, testRuntimeARN) {
 		t.Errorf("invokeHint = %q, want it to carry the ARN", got)
 	}
@@ -62,7 +68,7 @@ func TestInvokeHintOnlyForRuntimeARNs(t *testing.T) {
 		"not-an-arn",
 		"arn:aws:bedrock:us-west-2:123456789012:something/else",
 	} {
-		if got := invokeHint(arn); got != "" {
+		if got := invokeHint(arn, "live"); got != "" {
 			t.Errorf("invokeHint(%q) = %q, want empty", arn, got)
 		}
 	}
@@ -70,7 +76,7 @@ func TestInvokeHintOnlyForRuntimeARNs(t *testing.T) {
 
 func TestDetailWithInvokeHint(t *testing.T) {
 	t.Run("runtime gets the command appended", func(t *testing.T) {
-		got := detailWithInvokeHint(ResTypeAgentRuntime, testRuntimeARN)
+		got := detailWithInvokeHint(ResTypeAgentRuntime, testRuntimeARN, "live")
 		if !strings.Contains(got, testRuntimeARN) {
 			t.Errorf("detail lost the ARN: %q", got)
 		}
@@ -81,7 +87,7 @@ func TestDetailWithInvokeHint(t *testing.T) {
 
 	t.Run("other resource types are untouched", func(t *testing.T) {
 		const detail = "arn:aws:bedrock-agentcore:us-west-2:123456789012:memory/m"
-		if got := detailWithInvokeHint(ResTypeMemory, detail); got != detail {
+		if got := detailWithInvokeHint(ResTypeMemory, detail, "live"); got != detail {
 			t.Errorf("detailWithInvokeHint = %q, want it unchanged", got)
 		}
 	})

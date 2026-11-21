@@ -9,6 +9,17 @@ const (
 	ResTypeEvaluator        = "evaluator"
 	ResTypeOnlineEvalConfig = "online_eval_config"
 	ResTypeCedarPolicy      = "cedar_policy"
+	ResTypeRuntimeEndpoint  = "runtime_endpoint"
+)
+
+// Metadata keys a runtime_endpoint entry records, and the one an agent_runtime
+// entry records its latest version under.
+const (
+	metaRuntimeARN    = "runtime_arn"
+	metaEndpoint      = "endpoint"
+	metaVersion       = "version"
+	metaLatestVersion = "latest_version"
+	metaPackVersion   = "pack_version"
 )
 
 // Resource lifecycle status constants used in ResourceState.Status.

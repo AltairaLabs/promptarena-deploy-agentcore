@@ -57,6 +57,9 @@ type applyContext struct {
 	reporter *adaptersdk.ProgressReporter
 	client   awsClient
 	priorMap map[string]ResourceState
+	// preVersions is each prior runtime's latest version before this apply
+	// updated it, read only for a candidate deploy.
+	preVersions map[string]string
 }
 
 // prepareApply parses the request and initializes the apply context.
@@ -71,6 +74,10 @@ func (p *Provider) prepareApply(
 	cfg, err := parseConfig(req.DeployConfig)
 	if err != nil {
 		return nil, fmt.Errorf("agentcore: failed to parse deploy config: %w", err)
+	}
+
+	if stageErr := validateStageForPack(cfg, pack); stageErr != nil {
+		return nil, fmt.Errorf("agentcore: %w", stageErr)
 	}
 
 	cfg.ArenaConfig, err = parseArenaConfig(req.ArenaConfig)
@@ -160,6 +167,12 @@ func (p *Provider) Apply(
 	if cfg.DryRun {
 		return p.applyDryRun(ctx, req, callback)
 	}
+	if errs := validateRollout(cfg); len(errs) > 0 {
+		return "", fmt.Errorf("agentcore: %s", strings.Join(errs, "; "))
+	}
+	if cfg.stage() == StagePromote {
+		return p.applyPromote(ctx, req, cfg, callback)
+	}
 
 	ac, err := p.prepareApply(ctx, req, callback)
 	if err != nil {
@@ -220,7 +233,10 @@ func (p *Provider) applyDryRun(
 	cfg.PackTools = pack.Tools
 
 	reporter := newReporter(callback)
-	desired := generateDesiredResources(pack, cfg)
+	desired := planEndpoints(agentRuntimeNames(pack), cfg, nil)
+	if cfg.stage() != StagePromote {
+		desired = append(generateDesiredResources(pack, cfg), desired...)
+	}
 	annotateRuntimeOverride(desired, cfg)
 
 	resources, cbErr := emitDryRunResources(reporter, desired)
@@ -317,6 +333,10 @@ func (p *Provider) executeApplyPhases(
 		return resources, policyCbErr
 	}
 
+	// A candidate deploy leaves live on what callers had: read each runtime's
+	// version before this apply moves it.
+	ac.preVersions = priorRuntimeVersions(ctx, ac)
+
 	// Step 3 — Agent runtimes (supports update).
 	phase = applyPhase(ctx, ac, phaseSpec{
 		create:    ac.client.CreateRuntime,
@@ -348,7 +368,27 @@ func (p *Provider) executeApplyPhases(
 	}
 
 	// Steps 5–6 — Evaluators and Online Evaluation Config.
-	return applyEvalPhases(ctx, ac, resources, applyErr)
+	resources, applyErr = applyEvalPhases(ctx, ac, resources, applyErr)
+
+	// Last, and only when everything else succeeded: every update this apply
+	// makes to a runtime is done, so each runtime's latest version is final.
+	// Point the endpoint this deploy targets at it.
+	resources, applyErr, _ = mergeEndpoints(ctx, ac, resources, applyErr)
+	return resources, applyErr
+}
+
+// mergeEndpoints runs applyEndpointsPhase and folds its error into applyErr.
+// After a failure it points nothing: a version an apply failed to finish is
+// not one to serve, and leaving each endpoint where it was is what a named
+// endpoint is for.
+func mergeEndpoints(
+	ctx context.Context, ac *applyContext, resources []ResourceState, applyErr error,
+) ([]ResourceState, error, error) {
+	if applyErr != nil {
+		return resources, applyErr, nil
+	}
+	resources, epErr, cbErr := applyEndpointsPhase(ctx, ac, resources)
+	return resources, combineErrors(applyErr, epErr), cbErr
 }
 
 // applyEvalPhases deploys evaluators and wires them to traces via an online
@@ -688,7 +728,7 @@ func applyPhase(ctx context.Context, ac *applyContext, spec phaseSpec) applyPhas
 		if err := reporter.Resource(&deploy.ResourceResult{
 			Type: resType, Name: name, Action: op.action,
 			Status: op.status,
-			Detail: detailWithInvokeHint(resType, arn),
+			Detail: detailWithInvokeHint(resType, arn, cfg.liveEndpoint()),
 			Links:  consoleLinks(cfg.Region),
 		}); err != nil {
 			result.callbackErr = err

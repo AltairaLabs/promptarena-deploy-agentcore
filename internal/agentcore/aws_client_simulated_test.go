@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strconv"
 )
 
 // simulatedAWSClient returns mock ARNs for all operations.
@@ -26,6 +27,14 @@ type simulatedAWSClient struct {
 	missingLogGroups map[string]bool
 	// logGroupErr, when set, makes LogGroupExists fail.
 	logGroupErr error
+
+	// versions holds each runtime's latest version, keyed by ARN, and
+	// endpoints the version each named endpoint serves, keyed by
+	// "<runtime ARN>|<endpoint>". Both are created on first use.
+	versions  map[string]int
+	endpoints map[string]string
+	// pointed records each PointRuntimeEndpoint call as "<endpoint>=<version>".
+	pointed []string
 }
 
 func newSimulatedAWSClient(region string) *simulatedAWSClient {
@@ -36,11 +45,41 @@ func newSimulatedAWSClient(region string) *simulatedAWSClient {
 }
 
 func (c *simulatedAWSClient) CreateRuntime(_ context.Context, name string, _ *Config) (string, error) {
-	return fmt.Sprintf("arn:aws:bedrock-agentcore:%s:%s:runtime/%s", c.region, c.accountID, name), nil
+	arn := fmt.Sprintf("arn:aws:bedrock-agentcore:%s:%s:runtime/%s", c.region, c.accountID, name)
+	c.bumpVersion(arn)
+	return arn, nil
 }
 
 func (c *simulatedAWSClient) UpdateRuntime(_ context.Context, arn string, _ string, _ *Config) (string, error) {
+	c.bumpVersion(arn)
 	return arn, nil
+}
+
+func (c *simulatedAWSClient) bumpVersion(arn string) {
+	if c.versions == nil {
+		c.versions = map[string]int{}
+	}
+	c.versions[arn]++
+}
+
+func (c *simulatedAWSClient) RuntimeVersion(_ context.Context, arn string) (string, error) {
+	if c.versions[arn] == 0 {
+		return "1", nil
+	}
+	return strconv.Itoa(c.versions[arn]), nil
+}
+
+func (c *simulatedAWSClient) RuntimeEndpointVersion(_ context.Context, arn, endpoint string) (string, error) {
+	return c.endpoints[arn+"|"+endpoint], nil
+}
+
+func (c *simulatedAWSClient) PointRuntimeEndpoint(_ context.Context, arn, endpoint, version string) (string, error) {
+	if c.endpoints == nil {
+		c.endpoints = map[string]string{}
+	}
+	c.endpoints[arn+"|"+endpoint] = version
+	c.pointed = append(c.pointed, endpoint+"="+version)
+	return arn + "/runtime-endpoint/" + endpoint, nil
 }
 
 func (c *simulatedAWSClient) GatewayEndpoint() (url, authorizer string) {

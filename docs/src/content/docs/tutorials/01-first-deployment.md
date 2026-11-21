@@ -256,15 +256,17 @@ For a single-agent pack named `my-agent`, you will see output like this:
 ```
 Planning agentcore deployment...
 
-  agent_runtime  my-agent  CREATE  Create AgentCore runtime for my-agent
+  agent_runtime     my-agent       CREATE  Create AgentCore runtime for my-agent
+  runtime_endpoint  my-agent/live  CREATE  Point live at the version this deploy creates
 
-Plan: 1 to create, 0 to update, 0 to delete
+Plan: 2 to create, 0 to update, 0 to delete
 ```
 
 The plan tells you:
 - **Resource type**: `agent_runtime` -- a Bedrock AgentCore runtime container.
 - **Name**: derived from your pack ID.
 - **Action**: `CREATE` because no prior deployment state exists.
+- **`runtime_endpoint`**: the runtime's `live` endpoint, which callers invoke. Each deploy makes a new runtime version and points `live` at it. See [staged versions](/how-to/configure#rollout_stage-live_endpoint-candidate_endpoint).
 
 If your pack includes tools, validators, or memory configuration, additional resources will appear:
 
@@ -272,8 +274,9 @@ If your pack includes tools, validators, or memory configuration, additional res
   memory          my-agent_memory       CREATE  Create memory store (session) for my-agent
   cedar_policy    main                  CREATE  Create Cedar policy for prompt main
   agent_runtime   my-agent              CREATE  Create AgentCore runtime for my-agent
+  runtime_endpoint my-agent/live        CREATE  Point live at the version this deploy creates
 
-Plan: 3 to create, 0 to update, 0 to delete
+Plan: 4 to create, 0 to update, 0 to delete
 ```
 
 Review the plan and proceed when it looks correct.
@@ -303,14 +306,15 @@ The runtime creation includes a polling phase -- the adapter waits until the run
 
 ## Step 7: Invoke the Agent
 
-Once deployed, you can invoke your agent via the `InvokeAgentRuntime` API. The runtime ARN is in the deploy state output.
+Once deployed, you can invoke your agent via the `InvokeAgentRuntime` API. The runtime ARN is in the deploy state output. Pass `--qualifier live`: without a qualifier AgentCore uses `DEFAULT`, which serves every new version the moment it exists, including one you have only staged.
 
 Using the AWS CLI:
 
 ```bash
 aws bedrock-agentcore invoke-agent-runtime \
   --agent-runtime-arn "arn:aws:bedrock-agentcore:us-west-2:123456789012:runtime/my-agent-xxxx" \
-  --runtime-session-id "test-session-1" \
+  --qualifier live \
+  --runtime-session-id "test-session-1-at-least-33-characters" \
   --payload '{"prompt": "Explain machine learning in one sentence."}' \
   --content-type "application/json" \
   --accept "application/json" \

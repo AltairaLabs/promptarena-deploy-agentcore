@@ -73,6 +73,21 @@ const baseConfigSchema = `{
       "items": {"type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,255}$"},
       "description": "Headers AgentCore passes to the container: Authorization (jwt a2a_auth) or custom ones"
     },
+    "rollout_stage": {
+      "type": "string",
+      "enum": ["live", "candidate", "promote"],
+      "description": "live (default) serves the new version on live_endpoint; candidate stages it; promote serves it"
+    },
+    "live_endpoint": {
+      "type": "string",
+      "pattern": "^[a-zA-Z][a-zA-Z0-9_]{0,47}$",
+      "description": "Runtime endpoint callers invoke (default live)"
+    },
+    "candidate_endpoint": {
+      "type": "string",
+      "pattern": "^[a-zA-Z][a-zA-Z0-9_]{0,47}$",
+      "description": "Runtime endpoint a candidate version is staged on (default candidate)"
+    },
     "a2a_auth": {
       "type": "object",
       "required": ["mode"],
