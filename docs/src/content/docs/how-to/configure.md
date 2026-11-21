@@ -216,6 +216,8 @@ rollout_stage: promote
 
 A promote makes no version and changes nothing but `live`, and repeating it changes nothing. Then remove `rollout_stage` (or set it to `live`) so the next deploy goes straight to `live` again.
 
+If the runtime has no live endpoint yet, for example because it was deployed by an earlier adapter version, a `candidate` deploy creates one. It goes on the version `DEFAULT` served before the deploy, or on the new version when the runtime is new. Staging is refused for multi-agent packs, because the entry agent calls its members through their `DEFAULT` endpoints.
+
 Only the runtime has versions. A `candidate` deploy still updates tools, Cedar policies, evaluators and memory in place, and `live` traffic sees those changes at once.
 
 Each version's description ends with `pack_version=<pack version>`, after any text the description already had, for example `support agent pack_version=v1.2.0`. To read it back, take the last whitespace-separated token that starts with `pack_version=`.

@@ -12,6 +12,9 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/bedrockagentcorecontrol/types"
 )
 
+// staleFailurePolls is how many polls a failed status may be a leftover.
+const staleFailurePolls = 3
+
 // runtimeIDFromARN returns the runtime id in a runtime ARN, or in a runtime
 // endpoint ARN (…:runtime/<id>/runtime-endpoint/<name>).
 func runtimeIDFromARN(arn string) string {
@@ -67,8 +70,15 @@ func (c *realAWSClient) RuntimeEndpointVersion(
 		}
 		return "", err
 	}
-	if out.Status == types.AgentRuntimeEndpointStatusDeleting {
+	switch out.Status {
+	case types.AgentRuntimeEndpointStatusDeleting:
 		return "", nil
+	case types.AgentRuntimeEndpointStatusCreating, types.AgentRuntimeEndpointStatusUpdating:
+		// Moving: what it serves is about to change, so it is not yet a
+		// version to read (a promote would take the outgoing one).
+		return "", fmt.Errorf("endpoint %s/%s is %s; try again when it is READY", id, endpoint, out.Status)
+	case types.AgentRuntimeEndpointStatusReady, types.AgentRuntimeEndpointStatusCreateFailed,
+		types.AgentRuntimeEndpointStatusUpdateFailed:
 	}
 	return servedVersion(out), nil
 }
@@ -145,8 +155,13 @@ func (c *realAWSClient) createEndpoint(ctx context.Context, id, endpoint, versio
 }
 
 // waitForEndpointServing polls until the endpoint is READY on version.
+//
+// A failed status counts only once the endpoint has been seen moving, or
+// after a few polls: right after an update, an endpoint an earlier attempt
+// left failed can still report that old failure.
 func (c *realAWSClient) waitForEndpointServing(ctx context.Context, id, endpoint, version string) error {
-	for range maxPollAttempts {
+	moved := false
+	for attempt := range maxPollAttempts {
 		out, err := c.getEndpoint(ctx, id, endpoint)
 		if err != nil {
 			return err
@@ -157,10 +172,13 @@ func (c *realAWSClient) waitForEndpointServing(ctx context.Context, id, endpoint
 				return nil
 			}
 		case types.AgentRuntimeEndpointStatusCreateFailed, types.AgentRuntimeEndpointStatusUpdateFailed:
-			return fmt.Errorf("endpoint %s/%s entered status %s: %s",
-				id, endpoint, out.Status, aws.ToString(out.FailureReason))
+			if moved || attempt >= staleFailurePolls {
+				return fmt.Errorf("endpoint %s/%s entered status %s: %s",
+					id, endpoint, out.Status, aws.ToString(out.FailureReason))
+			}
 		case types.AgentRuntimeEndpointStatusCreating, types.AgentRuntimeEndpointStatusUpdating,
 			types.AgentRuntimeEndpointStatusDeleting:
+			moved = true
 		}
 		time.Sleep(pollInterval)
 	}

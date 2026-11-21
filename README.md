@@ -118,9 +118,18 @@ A normal deploy works as it did before this option existed. It also creates
 `rollout_stage: candidate` and test with `qualifier=candidate`. Then deploy
 with `rollout_stage: promote`. A promote reads the version `candidate` serves
 from AgentCore, not from saved state, and points `live` at it. It creates no
-version and changes nothing else, and running it again changes nothing. If a
-runtime's first deploy uses `candidate`, only `candidate` is created, and
-`live` appears at the first promote.
+version and changes nothing else, and running it again changes nothing.
+
+A `candidate` deploy also creates `live` if the runtime has none, such as a
+runtime deployed before this option existed. It puts `live` on the version
+callers already had, the one `DEFAULT` served before the deploy. A brand-new
+runtime has only one version, so `live` goes on that one.
+
+Staging applies to single-agent packs only. In a multi-agent pack the entry
+agent calls its members by runtime ARN. AgentCore sends those calls to each
+member's `DEFAULT` endpoint, so a staged member version would serve live
+traffic straight away. For a multi-agent pack, plan and apply refuse
+`candidate` and `promote`.
 
 Only the runtime is staged. Tools on the gateway, Cedar policies, evaluators
 and memory have no versions. A `candidate` deploy updates them in place, and
@@ -132,9 +141,16 @@ runtime versions, so it cannot delete one that an endpoint points at.
 
 Each version's description records the pack it came from as its last token,
 `pack_version=<version>`. The adapter keeps any other description text and
-puts the token after it (`my notes pack_version=v1.2.0`). The online evaluation
-config scores the traces of the `live` endpoint (service name
-`<pack-id>.live`), because AgentCore lets a config read only one service name.
+puts the token after it (`my notes pack_version=v1.2.0`).
+
+Endpoint support does not change online evaluation. AgentCore names a
+runtime's traces `<runtime>.<endpoint>` and lets an online evaluation config
+read only one service name. The config stays on `<pack-id>.DEFAULT`, so
+traffic sent through `live` or `candidate` is not scored.
+
+Endpoints and the description tag are the only changes to a normal deploy.
+Each is applied as the last step of a deploy, and only when every earlier
+step succeeded.
 
 ## Run another container
 

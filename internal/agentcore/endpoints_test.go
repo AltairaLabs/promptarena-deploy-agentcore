@@ -2,6 +2,7 @@ package agentcore
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"slices"
 	"strings"
@@ -121,15 +122,10 @@ func TestVersionDescription(t *testing.T) {
 	}
 }
 
-func TestEvalServiceNameIsTheLiveEndpoint(t *testing.T) {
+func TestEvalServiceNameStaysOnDefault(t *testing.T) {
 	cfg := &Config{ResourceTags: map[string]string{TagKeyPackID: "mypack"}, LiveEndpoint: "prod"}
-	got := evalServiceNames(cfg)
-	want := []string{"mypack.prod"} // AgentCore accepts one service name
-	if got := evalServiceNames(&Config{ResourceTags: map[string]string{TagKeyPackID: "p"}}); got[0] != "p.live" {
-		t.Errorf("default service name = %v, want p.live", got)
-	}
-	if !slices.Equal(got, want) {
-		t.Errorf("evalServiceNames = %v, want %v", got, want)
+	if got := evalServiceNames(cfg); !slices.Equal(got, []string{"mypack.DEFAULT"}) {
+		t.Errorf("evalServiceNames = %v, want the one name AgentCore accepts, on DEFAULT as before", got)
 	}
 }
 
@@ -348,8 +344,9 @@ func TestApply_CustomEndpointNames(t *testing.T) {
 	if got := endpointEntry(t, stateStr, "next").Metadata[metaVersion]; got != "1" {
 		t.Errorf("next on %q, want 1", got)
 	}
-	if _, ok := c.endpoints[stagedRuntimeARN+"|prod"]; ok {
-		t.Error("a candidate deploy created the live endpoint")
+	// A new runtime has no other version, so live is created on the same one.
+	if got := endpointEntry(t, stateStr, "prod").Metadata[metaVersion]; got != "1" {
+		t.Errorf("prod on %q, want 1", got)
 	}
 }
 
@@ -359,10 +356,99 @@ func TestApply_CarriedEndpointGoneIsDropped(t *testing.T) {
 	provider := stagedProvider(c, nil)
 	_, state1 := mustApply(t, provider, stageRequest(t, "", ""))
 	_, state2 := mustApply(t, provider, stageRequest(t, `"rollout_stage":"candidate"`, state1))
+	delete(c.endpoints, stagedRuntimeARN+"|candidate")
+	_, state3 := mustApply(t, provider, stageRequest(t, "", state2))
+	if _, ok := stateByKey(decodeState(t, state3))[resourceKey(ResTypeRuntimeEndpoint, "mypack/candidate")]; ok {
+		t.Error("state still records a candidate endpoint the platform no longer has")
+	}
+}
+
+// A candidate deploy on a runtime with no live endpoint (one deployed before
+// endpoints existed) creates live on the version callers already had.
+func TestApply_CandidateCreatesLiveOnTheVersionCallersHad(t *testing.T) {
+	c := newSimulatedAWSClient("us-west-2")
+	provider := stagedProvider(c, nil)
+	_, state1 := mustApply(t, provider, stageRequest(t, "", ""))
 	delete(c.endpoints, stagedRuntimeARN+"|live")
-	_, state3 := mustApply(t, provider, stageRequest(t, `"rollout_stage":"candidate"`, state2))
-	if _, ok := stateByKey(decodeState(t, state3))[resourceKey(ResTypeRuntimeEndpoint, "mypack/live")]; ok {
-		t.Error("state still records a live endpoint the platform no longer has")
+	var old AdapterState
+	for _, r := range decodeState(t, state1).Resources {
+		if r.Type == ResTypeAgentRuntime {
+			old.Resources = append(old.Resources, r)
+		}
+	}
+	prior, _ := json.Marshal(old)
+	events, state2 := mustApply(t, provider, stageRequest(t, `"rollout_stage":"candidate"`, string(prior)))
+	if got := endpointEntry(t, state2, "live").Metadata[metaVersion]; got != "1" {
+		t.Errorf("live created on %q, want the pre-deploy version 1", got)
+	}
+	if got := endpointEntry(t, state2, "candidate").Metadata[metaVersion]; got != "2" {
+		t.Errorf("candidate on %q, want 2", got)
+	}
+	if out := resourceOutcomes(events)["mypack/live"]; out.action != deploy.ActionCreate {
+		t.Errorf("live event = %+v, want a create", out)
+	}
+}
+
+func TestStagingRefusedForMultiAgentPacks(t *testing.T) {
+	provider := stagedProvider(newSimulatedAWSClient("us-west-2"), nil)
+	for _, stage := range []string{StageCandidate, StagePromote} {
+		cfg := withOptions(validConfig(t), `"rollout_stage":"`+stage+`"`)
+		req := &deploy.PlanRequest{PackJSON: multiAgentPack(), DeployConfig: cfg, ArenaConfig: validArenaConfigJSON,
+			PriorState: `{"resources":[{"type":"agent_runtime","name":"coordinator","arn":"arn:aws:bedrock-agentcore:us-west-2:1:runtime/c","status":"created"}]}`}
+		if _, _, err := collectEvents(t, provider, req); err == nil || !strings.Contains(err.Error(), "multi-agent") {
+			t.Errorf("%s apply of a multi-agent pack: err = %v", stage, err)
+		}
+		planReq := *req
+		planReq.DeployConfig = withOptions(validDeployConfig, `"rollout_stage":"`+stage+`"`)
+		if _, err := provider.Plan(context.Background(), &planReq); err == nil || !strings.Contains(err.Error(), "multi-agent") {
+			t.Errorf("%s plan of a multi-agent pack: err = %v", stage, err)
+		}
+	}
+}
+
+// A failure in a phase after the runtime (an evaluator here) points nothing.
+func TestApply_LaterFailurePointsNothing(t *testing.T) {
+	c := &failingAWSClient{simulatedAWSClient: *newSimulatedAWSClient("us-west-2"),
+		failOn: map[string]bool{"evaluator": true}}
+	provider := &Provider{
+		awsClientFunc: func(context.Context, *Config) (awsClient, error) { return c, nil },
+		destroyerFunc: func(context.Context, *Config) (resourceDestroyer, error) { return &recordingDestroyer{}, nil },
+		checkerFunc:   func(context.Context, *Config) (resourceChecker, error) { return &simulatedChecker{}, nil },
+	}
+	req := &deploy.PlanRequest{
+		PackJSON: evalToolPack([]string{"quality"}, nil), DeployConfig: validConfig(t), ArenaConfig: validArenaConfigJSON,
+	}
+	if _, _, err := collectEvents(t, provider, req); err == nil {
+		t.Fatal("expected the evaluator failure to fail the apply")
+	}
+	if len(c.pointed) != 0 {
+		t.Errorf("pointed %v after a failed evaluator", c.pointed)
+	}
+}
+
+func TestApply_PromoteTagsWhatItCreates(t *testing.T) {
+	c := newSimulatedAWSClient("us-west-2")
+	var seen *Config
+	provider := stagedProvider(c, nil)
+	_, state1 := mustApply(t, provider, stageRequest(t, `"rollout_stage":"candidate"`, ""))
+	provider.awsClientFunc = func(_ context.Context, cfg *Config) (awsClient, error) { seen = cfg; return c, nil }
+	mustApply(t, provider, stageRequest(t, `"rollout_stage":"promote","tags":{"team":"x"}`, state1))
+	if seen == nil || seen.ResourceTags[TagKeyPackID] != "mypack" || seen.ResourceTags["team"] != "x" {
+		t.Errorf("promote client config tags = %v, want pack and user tags", seen.ResourceTags)
+	}
+}
+
+func TestPlan_PromoteDeletesNothing(t *testing.T) {
+	prior := `{"resources":[` +
+		`{"type":"agent_runtime","name":"mypack","arn":"` + stagedRuntimeARN + `","status":"created"},` +
+		`{"type":"agent_runtime","name":"broken","status":"failed"},` +
+		`{"type":"runtime_endpoint","name":"broken/candidate","arn":"x","status":"created",` +
+		`"metadata":{"endpoint":"candidate","runtime_arn":"y","version":"1"}}]}`
+	resp := planWith(t, stagedProvider(newSimulatedAWSClient("us-west-2"), nil), `"rollout_stage":"promote"`, prior)
+	for _, ch := range resp.Changes {
+		if ch.Action == deploy.ActionDelete {
+			t.Errorf("promote plan deletes %s, which promote never does", ch.Name)
+		}
 	}
 }
 

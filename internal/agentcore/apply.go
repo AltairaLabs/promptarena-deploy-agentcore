@@ -57,6 +57,9 @@ type applyContext struct {
 	reporter *adaptersdk.ProgressReporter
 	client   awsClient
 	priorMap map[string]ResourceState
+	// preVersions is each prior runtime's latest version before this apply
+	// updated it, read only for a candidate deploy.
+	preVersions map[string]string
 }
 
 // prepareApply parses the request and initializes the apply context.
@@ -71,6 +74,10 @@ func (p *Provider) prepareApply(
 	cfg, err := parseConfig(req.DeployConfig)
 	if err != nil {
 		return nil, fmt.Errorf("agentcore: failed to parse deploy config: %w", err)
+	}
+
+	if stageErr := validateStageForPack(cfg, pack); stageErr != nil {
+		return nil, fmt.Errorf("agentcore: %w", stageErr)
 	}
 
 	cfg.ArenaConfig, err = parseArenaConfig(req.ArenaConfig)
@@ -326,6 +333,10 @@ func (p *Provider) executeApplyPhases(
 		return resources, policyCbErr
 	}
 
+	// A candidate deploy leaves live on what callers had: read each runtime's
+	// version before this apply moves it.
+	ac.preVersions = priorRuntimeVersions(ctx, ac)
+
 	// Step 3 — Agent runtimes (supports update).
 	phase = applyPhase(ctx, ac, phaseSpec{
 		create:    ac.client.CreateRuntime,
@@ -348,13 +359,6 @@ func (p *Provider) executeApplyPhases(
 		}
 	}
 
-	// Every update this apply makes to a runtime is done, so each runtime's
-	// latest version is final: point the endpoint this deploy targets at it.
-	resources, applyErr, cbErr = mergeEndpoints(ctx, ac, resources, applyErr)
-	if cbErr != nil {
-		return resources, cbErr
-	}
-
 	// Step 4 — A2A wiring (only for multi-agent packs, no update support).
 	if adaptersdk.IsMultiAgent(ac.pack) {
 		resources, applyErr, cbErr = applyA2AWiring(ctx, ac, resources, applyErr)
@@ -364,7 +368,13 @@ func (p *Provider) executeApplyPhases(
 	}
 
 	// Steps 5–6 — Evaluators and Online Evaluation Config.
-	return applyEvalPhases(ctx, ac, resources, applyErr)
+	resources, applyErr = applyEvalPhases(ctx, ac, resources, applyErr)
+
+	// Last, and only when everything else succeeded: every update this apply
+	// makes to a runtime is done, so each runtime's latest version is final.
+	// Point the endpoint this deploy targets at it.
+	resources, applyErr, _ = mergeEndpoints(ctx, ac, resources, applyErr)
+	return resources, applyErr
 }
 
 // mergeEndpoints runs applyEndpointsPhase and folds its error into applyErr.

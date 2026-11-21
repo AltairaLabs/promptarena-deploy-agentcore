@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/AltairaLabs/PromptKit/runtime/v2/prompt"
 	"github.com/AltairaLabs/promptarena/v2/deploy"
 	"github.com/AltairaLabs/promptarena/v2/deploy/adaptersdk"
 )
@@ -140,12 +141,12 @@ func versionDescription(existing, packVersion string) string {
 }
 
 // evalServiceNames is the trace service name an online evaluation config
-// reads. AgentCore names a runtime's traces <runtime>.<endpoint>, and the
-// config accepts exactly one name, so it reads the live endpoint's: the
-// traffic callers are told to send. Traffic on DEFAULT or the candidate
-// endpoint is not evaluated.
+// reads. AgentCore names a runtime's traces <runtime>.<endpoint> and the
+// config accepts exactly one name. It stays on DEFAULT, as before endpoints
+// existed, so existing callers keep being scored; traffic on the live and
+// candidate endpoints is not evaluated.
 func evalServiceNames(cfg *Config) []string {
-	return []string{cfg.ResourceTags[TagKeyPackID] + "." + cfg.liveEndpoint()}
+	return []string{cfg.ResourceTags[TagKeyPackID] + "." + reservedEndpointName}
 }
 
 // ---------- apply ----------
@@ -223,7 +224,87 @@ func pointRuntime(
 	}); err != nil {
 		return keepPrior(), nil, err
 	}
-	return append(others, endpointState(rt.Name, rt.ARN, target, arn, version, status)), nil, nil
+	entries := others
+	entries = append(entries, endpointState(rt.Name, rt.ARN, target, arn, version, status))
+	if target == ac.cfg.liveEndpoint() {
+		return entries, nil, nil
+	}
+	live, liveErr, cbErr := ensureLive(ctx, ac, rt, others, version)
+	if live != nil {
+		entries = append(entries, *live)
+	}
+	return entries, liveErr, cbErr
+}
+
+// ensureLive creates the live endpoint when a candidate deploy finds none, so
+// every deploy leaves one to invoke. It goes on the version callers had
+// before this apply (what DEFAULT served), or on the new version when the
+// runtime is new and there is no other. It returns nil when live exists.
+func ensureLive(
+	ctx context.Context, ac *applyContext, rt *ResourceState, carried []ResourceState, newVersion string,
+) (*ResourceState, error, error) {
+	live := ac.cfg.liveEndpoint()
+	for _, r := range carried {
+		if r.Metadata[metaEndpoint] == live {
+			return nil, nil, nil
+		}
+	}
+	name := endpointResourceName(rt.Name, live)
+	current, err := ac.client.RuntimeEndpointVersion(ctx, rt.ARN, live)
+	if err != nil || current != "" {
+		return nil, nil, nil // exists, or cannot tell: leave it alone
+	}
+	version := ac.preVersions[rt.Name]
+	if version == "" {
+		version = newVersion
+	}
+	arn, err := ac.client.PointRuntimeEndpoint(ctx, rt.ARN, live, version)
+	if err != nil {
+		deployErr := newDeployError("create", ResTypeRuntimeEndpoint, name, err)
+		_ = ac.reporter.Error(deployErr)
+		return nil, deployErr, nil
+	}
+	if cbErr := ac.reporter.Resource(&deploy.ResourceResult{
+		Type: ResTypeRuntimeEndpoint, Name: name, Action: deploy.ActionCreate, Status: ResStatusCreated,
+		Detail: endpointDetail(live, version),
+	}); cbErr != nil {
+		return nil, nil, cbErr
+	}
+	entry := endpointState(rt.Name, rt.ARN, live, arn, version, ResStatusCreated)
+	return &entry, nil, nil
+}
+
+// priorRuntimeVersions reads, for a candidate deploy, each prior runtime's
+// latest version before the apply updates it. A runtime that cannot be read
+// is left out.
+func priorRuntimeVersions(ctx context.Context, ac *applyContext) map[string]string {
+	if ac.cfg.stage() != StageCandidate {
+		return nil
+	}
+	out := map[string]string{}
+	for _, name := range agentRuntimeNames(ac.pack) {
+		prior, ok := ac.priorMap[resourceKey(ResTypeAgentRuntime, name)]
+		if !ok || prior.ARN == "" {
+			continue
+		}
+		if v, err := ac.client.RuntimeVersion(ctx, prior.ARN); err == nil && v != "" {
+			out[name] = v
+		}
+	}
+	return out
+}
+
+// validateStageForPack refuses staging a multi-agent pack: the entry agent
+// reaches its members by runtime ARN, which AgentCore routes to each
+// member's DEFAULT endpoint, so a staged member version would serve live
+// traffic at once.
+func validateStageForPack(cfg *Config, pack *prompt.Pack) error {
+	if cfg.stage() != StageLive && adaptersdk.IsMultiAgent(pack) {
+		return fmt.Errorf("rollout_stage %q is not supported for a multi-agent pack: the entry agent "+
+			"calls its members through their DEFAULT endpoints, so a staged member would serve live traffic",
+			cfg.stage())
+	}
+	return nil
 }
 
 // carriedEndpoints returns the prior endpoint entries of runtime other than
@@ -321,6 +402,15 @@ func (p *Provider) applyPromote(
 	}
 	reporter := newReporter(callback)
 	priorMap := parsePriorState(req.PriorState)
+	packID, packVersion := prior.PackID, prior.Version
+	if pack, perr := adaptersdk.ParsePack([]byte(req.PackJSON)); perr == nil {
+		if stageErr := validateStageForPack(cfg, pack); stageErr != nil {
+			return "", fmt.Errorf("agentcore: %w", stageErr)
+		}
+		packID, packVersion = pack.ID, pack.Version
+	}
+	// Tags for an endpoint promote creates, as every other resource gets.
+	cfg.ResourceTags = buildResourceTags(packID, packVersion, "", cfg.Tags)
 
 	var promoteErr error
 	resources := prior.Resources
@@ -531,6 +621,17 @@ func withoutEndpoints(state *AdapterState) *AdapterState {
 		}
 	}
 	return &out
+}
+
+// withoutDeletes drops delete changes: a promote deletes nothing.
+func withoutDeletes(changes []deploy.ResourceChange) []deploy.ResourceChange {
+	var out []deploy.ResourceChange
+	for _, c := range changes {
+		if c.Action != deploy.ActionDelete {
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 // runtimeNamesIn returns the names of the runtimes a state records.

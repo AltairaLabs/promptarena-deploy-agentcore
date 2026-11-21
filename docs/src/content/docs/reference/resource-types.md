@@ -247,7 +247,7 @@ Up to two per agent runtime, named `{runtime}/{endpoint}`: the live endpoint (`l
 | Promote | `GetAgentRuntimeEndpoint` | Reads the version the candidate endpoint serves, then points live at it. |
 | Delete | `DeleteAgentRuntimeEndpoint` | Deletes the endpoint and polls until it is gone, so that the runtime can be deleted after it. Tolerates NotFound. |
 
-An apply that has already failed points no endpoint, so a version from an unfinished apply is never served on `live`. The adapter never deletes runtime versions. It cannot remove one that an endpoint points at.
+Endpoints are pointed last, after evaluators and the online eval config. An apply in which any earlier step failed points no endpoint, so a version from an unfinished apply is never served on `live`. A `candidate` deploy also creates the live endpoint when the runtime has none. It goes on the version the runtime had before the deploy, or on the new version when the runtime is new. For a multi-agent pack, `candidate` and `promote` are refused. The adapter never deletes runtime versions. It cannot remove one that an endpoint points at.
 
 ### Health check
 
@@ -370,7 +370,7 @@ One `online_eval_config` resource is created per pack when the pack has any `llm
 
 The CloudWatch log group is resolved from `observability.cloudwatch_log_group` if configured, otherwise defaults to `aws/spans`, the group AgentCore writes spans to when [CloudWatch Transaction Search](https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/Enable-TransactionSearch.html) is enabled. AWS creates `aws/spans` when Transaction Search is enabled, and it cannot be created by hand, so Apply checks it exists before creating anything and refuses the deploy if it does not: enable Transaction Search in the region, or set `observability.cloudwatch_log_group`. The sampling percentage defaults to 100% but can be overridden via the `sample_percentage` eval param.
 
-The config reads the traces of the live endpoint, service name `<pack-id>.<live_endpoint>` (by default `<pack-id>.live`). AgentCore names a runtime's traces `<runtime>.<endpoint>` and accepts only one service name per config, so traffic sent to `DEFAULT` or to the candidate endpoint is not evaluated.
+The config reads traces with service name `<pack-id>.DEFAULT`. AgentCore names a runtime's traces `<runtime>.<endpoint>` and accepts only one service name per config, so traffic sent through the `live` or `candidate` endpoint is not evaluated.
 
 A configured `cloudwatch_log_group` that does not exist is created by Apply, tagged `promptpack:online-eval-config={pack}_online_eval`, and its name is recorded in the resource's state. Destroy deletes it after the config, but only when it carries that tag with this config's name, so a group that existed before the deploy, or that another pack created, is left alone. A group created by a release before v0.4.5 has no tag and is left in place.
 

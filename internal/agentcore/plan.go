@@ -61,13 +61,19 @@ func (p *Provider) Plan(ctx context.Context, req *deploy.PlanRequest) (*deploy.P
 	// 7. A promote makes no version and changes nothing but each runtime's
 	// live endpoint.
 	if cfg.stage() == StagePromote {
-		drift = append(drift, planEndpoints(runtimeNamesIn(prior), cfg, prior)...)
+		if err := validateStageForPack(cfg, pack); err != nil {
+			return nil, fmt.Errorf("agentcore: %w", err)
+		}
+		drift = append(drift, withoutDeletes(planEndpoints(runtimeNamesIn(prior), cfg, prior))...)
 		return &deploy.PlanResponse{Changes: drift, Summary: buildSummary(drift)}, nil
 	}
 
 	// 8. Generate desired resources, and diff them against the verified prior
 	// state. Endpoints are planned on their own: one this deploy does not
 	// repoint stays where it is rather than being deleted.
+	if err := validateStageForPack(cfg, pack); err != nil {
+		return nil, fmt.Errorf("agentcore: %w", err)
+	}
 	desired := generateDesiredResources(pack, cfg)
 	changes := diffResources(desired, withoutEndpoints(prior))
 	changes = append(changes, planEndpoints(agentRuntimeNames(pack), cfg, prior)...)
