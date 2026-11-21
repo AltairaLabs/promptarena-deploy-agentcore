@@ -44,25 +44,31 @@ func consoleLinks(region string) []deploy.ResourceLink {
 // invokeHint is the command that actually talks to a deployed runtime.
 //
 // This is the "how do I use it" that a URL would carry for the other adapters.
-// The ARN is the whole handle, so a caller who has this line needs nothing else
-// from the deploy output.
-func invokeHint(arn string) string {
+// The ARN and the endpoint are the whole handle, so a caller who has this line
+// needs nothing else from the deploy output. The qualifier names the live
+// endpoint: without one AgentCore uses DEFAULT, which serves every new version
+// the moment it exists, staged or not.
+func invokeHint(arn, qualifier string) string {
 	if !strings.HasPrefix(arn, "arn:aws:bedrock-agentcore:") {
 		return ""
 	}
+	q := ""
+	if qualifier != "" {
+		q = "--qualifier " + qualifier + " "
+	}
 	return fmt.Sprintf(
-		"aws bedrock-agentcore invoke-agent-runtime --agent-runtime-arn %s "+
+		"aws bedrock-agentcore invoke-agent-runtime --agent-runtime-arn %s %s"+
 			`--runtime-session-id <session> --payload '{"prompt":"hello"}' `+
-			"--content-type application/json --accept application/json /dev/stdout", arn)
+			"--content-type application/json --accept application/json /dev/stdout", arn, q)
 }
 
 // detailWithInvokeHint appends the invoke command to a resource's detail when
 // the detail is an agent runtime ARN, and leaves everything else untouched.
-func detailWithInvokeHint(resType, detail string) string {
+func detailWithInvokeHint(resType, detail, qualifier string) string {
 	if resType != ResTypeAgentRuntime {
 		return detail
 	}
-	hint := invokeHint(detail)
+	hint := invokeHint(detail, qualifier)
 	if hint == "" {
 		return detail
 	}

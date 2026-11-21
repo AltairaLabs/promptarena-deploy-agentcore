@@ -164,6 +164,8 @@ func TestApply_FreshDeployPartialFailureReturnsWhatItCreated(t *testing.T) {
 		resourceKey(ResTypeToolGateway, "lookup"),
 		resourceKey(ResTypeAgentRuntime, "coordinator"),
 		resourceKey(ResTypeAgentRuntime, "worker"),
+		resourceKey(ResTypeRuntimeEndpoint, "coordinator/live"),
+		resourceKey(ResTypeRuntimeEndpoint, "worker/live"),
 	}
 	if len(state.Resources) != len(want) {
 		t.Fatalf("state = %+v, want exactly %v", state.Resources, want)

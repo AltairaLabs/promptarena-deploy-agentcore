@@ -408,6 +408,9 @@ func (c *realAWSClient) CreateRuntime(
 		input.EnvironmentVariables = envVars
 	}
 	input.AuthorizerConfiguration, input.RequestHeaderConfiguration = runtimeAccess(cfg)
+	if desc := versionDescription("", cfg.ResourceTags[TagKeyVersion]); desc != "" {
+		input.Description = aws.String(desc)
+	}
 	if tags := tagsWithAgent(cfg.ResourceTags, name); len(tags) > 0 {
 		input.Tags = tags
 	}
@@ -457,6 +460,12 @@ func (c *realAWSClient) UpdateRuntime(
 		input.EnvironmentVariables = envVars
 	}
 	input.AuthorizerConfiguration, input.RequestHeaderConfiguration = runtimeAccess(cfg)
+	// UpdateAgentRuntime replaces the description too, so carry the current
+	// text forward and tag the new version with the pack version.
+	desc := versionDescription(c.runtimeDescription(ctx, id), cfg.ResourceTags[TagKeyVersion])
+	if desc != "" {
+		input.Description = aws.String(desc)
+	}
 	_, err := c.client.UpdateAgentRuntime(ctx, input)
 	if err != nil {
 		return arn, fmt.Errorf("UpdateAgentRuntime %q: %w", name, err)
@@ -878,10 +887,6 @@ func (c *realAWSClient) CreateOnlineEvalConfig(
 		}
 	}
 
-	// Service name follows AgentCore convention: <runtime-name>.DEFAULT
-	packID := cfg.ResourceTags[TagKeyPackID]
-	serviceName := packID + ".DEFAULT"
-
 	evalRefs := buildEvaluatorReferences(cfg.EvalARNs, cfg.BuiltinEvalIDs)
 	if len(evalRefs) == 0 {
 		return "", fmt.Errorf("CreateOnlineEvalConfig %q: no evaluator references available", name)
@@ -896,7 +901,7 @@ func (c *realAWSClient) CreateOnlineEvalConfig(
 		DataSourceConfig: &types.DataSourceConfigMemberCloudWatchLogs{
 			Value: types.CloudWatchLogsInputConfig{
 				LogGroupNames: []string{logGroup},
-				ServiceNames:  []string{serviceName},
+				ServiceNames:  evalServiceNames(cfg),
 			},
 		},
 		Evaluators: evalRefs,
@@ -958,7 +963,7 @@ func (c *realAWSClient) UpdateOnlineEvalConfig(
 		DataSourceConfig: &types.DataSourceConfigMemberCloudWatchLogs{
 			Value: types.CloudWatchLogsInputConfig{
 				LogGroupNames: []string{resolveLogGroup(cfg)},
-				ServiceNames:  []string{cfg.ResourceTags[TagKeyPackID] + ".DEFAULT"},
+				ServiceNames:  evalServiceNames(cfg),
 			},
 		},
 		Evaluators: evalRefs,
@@ -1418,6 +1423,8 @@ func (c *realAWSClient) DeleteResource(ctx context.Context, res ResourceState) e
 		return c.deleteMemory(ctx, res)
 	case ResTypeAgentRuntime:
 		return c.deleteRuntime(ctx, res)
+	case ResTypeRuntimeEndpoint:
+		return c.deleteRuntimeEndpoint(ctx, res)
 	case ResTypeToolGateway:
 		return c.deleteGateway(ctx, res)
 	case ResTypeA2AEndpoint:
@@ -1776,6 +1783,8 @@ func (c *realAWSClient) CheckResource(ctx context.Context, res ResourceState) (s
 		return c.checkMemory(ctx, res)
 	case ResTypeAgentRuntime:
 		return c.checkRuntime(ctx, res)
+	case ResTypeRuntimeEndpoint:
+		return c.checkRuntimeEndpoint(ctx, res)
 	case ResTypeToolGateway:
 		return c.checkGateway(ctx, res)
 	case ResTypeA2AEndpoint:

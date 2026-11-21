@@ -276,14 +276,18 @@ Planning agentcore deployment...
   a2a_endpoint    coordinator_a2a       CREATE  Create A2A endpoint for coordinator
   a2a_endpoint    researcher_a2a        CREATE  Create A2A endpoint for researcher
   a2a_endpoint    writer_a2a            CREATE  Create A2A endpoint for writer
+  runtime_endpoint coordinator/live     CREATE  Point live at the version this deploy creates
+  runtime_endpoint researcher/live      CREATE  Point live at the version this deploy creates
+  runtime_endpoint writer/live          CREATE  Point live at the version this deploy creates
 
-Plan: 7 to create, 0 to update, 0 to delete
+Plan: 10 to create, 0 to update, 0 to delete
 ```
 
 Notice the three categories of resources:
 - **`tool_gateway`** -- one per pack-level tool, created first because runtimes depend on them.
 - **`agent_runtime`** -- one per agent member.
 - **`a2a_endpoint`** -- one per agent, wiring inter-agent communication.
+- **`runtime_endpoint`** -- the `live` endpoint of each runtime, which callers invoke with `qualifier=live`.
 
 If your pack includes validators, tool policies, memory, or evaluators, additional resources will appear:
 
@@ -298,8 +302,11 @@ If your pack includes validators, tool policies, memory, or evaluators, addition
   a2a_endpoint    researcher_a2a        CREATE  Create A2A endpoint for researcher
   a2a_endpoint    writer_a2a            CREATE  Create A2A endpoint for writer
   evaluator       quality               CREATE  Create evaluator for quality
+  runtime_endpoint coordinator/live     CREATE  Point live at the version this deploy creates
+  runtime_endpoint researcher/live      CREATE  Point live at the version this deploy creates
+  runtime_endpoint writer/live          CREATE  Point live at the version this deploy creates
 
-Plan: 10 to create, 0 to update, 0 to delete
+Plan: 13 to create, 0 to update, 0 to delete
 ```
 
 ## Step 5: Apply the Deployment

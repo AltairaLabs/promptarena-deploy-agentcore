@@ -16,6 +16,7 @@ var destroyOrder = []string{
 	ResTypeCedarPolicy,
 	ResTypeEvaluator,
 	ResTypeA2AEndpoint,
+	ResTypeRuntimeEndpoint,
 	ResTypeAgentRuntime,
 	ResTypeMemory,
 }
@@ -214,19 +215,24 @@ func (p *Provider) Status(
 	var resources []deploy.ResourceStatus
 	hasUnhealthy := false
 
-	for _, res := range state.Resources {
-		health, checkErr := checker.CheckResource(ctx, res)
+	for i := range state.Resources {
+		res := &state.Resources[i]
+		health, checkErr := checker.CheckResource(ctx, *res)
 		if checkErr != nil {
 			health = StatusUnhealthy
 		}
 		if health != StatusHealthy {
 			hasUnhealthy = true
 		}
+		detail := detailWithInvokeHint(res.Type, res.ARN, cfg.liveEndpoint())
+		if res.Type == ResTypeRuntimeEndpoint {
+			detail = endpointStatusDetail(ctx, checker, res)
+		}
 		resources = append(resources, deploy.ResourceStatus{
 			Type:   res.Type,
 			Name:   res.Name,
 			Status: health,
-			Detail: detailWithInvokeHint(res.Type, res.ARN),
+			Detail: detail,
 			Links:  consoleLinks(cfg.Region),
 		})
 	}

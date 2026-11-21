@@ -160,6 +160,12 @@ func (p *Provider) Apply(
 	if cfg.DryRun {
 		return p.applyDryRun(ctx, req, callback)
 	}
+	if errs := validateRollout(cfg); len(errs) > 0 {
+		return "", fmt.Errorf("agentcore: %s", strings.Join(errs, "; "))
+	}
+	if cfg.stage() == StagePromote {
+		return p.applyPromote(ctx, req, cfg, callback)
+	}
 
 	ac, err := p.prepareApply(ctx, req, callback)
 	if err != nil {
@@ -220,7 +226,10 @@ func (p *Provider) applyDryRun(
 	cfg.PackTools = pack.Tools
 
 	reporter := newReporter(callback)
-	desired := generateDesiredResources(pack, cfg)
+	desired := planEndpoints(agentRuntimeNames(pack), cfg, nil)
+	if cfg.stage() != StagePromote {
+		desired = append(generateDesiredResources(pack, cfg), desired...)
+	}
 	annotateRuntimeOverride(desired, cfg)
 
 	resources, cbErr := emitDryRunResources(reporter, desired)
@@ -339,6 +348,13 @@ func (p *Provider) executeApplyPhases(
 		}
 	}
 
+	// Every update this apply makes to a runtime is done, so each runtime's
+	// latest version is final: point the endpoint this deploy targets at it.
+	resources, applyErr, cbErr = mergeEndpoints(ctx, ac, resources, applyErr)
+	if cbErr != nil {
+		return resources, cbErr
+	}
+
 	// Step 4 — A2A wiring (only for multi-agent packs, no update support).
 	if adaptersdk.IsMultiAgent(ac.pack) {
 		resources, applyErr, cbErr = applyA2AWiring(ctx, ac, resources, applyErr)
@@ -349,6 +365,20 @@ func (p *Provider) executeApplyPhases(
 
 	// Steps 5–6 — Evaluators and Online Evaluation Config.
 	return applyEvalPhases(ctx, ac, resources, applyErr)
+}
+
+// mergeEndpoints runs applyEndpointsPhase and folds its error into applyErr.
+// After a failure it points nothing: a version an apply failed to finish is
+// not one to serve, and leaving each endpoint where it was is what a named
+// endpoint is for.
+func mergeEndpoints(
+	ctx context.Context, ac *applyContext, resources []ResourceState, applyErr error,
+) ([]ResourceState, error, error) {
+	if applyErr != nil {
+		return resources, applyErr, nil
+	}
+	resources, epErr, cbErr := applyEndpointsPhase(ctx, ac, resources)
+	return resources, combineErrors(applyErr, epErr), cbErr
 }
 
 // applyEvalPhases deploys evaluators and wires them to traces via an online
@@ -688,7 +718,7 @@ func applyPhase(ctx context.Context, ac *applyContext, spec phaseSpec) applyPhas
 		if err := reporter.Resource(&deploy.ResourceResult{
 			Type: resType, Name: name, Action: op.action,
 			Status: op.status,
-			Detail: detailWithInvokeHint(resType, arn),
+			Detail: detailWithInvokeHint(resType, arn, cfg.liveEndpoint()),
 			Links:  consoleLinks(cfg.Region),
 		}); err != nil {
 			result.callbackErr = err

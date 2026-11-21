@@ -188,6 +188,38 @@ request_header_allowlist:
 
 Use this when the runtime verifies its caller's identity itself, as omnia-dialhome does for turns it serves on `InvokeAgentRuntime`.
 
+### `rollout_stage`, `live_endpoint`, `candidate_endpoint`
+
+Every deploy that updates a runtime creates a new, immutable runtime version, and AgentCore's `DEFAULT` endpoint always serves the latest one. The adapter keeps two named endpoints that each pin a version: `live`, which callers invoke, and `candidate`, where a version can wait before it is served. **Call the runtime with `qualifier=live`.** Once a version is staged, `DEFAULT` is unsafe, because it already serves the staged version.
+
+| `rollout_stage` | Creates a version | `live` endpoint | `candidate` endpoint |
+|-----------------|-------------------|-----------------|----------------------|
+| `live` (default) | Yes | Points at the new version | Unchanged |
+| `candidate` | Yes | Unchanged | Points at the new version |
+| `promote` | No | Points at the version `candidate` serves, read from AgentCore | Unchanged |
+
+`live_endpoint` and `candidate_endpoint` rename the two endpoints (defaults `live` and `candidate`). A name starts with a letter and has at most 48 letters, digits and underscores. The names must differ, and neither may be `DEFAULT`.
+
+A staged rollout is three deploys:
+
+```yaml
+# 1. Stage: callers on live see no change.
+rollout_stage: candidate
+```
+
+Test the new version with `qualifier=candidate`. Then:
+
+```yaml
+# 2. Serve it.
+rollout_stage: promote
+```
+
+A promote makes no version and changes nothing but `live`, and repeating it changes nothing. Then remove `rollout_stage` (or set it to `live`) so the next deploy goes straight to `live` again.
+
+Only the runtime has versions. A `candidate` deploy still updates tools, Cedar policies, evaluators and memory in place, and `live` traffic sees those changes at once.
+
+Each version's description ends with `pack_version=<pack version>`, after any text the description already had, for example `support agent pack_version=v1.2.0`. To read it back, take the last whitespace-separated token that starts with `pack_version=`.
+
 ### `a2a_auth`
 
 Authentication configuration for Agent-to-Agent (A2A) communication in multi-agent packs. The `mode` field is required when this object is present.

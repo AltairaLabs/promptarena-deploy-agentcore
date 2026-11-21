@@ -48,6 +48,17 @@ type Config struct {
 	// door, reads it there.
 	RequestHeaderAllowlist []string `json:"request_header_allowlist,omitempty"`
 
+	// RolloutStage selects what a deploy does with the runtime version it
+	// makes: "live" (the default) points the live endpoint at it, "candidate"
+	// stages it on the candidate endpoint and leaves live where it was, and
+	// "promote" makes no version and points live at the candidate's.
+	RolloutStage string `json:"rollout_stage,omitempty"`
+
+	// LiveEndpoint and CandidateEndpoint name the runtime endpoints the
+	// adapter manages (default "live" and "candidate").
+	LiveEndpoint      string `json:"live_endpoint,omitempty"`
+	CandidateEndpoint string `json:"candidate_endpoint,omitempty"`
+
 	// Providers declares which providers the deployed runtime uses and in
 	// what role. When empty the adapter falls back to deriving a single LLM
 	// provider from the arena config, which is deprecated.
@@ -379,6 +390,7 @@ func (c *Config) validate() []string {
 	errs = append(errs, validateMemory(&c.Memory)...)
 	errs = append(errs, validateA2AAuth(c.A2AAuth)...)
 	errs = append(errs, validateRequestHeaders(c.RequestHeaderAllowlist, c.A2AAuth)...)
+	errs = append(errs, validateRollout(c)...)
 	errs = append(errs, validateTags(c.Tags)...)
 	errs = append(errs, validateToolTargetNames(c.ToolTargets)...)
 	errs = append(errs, validateProviderBindings(c)...)

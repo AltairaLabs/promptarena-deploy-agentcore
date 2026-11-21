@@ -4,7 +4,7 @@ sidebar:
   order: 2
 ---
 
-The AgentCore adapter manages seven resource types. Each resource has a constant name used in state serialization, a mapping to the PromptPack concept it represents, and defined create/update/delete/health-check behavior.
+The AgentCore adapter manages eight resource types. Each resource has a constant name used in state serialization, a mapping to the PromptPack concept it represents, and defined create/update/delete/health-check behavior.
 
 ## Resource type summary
 
@@ -14,6 +14,7 @@ The AgentCore adapter manages seven resource types. Each resource has a constant
 | `ResTypeToolGateway` | `tool_gateway` | Pack tools | Yes | No | Yes | Status READY |
 | `ResTypeCedarPolicy` | `cedar_policy` | Prompt validators / tool_policy | Yes | No | Yes | Engine ACTIVE |
 | `ResTypeAgentRuntime` | `agent_runtime` | Agent members (or pack ID) | Yes | Yes | Yes | Status READY |
+| `ResTypeRuntimeEndpoint` | `runtime_endpoint` | The `live` and `candidate` endpoints of each runtime | Yes | Yes (repoint) | Yes | Status READY |
 | `ResTypeA2AEndpoint` | `a2a_endpoint` | Multi-agent wiring | Yes | No | No-op | Always healthy |
 | `ResTypeEvaluator` | `evaluator` | Pack evals (`llm_as_judge` only) | Yes | No | Yes | Status ACTIVE |
 | `ResTypeOnlineEvalConfig` | `online_eval_config` | Wires evaluators to agent traces | Yes | Yes | Yes | Status ACTIVE |
@@ -194,11 +195,11 @@ For multi-agent packs, one runtime is created per agent member (using the agent 
 
 | Operation | API Call | Details |
 |-----------|----------|---------|
-| Create | `CreateAgentRuntime` | Provisions an AgentCore runtime with the configured role, environment variables, authorizer, and tags. Polls until status is `READY`. |
-| Update | `UpdateAgentRuntime` | Updates an existing runtime with new environment variables and authorizer config. Polls until status is `READY`. Triggered on redeployment when the resource exists in prior state. |
+| Create | `CreateAgentRuntime` | Provisions an AgentCore runtime with the configured role, environment variables, authorizer, and tags. Its description is `pack_version=<pack version>`. Polls until status is `READY`. |
+| Update | `UpdateAgentRuntime` | Updates an existing runtime with new environment variables and authorizer config, which makes a new runtime version. The description keeps the current text and ends with `pack_version=<pack version>`, replacing any earlier token. Polls until status is `READY`. Triggered on redeployment when the resource exists in prior state. |
 | Delete | `DeleteAgentRuntime` | Deletes the runtime by ID. Tolerates NotFound. |
 
-This is the only resource type that supports update. On redeployment, if a runtime with the same type and name exists in the prior state, the adapter calls `UpdateAgentRuntime` instead of `CreateAgentRuntime`.
+On redeployment, if a runtime with the same type and name exists in the prior state, the adapter calls `UpdateAgentRuntime` instead of `CreateAgentRuntime`.
 
 ### Health check
 
@@ -217,6 +218,54 @@ After creation or update, the adapter polls `GetAgentRuntime` every 5 seconds fo
 ### Side effects
 
 For multi-agent packs, after all runtimes are created, the adapter builds a JSON map of `{agentName: runtimeARN}` and injects it as `PROMPTPACK_AGENTS` on the entry agent via an `UpdateAgentRuntime` call.
+
+### Metadata
+
+| Key | Value |
+|-----|-------|
+| `latest_version` | The runtime version this apply ended on. `DEFAULT` serves it. |
+| `pack_version` | The pack version that version was deployed from. |
+
+---
+
+## `runtime_endpoint`
+
+**Constant:** `ResTypeRuntimeEndpoint`
+**String value:** `"runtime_endpoint"`
+
+### Pack mapping
+
+Up to two per agent runtime, named `{runtime}/{endpoint}`: the live endpoint (`live_endpoint`, default `live`) and the candidate endpoint (`candidate_endpoint`, default `candidate`). Which one a deploy moves depends on [`rollout_stage`](/how-to/configure#rollout_stage-live_endpoint-candidate_endpoint). The other one stays where it is, and plan shows it as unchanged, with the version it serves.
+
+### AWS API calls
+
+| Operation | API Call | Details |
+|-----------|----------|---------|
+| Read version | `GetAgentRuntime` | The runtime's latest version, read after the apply's last update to the runtime. |
+| Create | `CreateAgentRuntimeEndpoint` | Creates the endpoint on that version. Polls `GetAgentRuntimeEndpoint` until it is `READY` on the version. |
+| Update | `UpdateAgentRuntimeEndpoint` | Repoints the endpoint. Skipped when it is already `READY` on the version. Polls as for create. |
+| Promote | `GetAgentRuntimeEndpoint` | Reads the version the candidate endpoint serves, then points live at it. |
+| Delete | `DeleteAgentRuntimeEndpoint` | Deletes the endpoint and polls until it is gone, so that the runtime can be deleted after it. Tolerates NotFound. |
+
+An apply that has already failed points no endpoint, so a version from an unfinished apply is never served on `live`. The adapter never deletes runtime versions. It cannot remove one that an endpoint points at.
+
+### Health check
+
+Calls `GetAgentRuntimeEndpoint`. Status reports the version the endpoint serves, read from AgentCore.
+
+| Result | Condition |
+|--------|-----------|
+| `healthy` | Status is `READY` |
+| `unhealthy` | Any other status, or the call fails |
+| `missing` | NotFound, or status `DELETING` |
+
+### Metadata
+
+| Key | Value |
+|-----|-------|
+| `runtime_arn` | ARN of the runtime the endpoint belongs to |
+| `endpoint` | Endpoint name, for example `live` |
+| `version` | The runtime version the endpoint serves. For the candidate endpoint, this is the staged version. |
 
 ---
 
@@ -321,13 +370,15 @@ One `online_eval_config` resource is created per pack when the pack has any `llm
 
 The CloudWatch log group is resolved from `observability.cloudwatch_log_group` if configured, otherwise defaults to `aws/spans`, the group AgentCore writes spans to when [CloudWatch Transaction Search](https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/Enable-TransactionSearch.html) is enabled. AWS creates `aws/spans` when Transaction Search is enabled, and it cannot be created by hand, so Apply checks it exists before creating anything and refuses the deploy if it does not: enable Transaction Search in the region, or set `observability.cloudwatch_log_group`. The sampling percentage defaults to 100% but can be overridden via the `sample_percentage` eval param.
 
+The config reads the traces of the live endpoint, service name `<pack-id>.<live_endpoint>` (by default `<pack-id>.live`). AgentCore names a runtime's traces `<runtime>.<endpoint>` and accepts only one service name per config, so traffic sent to `DEFAULT` or to the candidate endpoint is not evaluated.
+
 A configured `cloudwatch_log_group` that does not exist is created by Apply, tagged `promptpack:online-eval-config={pack}_online_eval`, and its name is recorded in the resource's state. Destroy deletes it after the config, but only when it carries that tag with this config's name, so a group that existed before the deploy, or that another pack created, is left alone. A group created by a release before v0.4.5 has no tag and is left in place.
 
 ### What destroy leaves behind
 
 AgentCore itself creates log groups that this adapter does not manage, and destroy does not delete them:
 
-- `/aws/bedrock-agentcore/runtimes/<runtime-id>-DEFAULT` for each agent runtime.
+- `/aws/bedrock-agentcore/runtimes/<runtime-id>-<endpoint>` for each endpoint of each agent runtime that has been invoked (`DEFAULT`, `live`, `candidate`).
 - `/aws/bedrock-agentcore/evaluations/results/<online-eval-config-id>` for the online eval config.
 - `aws/spans`, which belongs to Transaction Search and is shared by everything in the region.
 

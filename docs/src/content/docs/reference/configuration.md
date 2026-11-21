@@ -54,6 +54,9 @@ This page documents every field, its type, constraints, and validation behavior.
 | `protocol` | string | No | `"both"` | Server protocol mode. Controls which servers the runtime starts. See [protocol](#protocol). |
 | `providers` | object[] | No | -- | Provider bindings declaring what the runtime uses and in what role. See [providers](#providers). |
 | `runtime_override` | object | No | -- | Run another container in place of the runtime. See [runtime_override](#runtime_override). |
+| `rollout_stage` | string | No | `"live"` | What a deploy does with the runtime version it makes: `"live"` points the live endpoint at it, `"candidate"` points the candidate endpoint at it and leaves live alone, `"promote"` makes no version and points live at the version candidate serves. See [rollout_stage](/how-to/configure#rollout_stage-live_endpoint-candidate_endpoint). |
+| `live_endpoint` | string | No | `"live"` | Name of the runtime endpoint callers invoke. Must match `^[a-zA-Z][a-zA-Z0-9_]{0,47}$`, must not be `DEFAULT`. |
+| `candidate_endpoint` | string | No | `"candidate"` | Name of the runtime endpoint a staged version waits on. Same rules as `live_endpoint`, and it must differ from it. |
 | `tool_targets` | map[string]object | No | -- | Per-tool AWS target config (`lambda_arn`, `api_gateway`, `openapi`, `smithy`, `credential`), merged into the arena tool specs. A tool with an AWS target runs through the Gateway whatever its arena `mode`. A tool without one runs inside the runtime: `mode: mock` as a mock, `mode: live` as an HTTP call to its `http.url`. Plan refuses a `live` tool with no `http.url`, and any other mode (`mcp`, `exec`, `client`). |
 
 ## `providers`
@@ -220,6 +223,7 @@ The adapter validates the config in `ValidateConfig` before any Plan or Apply ca
 7. Tag count must not exceed 50; individual key and value lengths are checked.
 8. `runtime_binary_path` is required unless `runtime_override.image` is set.
 9. If `runtime_override` is set, it must pass the checks in [runtime_override](#runtime_override).
+10. If `rollout_stage` is set, it must be `"live"`, `"candidate"` or `"promote"`. `live_endpoint` and `candidate_endpoint` must match `^[a-zA-Z][a-zA-Z0-9_]{0,47}$`, must not be `DEFAULT` (in any case), and must differ.
 
 In addition to hard validation errors, the adapter runs diagnostic checks that emit non-fatal warnings (prefixed with `warning:`).
 
@@ -392,6 +396,21 @@ Tag limit exceeded:
     "dry_run": {
       "type": "boolean",
       "description": "When true, Apply simulates resource creation without calling AWS APIs"
+    },
+    "rollout_stage": {
+      "type": "string",
+      "enum": ["live", "candidate", "promote"],
+      "description": "live (default) serves the new version on live_endpoint; candidate stages it; promote serves it"
+    },
+    "live_endpoint": {
+      "type": "string",
+      "pattern": "^[a-zA-Z][a-zA-Z0-9_]{0,47}$",
+      "description": "Runtime endpoint callers invoke (default live)"
+    },
+    "candidate_endpoint": {
+      "type": "string",
+      "pattern": "^[a-zA-Z][a-zA-Z0-9_]{0,47}$",
+      "description": "Runtime endpoint a candidate version is staged on (default candidate)"
     },
     "a2a_auth": {
       "type": "object",

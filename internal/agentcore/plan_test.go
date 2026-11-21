@@ -123,6 +123,7 @@ func TestPlan_FirstDeploy_SingleAgent(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
+	resp.Changes = withoutEndpointChanges(resp.Changes)
 	if len(resp.Changes) != 1 {
 		t.Fatalf("expected 1 change, got %d: %+v", len(resp.Changes), resp.Changes)
 	}
@@ -138,7 +139,7 @@ func TestPlan_FirstDeploy_SingleAgent(t *testing.T) {
 		t.Errorf("action = %q, want CREATE", c.Action)
 	}
 
-	if resp.Summary != "Plan: 1 to create, 0 to update, 0 to delete" {
+	if resp.Summary != "Plan: 2 to create, 0 to update, 0 to delete" {
 		t.Errorf("summary = %q", resp.Summary)
 	}
 }
@@ -156,6 +157,7 @@ func TestPlan_FirstDeploy_MultiAgent(t *testing.T) {
 
 	// Multi-agent with 2 members: 2 agent_runtime + 2 a2a_endpoint = 4. Apply
 	// creates no entry-agent gateway, so the plan shows none.
+	resp.Changes = withoutEndpointChanges(resp.Changes)
 	if len(resp.Changes) != 4 {
 		t.Fatalf("expected 4 changes, got %d: %+v", len(resp.Changes), resp.Changes)
 	}
@@ -182,7 +184,7 @@ func TestPlan_FirstDeploy_MultiAgent(t *testing.T) {
 		t.Errorf("expected no gateway, got %d", typeCounts["gateway"])
 	}
 
-	if resp.Summary != "Plan: 4 to create, 0 to update, 0 to delete" {
+	if resp.Summary != "Plan: 6 to create, 0 to update, 0 to delete" {
 		t.Errorf("summary = %q", resp.Summary)
 	}
 }
@@ -199,6 +201,7 @@ func TestPlan_MultiAgent_WithToolsAndEvals(t *testing.T) {
 	}
 
 	// 2 agent_runtime + 2 a2a_endpoint + 1 tool_gateway (tool) + 1 evaluator + 1 online_eval_config = 7.
+	resp.Changes = withoutEndpointChanges(resp.Changes)
 	if len(resp.Changes) != 7 {
 		t.Fatalf("expected 7 changes, got %d: %+v", len(resp.Changes), resp.Changes)
 	}
@@ -241,6 +244,7 @@ func TestPlan_UpdateScenario(t *testing.T) {
 	}
 
 	// mypack should be UPDATE, old_resource should be DELETE.
+	resp.Changes = withoutEndpointChanges(resp.Changes)
 	if len(resp.Changes) != 2 {
 		t.Fatalf("expected 2 changes, got %d: %+v", len(resp.Changes), resp.Changes)
 	}
@@ -257,7 +261,7 @@ func TestPlan_UpdateScenario(t *testing.T) {
 		t.Errorf("old_resource action = %q, want DELETE", actionMap["old_resource"])
 	}
 
-	if resp.Summary != "Plan: 0 to create, 1 to update, 1 to delete" {
+	if resp.Summary != "Plan: 1 to create, 1 to update, 1 to delete" {
 		t.Errorf("summary = %q", resp.Summary)
 	}
 }
@@ -285,6 +289,7 @@ func TestPlan_UpdateMixed(t *testing.T) {
 	}
 
 	// router resources match prior -> UPDATE, worker resources are new -> CREATE.
+	resp.Changes = withoutEndpointChanges(resp.Changes)
 	actionCounts := map[deploy.Action]int{}
 	for _, c := range resp.Changes {
 		actionCounts[c.Action]++
@@ -393,6 +398,7 @@ func TestPlan_SingleAgent_EmptyPackID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+	resp.Changes = withoutEndpointChanges(resp.Changes)
 	if len(resp.Changes) != 1 {
 		t.Fatalf("expected 1 change, got %d", len(resp.Changes))
 	}
@@ -481,6 +487,7 @@ func TestPlan_WithMemory_IncludesMemoryResource(t *testing.T) {
 	}
 
 	// Should have memory + agent_runtime = 2 changes.
+	resp.Changes = withoutEndpointChanges(resp.Changes)
 	if len(resp.Changes) != 2 {
 		t.Fatalf("expected 2 changes, got %d: %+v", len(resp.Changes), resp.Changes)
 	}
@@ -543,6 +550,7 @@ func TestPlan_SingleAgent_WithTools_IncludesToolGateway(t *testing.T) {
 	}
 
 	// Should have agent_runtime + tool_gateway = 2 changes.
+	resp.Changes = withoutEndpointChanges(resp.Changes)
 	if len(resp.Changes) != 2 {
 		t.Fatalf("expected 2 changes, got %d: %+v", len(resp.Changes), resp.Changes)
 	}
@@ -581,6 +589,7 @@ func TestPlan_WithValidators_NoPolicyResources(t *testing.T) {
 	}
 
 	// Should have only agent_runtime = 1 change. No cedar_policy.
+	resp.Changes = withoutEndpointChanges(resp.Changes)
 	if len(resp.Changes) != 1 {
 		t.Fatalf("expected 1 change (agent_runtime only), got %d: %+v", len(resp.Changes), resp.Changes)
 	}
@@ -708,4 +717,17 @@ func TestPlan_RefusesUndeployableToolMode(t *testing.T) {
 	if !strings.Contains(err.Error(), "invalid tool config") || !strings.Contains(err.Error(), `"calc"`) {
 		t.Errorf("error should name the tool config problem, got %q", err.Error())
 	}
+}
+
+// withoutEndpointChanges drops the runtime_endpoint changes every runtime now
+// brings, for the tests about the other resources; endpoints_test.go covers
+// them.
+func withoutEndpointChanges(changes []deploy.ResourceChange) []deploy.ResourceChange {
+	var out []deploy.ResourceChange
+	for _, c := range changes {
+		if c.Type != ResTypeRuntimeEndpoint {
+			out = append(out, c)
+		}
+	}
+	return out
 }

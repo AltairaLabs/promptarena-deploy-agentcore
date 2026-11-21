@@ -6,6 +6,17 @@ import "context"
 type awsClient interface {
 	CreateRuntime(ctx context.Context, name string, cfg *Config) (arn string, err error)
 	UpdateRuntime(ctx context.Context, arn string, name string, cfg *Config) (string, error)
+
+	// RuntimeVersion reports the runtime's latest version: the one its last
+	// create or update made, which the DEFAULT endpoint serves.
+	RuntimeVersion(ctx context.Context, runtimeARN string) (string, error)
+	// RuntimeEndpointVersion reports the version a named endpoint of the
+	// runtime points at, or "" when there is no such endpoint.
+	RuntimeEndpointVersion(ctx context.Context, runtimeARN, endpoint string) (string, error)
+	// PointRuntimeEndpoint creates the named endpoint at version, or repoints
+	// it there, waits until it serves it, and returns the endpoint's ARN. An
+	// endpoint already on version is left alone.
+	PointRuntimeEndpoint(ctx context.Context, runtimeARN, endpoint, version string) (string, error)
 	CreateGatewayTool(ctx context.Context, name string, cfg *Config) (arn string, err error)
 
 	// GatewayEndpoint reports the MCP endpoint of the gateway these tools

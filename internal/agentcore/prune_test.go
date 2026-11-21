@@ -252,7 +252,7 @@ func TestPlanAndApply_MigrateUnscopedEvaluatorNames(t *testing.T) {
 
 	actions := planActions(t, provider, req)
 	if creates := keysWithAction(actions, deploy.ActionCreate); strings.Join(creates, ",") !=
-		resourceKey(ResTypeEvaluator, "evalpack_quality") {
+		resourceKey(ResTypeEvaluator, "evalpack_quality")+","+resourceKey(ResTypeRuntimeEndpoint, "evalpack/live") {
 		t.Errorf("plan creates %v, want only the pack-scoped evaluator", creates)
 	}
 	if deletes := keysWithAction(actions, deploy.ActionDelete); strings.Join(deletes, ",") !=

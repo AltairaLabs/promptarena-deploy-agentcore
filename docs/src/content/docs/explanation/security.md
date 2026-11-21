@@ -36,6 +36,8 @@ When the pack uses Cedar policies (tool blocklist), the role also needs `bedrock
 
 When the pack includes `llm_as_judge` evals, the deploying credentials benefit from `bedrock:ListFoundationModels` and `bedrock:ListInferenceProfiles`. Apply uses them to pick a default judge model the region can serve, and to check each evaluator's model **before creating anything** — without them, an unavailable model is only rejected by `CreateEvaluator` in the second-to-last phase, after the memory, gateway and agent runtimes already exist.
 
+Every deploy manages the runtime's `live` and `candidate` endpoints, so the deploying credentials need `bedrock-agentcore:GetAgentRuntimeEndpoint`, `CreateAgentRuntimeEndpoint` and `UpdateAgentRuntimeEndpoint`, and `DeleteAgentRuntimeEndpoint` for destroy.
+
 When the pack has online evals, the deploying credentials also use `logs:DescribeLogGroups` to check that the `aws/spans` log group exists, `logs:CreateLogGroup` and `logs:TagResource` to create a configured `cloudwatch_log_group`, and, at destroy, `logs:ListTagsForResource` and `logs:DeleteLogGroup` to remove that group again.
 
 The Bedrock list permissions are **optional**. They are included in `AmazonBedrockFullAccess`, so most roles already have it, and a role without it still deploys normally — the adapter logs that it could not check and carries on. It never becomes a new reason a deploy fails.
