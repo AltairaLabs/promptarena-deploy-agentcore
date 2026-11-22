@@ -82,6 +82,9 @@ func classifyErrorMessage(msg string) (category, remediation string) {
 	if containsAny(lower, configKeywords) {
 		return ErrCategoryConfiguration, hintCheckConfig
 	}
+	if containsAny(lower, dependencyKeywords) {
+		return ErrCategoryResource, hintDependentResource
+	}
 	return ErrCategoryResource, ""
 }
 
@@ -91,13 +94,20 @@ var (
 		"accessdenied", "access denied", "unauthorized",
 		"not authorized", "forbidden", "insufficientprivileges",
 	}
+	// "endpoint" alone is not a network keyword: AgentCore runtime endpoints
+	// are resources, and matching the bare word sent every endpoint error,
+	// a delete timeout included, to the network hint.
 	networkKeywords = []string{
-		"connection refused", "no such host", "timeout",
-		"dial tcp", "tls handshake", "endpoint",
+		"connection refused", "no such host", "i/o timeout", "client.timeout",
+		"dial tcp", "tls handshake", "resolve service endpoint",
 	}
 	timeoutKeywords = []string{
-		"did not become ready", "deadline exceeded",
+		"did not become ready", "did not become active", "did not serve version",
+		"still exists after", "delete wait ended", "deadline exceeded",
 		"context canceled",
+	}
+	dependencyKeywords = []string{
+		"conflictexception", "must be deleted before",
 	}
 	configKeywords = []string{
 		"validation", "invalid", "malformed", "does not match",
@@ -108,8 +118,11 @@ var (
 const (
 	hintCheckIAM       = "verify the runtime_role_arn has required permissions for Bedrock AgentCore"
 	hintCheckNetwork   = "verify the AWS region is correct and network connectivity is available"
-	hintRetryOrTimeout = "the resource may still be provisioning; retry after a short wait"
+	hintRetryOrTimeout = "AWS may still be working on the resource; retry after a short wait"
 	hintCheckConfig    = "check the deploy config values match AWS requirements"
+
+	hintDependentResource = "a resource that depends on this one still exists; " +
+		"retry once it has been deleted"
 )
 
 // containsAny returns true if s contains any of the substrings.

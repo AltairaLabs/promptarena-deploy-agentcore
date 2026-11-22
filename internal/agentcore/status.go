@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
+	"sync"
 
 	"github.com/AltairaLabs/promptarena/v2/deploy"
 )
@@ -62,6 +64,7 @@ func (p *Provider) Destroy(
 	emitDestroyEvent(callback, "progress",
 		fmt.Sprintf("Destroying %d resources", len(state.Resources)))
 
+	var failed []string
 	for step, rtype := range destroyOrder {
 		resources, ok := byType[rtype]
 		if !ok {
@@ -69,26 +72,41 @@ func (p *Provider) Destroy(
 		}
 		emitDestroyEvent(callback, "progress",
 			fmt.Sprintf("Step %d: deleting %s resources (%d)", step+1, rtype, len(resources)))
-		destroyResourceGroup(ctx, destroyer, resources, callback)
+		if rtype == ResTypeRuntimeEndpoint {
+			failed = append(failed, destroyConcurrently(ctx, destroyer, resources, callback)...)
+			continue
+		}
+		failed = append(failed, destroyResourceGroup(ctx, destroyer, resources, callback)...)
 	}
 
-	destroyUnorderedResources(ctx, destroyer, state.Resources, callback)
+	failed = append(failed, destroyUnorderedResources(ctx, destroyer, state.Resources, callback)...)
+
+	// A destroy that left resources behind must not report success: the
+	// caller removes the deploy state on success, which would forget
+	// resources that still exist (and still cost money). Every deletion is
+	// still attempted first, so a re-run only has the survivors left to do.
+	if len(failed) > 0 {
+		return fmt.Errorf("agentcore: destroy left %d resource(s) undeleted: %s; run destroy again to retry",
+			len(failed), strings.Join(failed, ", "))
+	}
 
 	emitDestroyEvent(callback, "complete", "Destroy complete")
 	return nil
 }
 
-// destroyResourceGroup deletes a slice of resources, emitting events for each.
+// destroyResourceGroup deletes a slice of resources one at a time, emitting
+// events for each, and returns the resources it could not delete.
 func destroyResourceGroup(
 	ctx context.Context, destroyer resourceDestroyer,
 	resources []ResourceState, callback deploy.DestroyCallback,
-) {
+) []string {
 	// Every tool_gateway entry records the ARN of the one gateway all the
 	// pack's tools share, and deleting an entry deletes that gateway. Once one
 	// entry has deleted it, the gateway is DELETING, and AWS rejects a second
 	// DeleteGateway on it, so each later entry would report a failure for a
 	// gateway that is going away.
 	deletedGateways := map[string]bool{}
+	var failed []string
 	for _, res := range resources {
 		// A resource recorded as failed was never created, so there is
 		// nothing in AWS to delete. Asking anyway sends its bare name where
@@ -102,24 +120,78 @@ func destroyResourceGroup(
 			emitDeleted(callback, res)
 			continue
 		}
-		if err := destroyer.DeleteResource(ctx, res); err != nil {
-			deployErr := newDeployError("delete", res.Type, res.Name, err)
-			_ = callback(&deploy.DestroyEvent{
-				Type:    "error",
-				Message: deployErr.Error(),
-				Resource: &deploy.ResourceResult{
-					Type: res.Type, Name: res.Name,
-					Action: deploy.ActionDelete, Status: ResStatusFailed,
-					Detail: deployErr.Error(),
-				},
-			})
+		err := destroyer.DeleteResource(ctx, res)
+		if !reportDelete(callback, res, err) {
+			failed = append(failed, describeResource(res))
 			continue
 		}
 		if sharedGateway {
 			deletedGateways[res.ARN] = true
 		}
-		emitDeleted(callback, res)
 	}
+	return failed
+}
+
+// destroyConcurrently deletes every resource at once and reports them in
+// order once all have finished, returning the ones it could not delete.
+//
+// Runtime endpoints are deleted this way: each delete waits for its endpoint
+// to disappear, which can take minutes on AgentCore, and the endpoints of a
+// runtime do not depend on one another, so waiting for them one after
+// another only multiplies the wait.
+func destroyConcurrently(
+	ctx context.Context, destroyer resourceDestroyer,
+	resources []ResourceState, callback deploy.DestroyCallback,
+) []string {
+	errs := make([]error, len(resources))
+	var wg sync.WaitGroup
+	for i, res := range resources {
+		if res.Status == ResStatusFailed {
+			continue
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs[i] = destroyer.DeleteResource(ctx, res)
+		}()
+	}
+	wg.Wait()
+
+	var failed []string
+	for i, res := range resources {
+		if res.Status == ResStatusFailed {
+			continue
+		}
+		if !reportDelete(callback, res, errs[i]) {
+			failed = append(failed, describeResource(res))
+		}
+	}
+	return failed
+}
+
+// reportDelete emits the outcome of one deletion and reports whether it
+// succeeded.
+func reportDelete(callback deploy.DestroyCallback, res ResourceState, err error) bool {
+	if err == nil {
+		emitDeleted(callback, res)
+		return true
+	}
+	deployErr := newDeployError("delete", res.Type, res.Name, err)
+	_ = callback(&deploy.DestroyEvent{
+		Type:    "error",
+		Message: deployErr.Error(),
+		Resource: &deploy.ResourceResult{
+			Type: res.Type, Name: res.Name,
+			Action: deploy.ActionDelete, Status: ResStatusFailed,
+			Detail: deployErr.Error(),
+		},
+	})
+	return false
+}
+
+// describeResource names a resource for the destroy summary.
+func describeResource(res ResourceState) string {
+	return fmt.Sprintf("%s %q", res.Type, res.Name)
 }
 
 // emitDeleted reports one resource deleted.
@@ -135,11 +207,12 @@ func emitDeleted(callback deploy.DestroyCallback, res ResourceState) {
 }
 
 // destroyUnorderedResources handles resource types not in the standard
-// destroy order.
+// destroy order, returning the ones it could not delete.
 func destroyUnorderedResources(
 	ctx context.Context, destroyer resourceDestroyer,
 	resources []ResourceState, callback deploy.DestroyCallback,
-) {
+) []string {
+	var failed []string
 	for _, res := range resources {
 		if isInDestroyOrder(res.Type) {
 			continue
@@ -149,20 +222,11 @@ func destroyUnorderedResources(
 		if res.Status == ResStatusFailed {
 			continue
 		}
-		err := destroyer.DeleteResource(ctx, res)
-		status := ResStatusDeleted
-		if err != nil {
-			status = ResStatusFailed
+		if !reportDelete(callback, res, destroyer.DeleteResource(ctx, res)) {
+			failed = append(failed, describeResource(res))
 		}
-		_ = callback(&deploy.DestroyEvent{
-			Type:    ErrCategoryResource,
-			Message: fmt.Sprintf("Deleted %s %q", res.Type, res.Name),
-			Resource: &deploy.ResourceResult{
-				Type: res.Type, Name: res.Name,
-				Action: deploy.ActionDelete, Status: status,
-			},
-		})
 	}
+	return failed
 }
 
 // emitDestroyEvent is a helper to send a simple destroy event.

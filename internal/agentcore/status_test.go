@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/AltairaLabs/promptarena/v2/deploy"
@@ -453,8 +454,15 @@ func TestDestroy_FailingDestroyer_EmitsErrorEvents(t *testing.T) {
 		DeployConfig: validDestroyConfig(),
 		PriorState:   mustJSON(t, state),
 	}, cb)
-	if err != nil {
-		t.Fatalf("Destroy returned error: %v", err)
+	// A failed delete must fail the destroy, naming what was left, or the
+	// caller removes the state of a resource that still exists.
+	if err == nil || !strings.Contains(err.Error(), `agent_runtime "rt-1"`) {
+		t.Fatalf("Destroy error = %v, want one naming agent_runtime \"rt-1\"", err)
+	}
+	for _, e := range events {
+		if e.Type == "complete" {
+			t.Errorf("a destroy that failed emitted a complete event: %q", e.Message)
+		}
 	}
 
 	// Should have an error event for agent_runtime and a resource event for tool_gateway.
