@@ -196,7 +196,55 @@ func (c *realAWSClient) deleteRuntimeEndpoint(ctx context.Context, res ResourceS
 	if id == "" || endpoint == "" {
 		return fmt.Errorf("endpoint %q records no runtime or endpoint name", res.Name)
 	}
-	_, err := c.client.DeleteAgentRuntimeEndpoint(ctx, &bedrockagentcorecontrol.DeleteAgentRuntimeEndpointInput{
+	return deleteEndpointAndWait(ctx, c.client, defaultEndpointDeleteWait, id, endpoint)
+}
+
+// endpointAPI is the part of the AgentCore control client that deleting an
+// endpoint uses, so the wait can be tested against a slow delete.
+type endpointAPI interface {
+	DeleteAgentRuntimeEndpoint(
+		ctx context.Context, in *bedrockagentcorecontrol.DeleteAgentRuntimeEndpointInput,
+		optFns ...func(*bedrockagentcorecontrol.Options),
+	) (*bedrockagentcorecontrol.DeleteAgentRuntimeEndpointOutput, error)
+	GetAgentRuntimeEndpoint(
+		ctx context.Context, in *bedrockagentcorecontrol.GetAgentRuntimeEndpointInput,
+		optFns ...func(*bedrockagentcorecontrol.Options),
+	) (*bedrockagentcorecontrol.GetAgentRuntimeEndpointOutput, error)
+}
+
+// Endpoint deletion bounds. AWS documents no duration for it, and on real
+// AgentCore it has outlasted the five-minute window every other wait uses:
+// endpoints were seen still DELETING after five minutes and gone a few
+// minutes later. Twenty minutes is a generous bound on that, and a slower
+// poll keeps the call count the same order as before.
+const (
+	endpointDeleteTimeout      = 20 * time.Minute
+	endpointDeletePollInterval = 10 * time.Second
+)
+
+// endpointStatusDeleteFailed is a status the API documents for endpoint
+// deletion that the pinned SDK has no constant for yet.
+const endpointStatusDeleteFailed types.AgentRuntimeEndpointStatus = "DELETE_FAILED"
+
+// endpointDeleteWait is how long, and how often, to poll for a deleted
+// endpoint to disappear.
+type endpointDeleteWait struct {
+	timeout  time.Duration
+	interval time.Duration
+}
+
+var defaultEndpointDeleteWait = endpointDeleteWait{
+	timeout:  endpointDeleteTimeout,
+	interval: endpointDeletePollInterval,
+}
+
+// deleteEndpointAndWait deletes a named endpoint and waits until
+// GetAgentRuntimeEndpoint reports it not found. An endpoint already gone
+// counts as deleted.
+func deleteEndpointAndWait(
+	ctx context.Context, api endpointAPI, wait endpointDeleteWait, id, endpoint string,
+) error {
+	_, err := api.DeleteAgentRuntimeEndpoint(ctx, &bedrockagentcorecontrol.DeleteAgentRuntimeEndpointInput{
 		AgentRuntimeId: aws.String(id),
 		EndpointName:   aws.String(endpoint),
 	})
@@ -206,16 +254,40 @@ func (c *realAWSClient) deleteRuntimeEndpoint(ctx context.Context, res ResourceS
 		}
 		return fmt.Errorf("DeleteAgentRuntimeEndpoint %s/%s: %w", id, endpoint, err)
 	}
-	for range maxPollAttempts {
-		if _, err := c.getEndpoint(ctx, id, endpoint); err != nil {
-			if isNotFound(err) {
-				return nil
-			}
-			return err
+	return waitForEndpointGone(ctx, api, wait, id, endpoint)
+}
+
+// waitForEndpointGone polls until the endpoint is not found, it reports a
+// failed delete, the wait runs out, or ctx is done.
+func waitForEndpointGone(
+	ctx context.Context, api endpointAPI, wait endpointDeleteWait, id, endpoint string,
+) error {
+	deadline := time.Now().Add(wait.timeout)
+	for {
+		out, err := api.GetAgentRuntimeEndpoint(ctx, &bedrockagentcorecontrol.GetAgentRuntimeEndpointInput{
+			AgentRuntimeId: aws.String(id),
+			EndpointName:   aws.String(endpoint),
+		})
+		switch {
+		case err != nil && isNotFound(err):
+			return nil
+		case err != nil:
+			return fmt.Errorf("GetAgentRuntimeEndpoint %s/%s: %w", id, endpoint, err)
+		case out.Status == endpointStatusDeleteFailed:
+			return fmt.Errorf("endpoint %s/%s entered status %s: %s",
+				id, endpoint, out.Status, aws.ToString(out.FailureReason))
 		}
-		time.Sleep(pollInterval)
+		if !time.Now().Before(deadline) {
+			return fmt.Errorf("endpoint %s/%s was still %s when the delete wait ended after %s; "+
+				"AgentCore may still be deleting it, so run destroy again to finish",
+				id, endpoint, out.Status, wait.timeout)
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("waiting for endpoint %s/%s to be deleted: %w", id, endpoint, ctx.Err())
+		case <-time.After(wait.interval):
+		}
 	}
-	return fmt.Errorf("endpoint %s/%s still exists after %d attempts", id, endpoint, maxPollAttempts)
 }
 
 // checkRuntimeEndpoint reports a named endpoint's health.

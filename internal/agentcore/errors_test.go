@@ -127,6 +127,35 @@ func TestClassifyAWSError_Timeout(t *testing.T) {
 	}
 }
 
+// An AgentCore runtime endpoint is a resource, so an error naming one is not a
+// network error: a delete timeout used to carry the region/connectivity hint.
+func TestClassifyAWSError_EndpointErrorsAreNotNetwork(t *testing.T) {
+	tests := []struct {
+		msg          string
+		wantCategory string
+		wantHint     string
+	}{
+		{
+			"endpoint rt-abc/live was still DELETING when the delete wait ended after 20m0s",
+			ErrCategoryTimeout, hintRetryOrTimeout,
+		},
+		{
+			"DeleteAgentRuntime \"rt\": ConflictException: This agent has endpoints that " +
+				"must be deleted before the agent can be removed.",
+			ErrCategoryResource, hintDependentResource,
+		},
+		{"endpoint rt-abc/live did not serve version 3 after 60 attempts", ErrCategoryTimeout, hintRetryOrTimeout},
+		{"read tcp 10.0.0.1:443: i/o timeout", ErrCategoryNetwork, hintCheckNetwork},
+	}
+	for _, tt := range tests {
+		category, hint := classifyAWSError(fmt.Errorf("%s", tt.msg))
+		if category != tt.wantCategory || hint != tt.wantHint {
+			t.Errorf("classifyAWSError(%q) = (%q, %q), want (%q, %q)",
+				tt.msg, category, hint, tt.wantCategory, tt.wantHint)
+		}
+	}
+}
+
 func TestClassifyAWSError_Configuration(t *testing.T) {
 	tests := []struct {
 		msg string

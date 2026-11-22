@@ -71,6 +71,10 @@ The adapter also handles resources whose type does not appear in the standard or
 
 Destroy continues on individual resource failures. A failed deletion is reported as an error event but does not abort the remaining teardown. This is a deliberate choice: in a partially failed deployment, you want to clean up as much as possible rather than leaving orphaned resources.
 
+Once every deletion has been tried, a destroy that left any resource behind fails, naming each one that survived. The command exits non-zero and keeps the deployment state, so running destroy again retries only what is left; resources already gone count as deleted.
+
+Named runtime endpoints (such as `live` and `candidate`) are deleted before their runtime, all at once, and destroy waits for each to disappear before deleting the runtime. AgentCore does not delete a runtime that still has named endpoints. Endpoint deletion can take several minutes, so this wait polls every **10 seconds** for up to **20 minutes**, and stops early if an endpoint reports `DELETE_FAILED`.
+
 ## Update support
 
 Only `agent_runtime` and `online_eval_config` support in-place updates. When the adapter detects a prior state entry for a runtime (same type and name), it calls `UpdateAgentRuntime` instead of `CreateAgentRuntime`. The update carries the same payload (role ARN, env vars, authorizer config) and polls until the runtime returns to READY status.
