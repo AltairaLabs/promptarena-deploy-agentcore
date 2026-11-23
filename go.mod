@@ -7,7 +7,7 @@ require (
 	github.com/AltairaLabs/PromptKit/runtime/v2 v2.23.0
 	github.com/AltairaLabs/PromptKit/sdk/v2 v2.23.0
 	github.com/AltairaLabs/PromptKit/server/a2a/v2 v2.23.0
-	github.com/AltairaLabs/promptarena/v2 v2.7.1-0.20261119195004-0aefe5967ca0
+	github.com/AltairaLabs/promptarena/v2 v2.8.0
 	github.com/aws/aws-sdk-go-v2 v1.48.0
 	github.com/aws/aws-sdk-go-v2/config v1.33.21
 	github.com/aws/aws-sdk-go-v2/credentials v1.21.3
