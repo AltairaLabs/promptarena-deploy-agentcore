@@ -12,7 +12,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/config v1.33.21
 	github.com/aws/aws-sdk-go-v2/credentials v1.21.3
 	github.com/aws/aws-sdk-go-v2/service/apigateway v1.38.4
-	github.com/aws/aws-sdk-go-v2/service/bedrock v1.66.5
+	github.com/aws/aws-sdk-go-v2/service/bedrock v1.74.7
 	github.com/aws/aws-sdk-go-v2/service/bedrockagentcore v1.50.1
 	github.com/aws/aws-sdk-go-v2/service/bedrockagentcorecontrol v1.19.0
 	github.com/aws/aws-sdk-go-v2/service/cloudwatch v1.73.0
