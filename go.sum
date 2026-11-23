@@ -48,8 +48,8 @@ github.com/aws/aws-sdk-go-v2/service/bedrock v1.66.5 h1:QWbXQmzxD2xPtEjOJKiJqwej
 github.com/aws/aws-sdk-go-v2/service/bedrock v1.66.5/go.mod h1:kUa3owVjMvMgE0TGhfZQPQy9RMlKIhjm8eymrVfL1wM=
 github.com/aws/aws-sdk-go-v2/service/bedrockagentcore v1.50.1 h1:YGrhdITJ0jywGMqjZSbPqrnPmGsHFHr7J6D4HZdXq6k=
 github.com/aws/aws-sdk-go-v2/service/bedrockagentcore v1.50.1/go.mod h1:Ruzh/1hoyFK40ZjetWdNV+UWnnC/4dTmxaFAeCB6BgA=
-github.com/aws/aws-sdk-go-v2/service/bedrockagentcorecontrol v1.19.0 h1:A5xi6woj9KAUSUQk/8vioQyRV3iNwd1ovdx0mY6IenI=
-github.com/aws/aws-sdk-go-v2/service/bedrockagentcorecontrol v1.19.0/go.mod h1:Lv3oChocnQdIldqajnqKxFWXupIJ8zx6vUSt/trrZZM=
+github.com/aws/aws-sdk-go-v2/service/bedrockagentcorecontrol v1.83.0 h1:o0t/fOJucTojqbzK2ErS6d11pN3SCPJolZXx6jYeowA=
+github.com/aws/aws-sdk-go-v2/service/bedrockagentcorecontrol v1.83.0/go.mod h1:vv1jWEmQqrOnnFXaIv+vIRarfZv14tOY89X9UVdd7dA=
 github.com/aws/aws-sdk-go-v2/service/cloudwatch v1.73.0 h1:OP6MlUKPwRwYJulM6brj+OdQzjbcSpVBujPi7GRagng=
 github.com/aws/aws-sdk-go-v2/service/cloudwatch v1.73.0/go.mod h1:7PauoCasn/NoAuZYkmRbZ8TjFJ4dr0i2SX4v64hfcBQ=
 github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs v1.63.1 h1:l65dmgr7tO26EcHe6WMdseRnFLoJ2nqdkPz1nJdXfaw=
